@@ -24,9 +24,12 @@ Split `$ARGUMENTS` on the first whitespace:
 
 ## Step 2 — Determine the ID prefix and next number
 
-- Read the prefix from any existing issue filename under `Projects/<slug>/ISSUES` or `Projects/<slug>/RESOLVED ISSUES`. Filenames always begin with `<PREFIX>-<N> `.
-- If the project has no existing issues, ask the user for the prefix.
-- Next `N` = max existing `N` across both folders + 1. Start at 1 if none.
+- **Prefix** — read the `prefix:` field from `Projects/<slug>/STATUS.md` frontmatter (canonical per schema):
+  ```bash
+  obsidian vault="Agent-Vault" property:read name=prefix path="Projects/<slug>/STATUS.md"
+  ```
+  If absent (legacy project), fall back to scanning any existing issue filename under `ISSUES/` or `RESOLVED ISSUES/` — they always begin with `<PREFIX>-<N> `. If neither yields one, ask the user, then write it into STATUS.md frontmatter (`property:set name=prefix value=<PREFIX> path="Projects/<slug>/STATUS.md"`) before continuing.
+- **Next N** — max existing `N` across both folders + 1. Start at 1 if none.
 
 ## Step 3 — Gather scope (interact with the user)
 

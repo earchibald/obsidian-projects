@@ -18,7 +18,15 @@ Parse `$ARGUMENTS`:
 - Second token (optional) = issue reference: either a bare number (`3`) or a full ID (`JB-3`).
 - **Shorthand:** a single token like `JB-3` (ID-PREFIX + `-N`) is equivalent to `JB 3` — split on the hyphen.
 
-**Resolving a prefix to a slug:** list `Projects/` and find the project folder whose issues use that prefix. The cheapest check is to look for any file matching `Projects/*/ISSUES/<PREFIX>-*.md` or `Projects/*/RESOLVED ISSUES/<PREFIX>-*.md`; the enclosing project folder name is the slug. If multiple projects share a prefix (shouldn't happen, but possible), stop and ask the user.
+**Resolving a prefix to a slug:** the canonical source is the `prefix:` field in each project's `STATUS.md` frontmatter (per schema). Preferred approach:
+
+```bash
+obsidian vault="Agent-Vault" search query="prefix: <PREFIX>"
+```
+
+Match the result whose path is `Projects/<slug>/STATUS.md` — the enclosing folder name is the slug.
+
+**Legacy fallback:** if no STATUS.md declares the prefix, look for any file matching `Projects/*/ISSUES/<PREFIX>-*.md` or `Projects/*/RESOLVED ISSUES/<PREFIX>-*.md` and use the enclosing folder. If multiple projects share a prefix (shouldn't happen, but possible), stop and ask the user.
 
 List the issues folder:
 

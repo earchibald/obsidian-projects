@@ -91,9 +91,13 @@ tags:
 
 ## Issue ID numbering
 
-Agent must scan **both** `ISSUES/` and `RESOLVED ISSUES/` for existing `id` values, find the highest `N`, and increment by 1 for each new issue.
+The issue ID is `<PREFIX>-<N>`.
 
-Use `obsidian vault="<vault>" files folder="Projects/<slug>/ISSUES"` and `files folder="Projects/<slug>/RESOLVED ISSUES"` to enumerate. The filename prefix (`<PROJECT>-<N>`) reveals the id directly; fall back to `property:read name=id file=<name>` if needed.
+**Prefix** — canonical location is `prefix:` in `STATUS.md` frontmatter (see [STATUS.md](#statusmd)). Read it from there. Fall back to scanning existing issue filenames only for legacy projects that predate this field.
+
+**Number N** — scan **both** `ISSUES/` and `RESOLVED ISSUES/` for existing `id` values, find the highest `N`, and increment by 1 for each new issue.
+
+Use `obsidian vault="<vault>" files folder="Projects/<slug>/ISSUES"` and `files folder="Projects/<slug>/RESOLVED ISSUES"` to enumerate. The filename prefix (`<PREFIX>-<N>`) reveals the id directly; fall back to `property:read name=id file=<name>` if needed.
 
 ---
 
@@ -143,13 +147,23 @@ See `Projects/jira-bases/jira-bases.base` as the reference implementation.
 
 ## STATUS.md
 
-Each project root should contain a `STATUS.md` embedding its open-issues view:
+Each project root must contain a `STATUS.md` that carries project-level metadata in its frontmatter and embeds the open-issues view in its body:
 
 ```markdown
+---
+project: <slug>
+prefix: <PREFIX>
+type: project-status
+---
 ![[<project>.base#Open Issues]]
 ```
 
-No frontmatter needed. This is a read-only display surface.
+**Frontmatter fields:**
+- `project` — slug, matches the folder name.
+- `prefix` — canonical issue-ID prefix (e.g. `JB`, `TMB`). This is the authoritative location for the prefix; commands that need it (`/issue`, `/create-issue`) MUST read it from here first.
+- `type: project-status` — lets Bases distinguish STATUS notes from issues/tasks/docs.
+
+**Fallback for legacy projects:** if `prefix` is missing from STATUS.md, fall back to scanning issue filenames (`Projects/<slug>/ISSUES/*.md` and `RESOLVED ISSUES/*.md`). If neither the field nor any issue exists, stop and ask the user — a freshly scaffolded project with zero issues has no implicit prefix, so the scaffolder is responsible for writing `prefix` at creation time.
 
 
 ---

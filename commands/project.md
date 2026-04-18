@@ -40,11 +40,15 @@ Obsidian folders are implicit — they come into existence when a file is create
    - `project == "<slug>"`
    - Keep all five standard views: Open Issues, Board, Tasks by Issue, Resolved Log, Docs Index.
 
-2. **`Projects/<slug>/STATUS.md`** — content:
+2. **`Projects/<slug>/STATUS.md`** — frontmatter + body. The `prefix` field is the canonical location of the project's ID prefix; write it here at scaffold time so future `/issue` and `/create-issue` runs don't have to guess.
    ```
+   ---
+   project: <slug>
+   prefix: <ID-PREFIX>
+   type: project-status
+   ---
    ![[<slug>.base#Open Issues]]
    ```
-   No frontmatter.
 
 3. **Placeholder files to materialize subfolders** — the schema requires `ISSUES/`, `RESOLVED ISSUES/`, `TASKS/`, `DOCS/`. Obsidian has no mkdir. Options:
    - Simplest: skip placeholders. Folders appear when the first real file lands there. Mention this in the summary so the user isn't surprised.
