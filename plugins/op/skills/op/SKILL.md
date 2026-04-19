@@ -129,6 +129,24 @@ Every project has `<project>.base` with at minimum: Open Issues, Board, Tasks by
 
 ---
 
+## Filename sanitization
+
+Issue filenames are derived from the user-supplied title: `<PREFIX>-<N> <sanitized-title>.md`. Obsidian rejects certain characters in note names — passing them straight to `obsidian create` fails with a cryptic error (see OP-15). Always sanitize before writing, and show the final filename in the confirm step so the user can adjust it.
+
+Rules (apply in order to the title portion only, never to `<PREFIX>-<N>`):
+
+1. **Replace** each character in `# ^ [ ] | \ / : ? " < > *` with a single space.
+2. **Collapse** runs of whitespace into a single space.
+3. **Trim** leading/trailing whitespace and periods (filesystems dislike trailing `.`).
+4. **Truncate** to 80 characters; if the truncation lands mid-word, cut back to the previous space.
+5. If the result is empty, fall back to the id alone: `<PREFIX>-<N>.md`.
+
+Preserve case, hyphens, commas, and apostrophes — the goal is readable titles, not aggressive kebab-casing. Existing filenames in the vault show the convention: `OP-14 skill update, task work should include tracking of work done with gitrefs.md`.
+
+Apply the same rules to any seed-issue title passed to `scaffold`.
+
+---
+
 ## CLI gotchas
 
 - `obsidian move` destination is `to=<path>` (not `dest=`). Full: `obsidian move path=<src> to=<dst>`.
@@ -148,7 +166,7 @@ Args: `<slug> <PREFIX> [<title>]`. Creates a new project folder.
 3. Write:
    - `Projects/<slug>/<slug>.base` — derived from jira-bases, with `file.inFolder("Projects/<slug>")` and `project == "<slug>"`.
    - `Projects/<slug>/STATUS.md` — frontmatter with `prefix: <PREFIX>`, body `![[<slug>.base#Open Issues]]`.
-   - Optional seed issue `<PREFIX>-1` only if `<title>` was supplied.
+   - Optional seed issue `<PREFIX>-1` only if `<title>` was supplied. Run the title through [Filename sanitization](#filename-sanitization) before building the path.
 4. Report: files created, note that TASKS/ and RESOLVED ISSUES/ materialize on first use, suggest `/op:new <slug>` next.
 
 ---
@@ -166,9 +184,9 @@ Args: `<project-or-prefix> [description]`. Creates a new issue.
    - **Detailed** (multi-line) → propose title, filename slug, priority, summary paragraph + checklist. Preserve explicit acceptance criteria verbatim. Confirm.
 5. **Always confirm** before writing, even in auto mode. Issue creation is a commitment artifact.
 6. **Write** via `obsidian create … silent`:
-   - Path: `Projects/<slug>/ISSUES/<PREFIX>-<N> <slug-from-title>.md`
+   - Path: `Projects/<slug>/ISSUES/<PREFIX>-<N> <sanitized-title>.md` — apply the rules in [Filename sanitization](#filename-sanitization) before building the path. Never pass the raw title straight to `obsidian create`.
    - Frontmatter: schema-conformant, `status: open`, `assignee: earchibald` unless overridden.
-   - Body: `# <Title>` + scope.
+   - Body: `# <Title>` + scope. Keep the raw title in the `# <Title>` body heading even when the filename was sanitized — the heading is lossless, the filename is sanitized for the filesystem.
 7. **Do not** set `status: in-progress` — that's the `work` verb.
 8. Report: file path + suggest `/op:issue <PREFIX>-<N>`.
 
