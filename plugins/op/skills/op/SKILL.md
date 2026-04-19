@@ -200,11 +200,16 @@ See the **resolve** verb below.
 
 Close the in-progress issue.
 
-1. Set issue `status: resolved`, `resolved: <today>`.
-2. `obsidian move` the issue to `Projects/<slug>/RESOLVED ISSUES/`.
-3. Delete TASKS notes via `obsidian delete` (trash, not permanent).
-4. **Do NOT delete DOCS.**
-5. Output:
+1. **Stop and get explicit user approval before making any changes.** Show the user the planned lifecycle transition:
+   - Source → target: `Projects/<slug>/ISSUES/<filename>` → `Projects/<slug>/RESOLVED ISSUES/<filename>`
+   - Frontmatter change: `status` → `resolved` (or `wontfix`), `resolved` → `<today>`
+   - TASKS notes to trash: list each path, or "(none)"
+   Proceed only after the user confirms. This gate applies even in auto mode — moving an issue to `RESOLVED ISSUES/` is the closing commitment and must not be implicit.
+2. Set issue `status: resolved`, `resolved: <today>`.
+3. `obsidian move` the issue to `Projects/<slug>/RESOLVED ISSUES/`.
+4. Delete TASKS notes via `obsidian delete` (trash, not permanent).
+5. **Do NOT delete DOCS.**
+6. Output:
    1. External changes (URLs, commands run)
    2. Vault changes (files moved/created/deleted)
    3. Manual follow-ups for the user
