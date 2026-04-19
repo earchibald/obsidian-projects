@@ -37,6 +37,9 @@ priority: low | med | high
 created: YYYY-MM-DD      # date field (use today)
 resolved:                # date field — set when status → resolved/wontfix
 assignee: <github-handle>
+commits:                 # optional; short-sha + subject, appended during work
+  - <sha7> <subject>
+pr:                      # optional; PR or MR URL if one exists
 tags:
   - project/<slug>
   - issue
@@ -49,6 +52,8 @@ Example: `JB-2 prepend id to issue filenames.md`
 Why: keeps the project key visible in file lists and makes wikilinks from TASKS self-documenting.
 
 **Body:** one-line summary checklist at minimum. Agents may expand freely.
+
+**Git refs.** `commits:` and `pr:` are the canonical trail of *what shipped* for the issue. They live on the issue (not on TASKS) because TASKS are trashed on resolve; the issue and its refs persist in `RESOLVED ISSUES/` forever. Both fields are optional — meta-only projects without a code repo leave them unset.
 
 ---
 
@@ -108,8 +113,10 @@ Use `obsidian vault="<vault>" files folder="Projects/<slug>/ISSUES"` and `files 
 3. **Create TASKS notes** (one per logical subtask) before touching any code or external systems.
 4. **Update issue** `status: in-progress` at session start.
 5. **Before any external action** (repo create, push, release, deploy) — confirm with user unless they granted explicit upfront authorization.
-6. **On completion:**
+6. **During work:** after each commit that lands work for the in-progress issue, append `<sha7> <subject>` to the issue's `commits:` list. When a PR is opened for the issue, set `pr:`. Skip for projects with no git repo.
+7. **On completion:**
    - Set issue `status: resolved`, add `resolved: <date>`.
+   - If the project has a git repo and `commits:` is empty, offer to back-fill from `git log` before moving the issue.
    - `obsidian move` the issue to `RESOLVED ISSUES/`.
    - Delete TASKS notes via `obsidian delete` (goes to trash, not permanent).
    - Do NOT delete DOCS.

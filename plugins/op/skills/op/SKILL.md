@@ -54,6 +54,9 @@ priority: low | med | high
 created: YYYY-MM-DD
 resolved:                # set on resolve/wontfix
 assignee: <github-handle>
+commits:                 # optional; appended during work — see `work` verb
+  - <sha7> <subject>
+pr:                      # optional; PR or MR URL
 tags:
   - project/<slug>
   - issue
@@ -61,6 +64,8 @@ tags:
 ```
 
 Filename: `<PREFIX>-<N> <short-slug>.md`. Example: `JB-2 prepend id to issue filenames.md`.
+
+`commits:` and `pr:` live on the issue (not the task) so the git trail survives the trashing of TASKS on resolve, and lands in `RESOLVED ISSUES/` as a permanent record. Both optional; leave unset for meta-only projects with no code repo.
 
 ### Frontmatter — TASKS
 
@@ -190,6 +195,19 @@ Args: `<project-or-prefix> [<N-or-ID>]`. Resume or start work on an issue.
 6. Create TASKS notes in `Projects/<slug>/TASKS/` — one per logical subtask. Optional for trivial single-step issues.
 7. Confirm before any action affecting shared systems (GitHub push, release, deploy, external API).
 
+### Track git refs as work lands
+
+After each commit that advances the in-progress issue, append `<sha7> <subject>` to the issue's `commits:` list. When a PR is opened for the issue, set `pr:` to the URL.
+
+```bash
+# After committing:
+sha=$(git -C <repo> rev-parse --short=7 HEAD)
+sub=$(git -C <repo> log -1 --pretty=%s)
+# Then via obsidian-cli, append to the issue's commits list.
+```
+
+The trail lives on the issue so it survives TASKS being trashed at resolve time. Skip this step for meta-only projects with no git repo.
+
 ### Finish
 
 See the **resolve** verb below.
@@ -204,12 +222,14 @@ Close the in-progress issue.
    - Source → target: `Projects/<slug>/ISSUES/<filename>` → `Projects/<slug>/RESOLVED ISSUES/<filename>`
    - Frontmatter change: `status` → `resolved` (or `wontfix`), `resolved` → `<today>`
    - TASKS notes to trash: list each path, or "(none)"
+   - `commits:` status: "set" / "empty — will back-fill from git log" / "empty — skipping (no repo)"
    Proceed only after the user confirms. This gate applies even in auto mode — moving an issue to `RESOLVED ISSUES/` is the closing commitment and must not be implicit.
-2. Set issue `status: resolved`, `resolved: <today>`.
-3. `obsidian move` the issue to `Projects/<slug>/RESOLVED ISSUES/`.
-4. Delete TASKS notes via `obsidian delete` (trash, not permanent).
-5. **Do NOT delete DOCS.**
-6. Output:
+2. **Back-fill git refs if missing.** If the project has a git repo and the issue's `commits:` list is empty, offer to back-fill before moving. Scan `git log` for commits whose message references the issue id (e.g. `(OP-14)` or the issue number) since the last resolved-issue date, and append each `<sha7> <subject>` to `commits:`. Skip for meta-only projects with no repo.
+3. Set issue `status: resolved`, `resolved: <today>`.
+4. `obsidian move` the issue to `Projects/<slug>/RESOLVED ISSUES/`.
+5. Delete TASKS notes via `obsidian delete` (trash, not permanent).
+6. **Do NOT delete DOCS.**
+7. Output:
    1. External changes (URLs, commands run)
    2. Vault changes (files moved/created/deleted)
    3. Manual follow-ups for the user
