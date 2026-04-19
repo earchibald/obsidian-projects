@@ -129,6 +129,8 @@ Every project has `<project>.base` with at minimum: Open Issues, Board, Tasks by
 - `obsidian move` destination is `to=<path>` (not `dest=`). Full: `obsidian move path=<src> to=<dst>`.
 - `obsidian create` forces `.md`. For `.base` / `.canvas`, use the Write tool against the vault path directly.
 - `obsidian <subcommand> --help` creates a note called `Untitled N.md` (the CLI treats `--help` as content). Use `obsidian help` at the top level only; rely on the `obsidian:obsidian-cli` skill for subcommand syntax.
+- `obsidian search query="prefix: <PREFIX>"` fails with `Error: Operator "prefix" not recognized`. The CLI parses a leading `<word>:` as a search operator, so it collides with any frontmatter-style query. For prefix → slug lookups, scan `Projects/*/STATUS.md` frontmatter directly instead of using search.
+- `obsidian search` can fail wholesale with `ENOENT: no such file or directory, open '<stale-path>'` when a single entry in the vault index points at a moved or deleted file. Recovery: restart Obsidian or force a reindex. The `op` skill must not depend on `obsidian search` for correctness — use filesystem scans for deterministic lookups.
 
 ---
 
@@ -150,7 +152,7 @@ Args: `<slug> <PREFIX> [<title>]`. Creates a new project folder.
 
 Args: `<project-or-prefix> [description]`. Creates a new issue.
 
-1. **Resolve project**: if first token matches a `Projects/*/` folder, use as slug; else treat as PREFIX and resolve via `obsidian search query="prefix: <PREFIX>"` → find `Projects/<slug>/STATUS.md`.
+1. **Resolve project**: if first token matches a `Projects/*/` folder, use as slug; else treat as PREFIX and resolve by **direct scan** — read every `Projects/*/STATUS.md` and pick the one whose frontmatter `prefix:` equals `<PREFIX>`. Legacy fallback: scan existing `Projects/*/ISSUES/<PREFIX>-*.md` filenames. Do **not** use `obsidian search` here — it collides with the `prefix:` operator syntax and can crash on a stale index (see CLI gotchas).
 2. **Read prefix**: `obsidian property:read name=prefix path="Projects/<slug>/STATUS.md"`. Legacy fallback: scan existing issue filenames. If unknown, ask user; once supplied, write to STATUS.md with `property:set name=prefix value=<PREFIX> path="Projects/<slug>/STATUS.md"` before continuing.
 3. **Next N**: max N across `ISSUES/` + `RESOLVED ISSUES/` + 1. Start at 1 if none.
 4. **Gather scope** based on description length:
@@ -174,7 +176,7 @@ Args: `<project-or-prefix> [<N-or-ID>]`. Resume or start work on an issue.
 ### Resolve the issue file
 
 - Accept any of: `jira-bases 3`, `jira-bases JB-3`, `JB 3`, `JB-3`, or `jira-bases` / `JB` alone (auto-pick next).
-- Prefix → slug: prefer `obsidian search query="prefix: <PREFIX>"` matching `Projects/<slug>/STATUS.md`. Legacy fallback: scan `Projects/*/ISSUES/<PREFIX>-*.md` and `Projects/*/RESOLVED ISSUES/<PREFIX>-*.md`. If multiple matches: stop and ask.
+- Prefix → slug: **direct scan** — read every `Projects/*/STATUS.md` and pick the one whose frontmatter `prefix:` equals `<PREFIX>`. Legacy fallback: scan `Projects/*/ISSUES/<PREFIX>-*.md` and `Projects/*/RESOLVED ISSUES/<PREFIX>-*.md`. If multiple matches: stop and ask. Do **not** use `obsidian search` here — it collides with the `prefix:` operator syntax and can crash on a stale index (see CLI gotchas).
 - With N: find filename starting with `<PREFIX>-<N> ` in `ISSUES/` then `RESOLVED ISSUES/`.
 - Without N: prefer lowest-numbered `status: in-progress`; else lowest-numbered `open`; else stop and report.
 
