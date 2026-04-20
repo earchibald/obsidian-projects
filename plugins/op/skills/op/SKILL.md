@@ -210,7 +210,7 @@ Args: `<project-or-prefix> [<N-or-ID>]`. Resume or start work on an issue.
 3. **Reconcile scope vs. reality**: re-read scope and check each item against current repo/vault state. Skip items already satisfied; don't redo done work.
 4. **Verify plugin dependencies** (Templater, Dataview, etc.) before implementing: `obsidian eval code='Object.keys(app.plugins.plugins)'`. If missing, note as manual follow-up; proceed only if the deliverable is still useful without.
 5. **Flag stale schema**: if schema contradicts observed vault state (filename convention drifted, etc.), surface the discrepancy.
-6. Create TASKS notes in `Projects/<slug>/TASKS/` — one per logical subtask. Optional for trivial single-step issues.
+6. **Create TASKS notes in `Projects/<slug>/TASKS/` before any implementation work.** One note per logical subtask. Always — even a single-step issue gets one task note. No exceptions, no "trivial" escape hatch. The task list is what you're about to do; writing it down is how you plan.
 7. Confirm before any action affecting shared systems (GitHub push, release, deploy, external API).
 
 ### Track git refs as work lands
@@ -239,7 +239,7 @@ Close the in-progress issue.
 1. **Stop and get explicit user approval before making any changes.** Show the user the planned lifecycle transition:
    - Source → target: `Projects/<slug>/ISSUES/<filename>` → `Projects/<slug>/RESOLVED ISSUES/<filename>`
    - Frontmatter change: `status` → `resolved` (or `wontfix`), `resolved` → `<today>`
-   - TASKS notes to trash: list each path, or "(none)"
+   - TASKS notes to trash: list each path
    - `commits:` status: "set" / "empty — will back-fill from git log" / "empty — skipping (no repo)"
    Proceed only after the user confirms. This gate applies even in auto mode — moving an issue to `RESOLVED ISSUES/` is the closing commitment and must not be implicit.
 2. **Back-fill git refs if missing.** If the project has a git repo and the issue's `commits:` list is empty, offer to back-fill before moving. Scan `git log` for commits whose message references the issue id (e.g. `(OP-14)` or the issue number) since the last resolved-issue date, and append each `<sha7> <subject>` to `commits:`. Skip for meta-only projects with no repo.
