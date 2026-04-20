@@ -11,6 +11,17 @@ Before touching the vault, invoke the **`obsidian:obsidian-cli`** skill — it p
 
 ---
 
+## Finding the vault
+
+Do not guess the vault path or search the filesystem for it. Use the Obsidian CLI:
+
+- `obsidian vault` — prints `name` and `path` of the currently active vault (tab-separated).
+- `obsidian vaults` — lists all known vault names, one per line. Pair with `obsidian vault=<name>` to target a specific one and read its `path`.
+
+Run this once at the start of any `op` operation if you don't already know the vault path; cache it for the rest of the session. All `<vault>` placeholders in this skill refer to that path.
+
+---
+
 ## Verbs
 
 All operations fall into one of four verbs. Slash commands (`/op:scaffold`, `/op:new`, `/op:issue`, `/op:resolve`) are thin entry points into these:
