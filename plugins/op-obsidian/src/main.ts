@@ -15,6 +15,7 @@ import {
 import { workIssue } from "./workIssue";
 import { appendCommit, setPr } from "./commits";
 import { writeUriResponse, type UriResponsePayload } from "./uriResponse";
+import { runResolve, type ResolveArgs, type ResolveStatus } from "./resolve";
 import type { IssueEntry, LifecycleEvent } from "./types";
 
 export default class OpPlugin extends Plugin {
@@ -61,6 +62,31 @@ export default class OpPlugin extends Plugin {
     });
 
     this.addCommand({
+      id: "op-resolve",
+      name: "op: resolve issue…",
+      callback: async () => {
+        const path = this.activeIssuePath();
+        if (!path) {
+          new Notice("op: open an issue note first");
+          return;
+        }
+        await this.runResolveCommand({ path });
+      },
+    });
+
+    this.addCommand({
+      id: "op-close-current-issue",
+      name: "op: close current issue",
+      checkCallback: (checking) => {
+        const path = this.activeIssuePath();
+        if (checking) return !!path;
+        if (!path) return false;
+        void this.runResolveCommand({ path });
+        return true;
+      },
+    });
+
+    this.addCommand({
       id: "op-dump-store",
       name: "op: dev — dump IssueStore to console",
       callback: () => {
@@ -102,6 +128,37 @@ export default class OpPlugin extends Plugin {
     this.registerObsidianProtocolHandler("op-set-pr", (params) => {
       this.runUri("op-set-pr", params, (p) => this.handleOpSetPrUri(p));
     });
+
+    this.registerObsidianProtocolHandler("op-resolve", (params) => {
+      this.runUri("op-resolve", params, (p) => this.handleOpResolveUri(p, "op-resolve"));
+    });
+
+    this.registerObsidianProtocolHandler("op-close-current-issue", (params) => {
+      this.runUri("op-close-current-issue", params, (p) =>
+        this.handleOpResolveUri(p, "op-close-current-issue", true),
+      );
+    });
+
+    const resolveFlags = {
+      issue: { value: "<id>", description: "Issue id (e.g. OP-24) or vault path" },
+      path: { value: "<path>", description: "Vault path to the issue note" },
+      status: { value: "<resolved|wontfix>", description: "Target status (default: resolved)" },
+      confirmed: { description: "Skip the confirmation modal (default: true for CLI)" },
+    };
+
+    this.registerCliHandler(
+      "op-resolve",
+      "Resolve an issue (status → resolved, move to RESOLVED ISSUES/, trash linked TASKS).",
+      resolveFlags,
+      (params) => this.handleOpResolveCli(params, "op-resolve", false),
+    );
+
+    this.registerCliHandler(
+      "op-close-current-issue",
+      "Close an issue — same as op-resolve but falls back to the active issue when no id/path given.",
+      resolveFlags,
+      (params) => this.handleOpResolveCli(params, "op-close-current-issue", true),
+    );
   }
 
   onunload(): void {
@@ -303,6 +360,108 @@ export default class OpPlugin extends Plugin {
       issueId: res.issueId,
       path: res.path,
       pr: res.pr,
+    };
+  }
+
+  private activeIssuePath(): string | undefined {
+    const f = this.app.workspace.getActiveFile();
+    if (!f) return undefined;
+    const entry = this.store.byPath(f.path);
+    return entry && entry.type === "issue" ? f.path : undefined;
+  }
+
+  private resolveUriArgs(params: Record<string, string>): ResolveArgs {
+    const status =
+      params.status === "wontfix"
+        ? ("wontfix" as ResolveStatus)
+        : params.status === "resolved"
+          ? ("resolved" as ResolveStatus)
+          : undefined;
+    return {
+      issue: params.issue || params.id || undefined,
+      path: params.path || undefined,
+      status,
+      confirmed: params.confirmed === "1" || params.confirmed === "true",
+    };
+  }
+
+  private async runResolveCommand(args: ResolveArgs): Promise<void> {
+    const command = "op-resolve";
+    try {
+      const result = await runResolve(this.app, this.store, args);
+      await writeUriResponse(this.app, {
+        ok: result.ok,
+        command,
+        issueId: result.issueId,
+        path: result.sourcePath,
+        movedTo: result.movedTo,
+        trashed: result.trashed,
+        status: result.status,
+        error: result.error,
+      });
+    } catch (err: any) {
+      console.error("[op-obsidian]", command, err);
+      const msg = err?.message ?? String(err);
+      new Notice(`${command} failed: ${msg}`);
+      await writeUriResponse(this.app, { ok: false, command, error: msg });
+    }
+  }
+
+  private async handleOpResolveCli(
+    params: Record<string, string>,
+    command: string,
+    fallbackActive: boolean,
+  ): Promise<string> {
+    try {
+      const args = this.resolveUriArgs(params);
+      // CLI caller is an agent — default to confirmed unless explicitly opted out.
+      if (!("confirmed" in params)) args.confirmed = true;
+      if (fallbackActive && !args.issue && !args.path) {
+        const p = this.activeIssuePath();
+        if (p) args.path = p;
+      }
+      const result = await runResolve(this.app, this.store, args);
+      await writeUriResponse(this.app, {
+        ok: result.ok,
+        command,
+        issueId: result.issueId,
+        path: result.sourcePath,
+        movedTo: result.movedTo,
+        trashed: result.trashed,
+        status: result.status,
+        error: result.error,
+      });
+      if (!result.ok) return `${command} failed: ${result.error ?? "unknown error"}`;
+      const tCount = result.trashed?.length ?? 0;
+      return `${command}: ${result.issueId} → ${result.status} · moved to ${result.movedTo} · trashed ${tCount} task(s)`;
+    } catch (err: any) {
+      const msg = err?.message ?? String(err);
+      console.error("[op-obsidian]", command, err);
+      await writeUriResponse(this.app, { ok: false, command, error: msg });
+      return `${command} failed: ${msg}`;
+    }
+  }
+
+  private async handleOpResolveUri(
+    params: Record<string, string>,
+    command: string,
+    fallbackActive = false,
+  ): Promise<UriResponsePayload> {
+    const args = this.resolveUriArgs(params);
+    if (fallbackActive && !args.issue && !args.path) {
+      const p = this.activeIssuePath();
+      if (p) args.path = p;
+    }
+    const result = await runResolve(this.app, this.store, args);
+    if (!result.ok) throw new Error(result.error ?? "resolve failed");
+    return {
+      ok: true,
+      command,
+      issueId: result.issueId,
+      path: result.sourcePath,
+      movedTo: result.movedTo,
+      trashed: result.trashed,
+      status: result.status,
     };
   }
 
