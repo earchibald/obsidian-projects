@@ -16,6 +16,9 @@ export interface LaunchArgs {
   terminalApp: "Terminal" | "iTerm";
   tmuxSession: string;
   iTermPlacement: ITermPlacement;
+  // Absolute path or bare name of the tmux binary. Obsidian's PATH omits
+  // /opt/homebrew/bin, so bare `tmux` fails on Apple Silicon brew installs.
+  tmuxBinary: string;
 }
 
 export interface LaunchResult {
@@ -31,12 +34,12 @@ export async function launchInTerminal(args: LaunchArgs): Promise<LaunchResult> 
   if (process.platform !== "darwin") {
     throw new Error(`op: terminal launch currently supports macOS only (platform=${process.platform})`);
   }
-  await assertTmuxAvailable();
+  await assertTmuxAvailable(args.tmuxBinary);
 
   const { innerPath, outerPath } = await writeLaunchScripts(args);
 
   if (args.terminalApp === "iTerm") {
-    const osa = buildITermOsascript(args.iTermPlacement, args.tmuxSession, innerPath);
+    const osa = buildITermOsascript(args.iTermPlacement, args.tmuxSession, innerPath, args.tmuxBinary);
     await pExecFile("/usr/bin/osascript", ["-e", osa]);
     return { scriptPath: innerPath, tmuxSession: args.tmuxSession };
   }
@@ -45,11 +48,14 @@ export async function launchInTerminal(args: LaunchArgs): Promise<LaunchResult> 
   return { scriptPath: innerPath, tmuxSession: args.tmuxSession };
 }
 
-async function assertTmuxAvailable(): Promise<void> {
+async function assertTmuxAvailable(tmuxBinary: string): Promise<void> {
   try {
-    await pExecFile("/usr/bin/env", ["tmux", "-V"]);
+    await pExecFile(tmuxBinary, ["-V"]);
   } catch {
-    throw new Error("op: tmux not found on PATH — install with `brew install tmux`");
+    throw new Error(
+      `op: tmux not runnable at "${tmuxBinary}" — install with \`brew install tmux\` ` +
+        `or set the tmux binary path in op settings (e.g. /opt/homebrew/bin/tmux).`,
+    );
   }
 }
 
@@ -67,6 +73,7 @@ async function writeLaunchScripts(args: LaunchArgs): Promise<{ innerPath: string
   const promptShell = shSingleQuote(promptPath);
   const sessShell = shSingleQuote(args.tmuxSession);
   const innerShell = shSingleQuote(innerPath);
+  const tmuxShell = shSingleQuote(args.tmuxBinary);
 
   // Inner: cd + read prompt from side-file (bash 3.2 heredoc-in-$() bug
   // otherwise, see OP-25) + exec the agent binary.
@@ -86,7 +93,7 @@ async function writeLaunchScripts(args: LaunchArgs): Promise<{ innerPath: string
   const outer = [
     "#!/bin/bash",
     "set -e",
-    `exec tmux new-session -A -s ${sessShell} bash ${innerShell}`,
+    `exec ${tmuxShell} new-session -A -s ${sessShell} bash ${innerShell}`,
     "",
   ].join("\n");
   await fs.writeFile(outerPath, outer, { mode: 0o755 });
@@ -98,10 +105,11 @@ export function buildITermOsascript(
   placement: ITermPlacement,
   session: string,
   innerScriptPath: string,
+  tmuxBinary: string = "tmux",
 ): string {
   // iTerm detects `tmux -CC` and surfaces tmux windows as native iTerm
   // tabs/windows (control mode).
-  const tmuxCmd = `tmux -CC new-session -A -s ${shSingleQuote(session)} ${shSingleQuote(`bash ${innerScriptPath}`)}`;
+  const tmuxCmd = `${shSingleQuote(tmuxBinary)} -CC new-session -A -s ${shSingleQuote(session)} ${shSingleQuote(`bash ${innerScriptPath}`)}`;
   const cmd = osaQuote(tmuxCmd);
 
   if (placement === "new-window") {

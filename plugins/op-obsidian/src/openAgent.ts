@@ -67,6 +67,7 @@ export async function openAgent(
     terminalApp: settings.terminal,
     tmuxSession,
     iTermPlacement: settings.iTermPlacement,
+    tmuxBinary: settings.tmuxBinary,
   });
 
   return {

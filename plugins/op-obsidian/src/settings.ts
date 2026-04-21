@@ -19,6 +19,7 @@ export interface OpSettings {
   workingDirs: Record<string, string>;
   terminal: "Terminal" | "iTerm";
   iTermPlacement: ITermPlacement;
+  tmuxBinary: string;
 }
 
 export const DEFAULT_SETTINGS: OpSettings = {
@@ -35,6 +36,7 @@ export const DEFAULT_SETTINGS: OpSettings = {
   workingDirs: {},
   terminal: "Terminal",
   iTermPlacement: "new-tab",
+  tmuxBinary: "/opt/homebrew/bin/tmux",
 };
 
 export function mergeSettings(loaded: unknown): OpSettings {
@@ -57,6 +59,9 @@ export function mergeSettings(loaded: unknown): OpSettings {
   if (l.terminal === "Terminal" || l.terminal === "iTerm") base.terminal = l.terminal;
   if (l.iTermPlacement === "new-tab" || l.iTermPlacement === "new-window") {
     base.iTermPlacement = l.iTermPlacement;
+  }
+  if (typeof l.tmuxBinary === "string" && l.tmuxBinary.trim()) {
+    base.tmuxBinary = l.tmuxBinary.trim();
   }
   return base;
 }
@@ -255,6 +260,21 @@ export class OpSettingsTab extends PluginSettingTab {
             s.terminal = v as "Terminal" | "iTerm";
             await this.plugin.saveSettings();
           }),
+      );
+
+    new Setting(containerEl)
+      .setName("tmux binary")
+      .setDesc(
+        "Absolute path to the tmux executable. Obsidian's PATH omits /opt/homebrew/bin, so bare `tmux` fails on Apple Silicon brew installs — prefer /opt/homebrew/bin/tmux or /usr/local/bin/tmux.",
+      )
+      .addText((t) =>
+        t.setValue(s.tmuxBinary).onChange(async (v) => {
+          const trimmed = v.trim();
+          if (trimmed) {
+            s.tmuxBinary = trimmed;
+            await this.plugin.saveSettings();
+          }
+        }),
       );
 
     new Setting(containerEl)

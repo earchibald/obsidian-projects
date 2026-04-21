@@ -22,8 +22,14 @@ describe("buildITermOsascript", () => {
     const out = buildITermOsascript("new-window", "op-OP-37", script);
     expect(out).toContain("create window with default profile command");
     expect(out).not.toContain("if (count of windows)");
-    expect(out).toContain("tmux -CC new-session -A -s 'op-OP-37'");
+    expect(out).toContain("-CC new-session -A -s 'op-OP-37'");
+    expect(out).toContain("'tmux'");
     expect(out).toContain(`'bash ${script}'`);
+  });
+
+  it("honors a custom tmux binary path", () => {
+    const out = buildITermOsascript("new-window", "op-OP-37", script, "/opt/homebrew/bin/tmux");
+    expect(out).toContain("'/opt/homebrew/bin/tmux' -CC");
   });
 
   it("new-tab variant falls back to new window if none open", () => {
