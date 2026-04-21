@@ -10,8 +10,10 @@ import {
   IssuePickerModal,
   NewIssueModal,
   ProjectSuggestModal,
+  ScaffoldProjectModal,
   SetPrModal,
 } from "./modals";
+import { scaffoldProject, type ScaffoldProjectResult } from "./scaffoldProject";
 import { workIssue } from "./workIssue";
 import { appendCommit, setPr } from "./commits";
 import { writeUriResponse, type UriResponsePayload } from "./uriResponse";
@@ -51,6 +53,12 @@ export default class OpPlugin extends Plugin {
 
     this.bus.on("*", (ev: LifecycleEvent) => {
       console.debug("[op-obsidian]", ev.kind, "entry" in ev ? ev.entry.path : ev.path);
+    });
+
+    this.addCommand({
+      id: "op-scaffold",
+      name: "op: scaffold new project",
+      callback: () => this.runScaffoldCommand(),
     });
 
     this.addCommand({
@@ -144,6 +152,10 @@ export default class OpPlugin extends Plugin {
       },
     });
 
+    this.registerObsidianProtocolHandler("op-scaffold", (params) => {
+      this.runUri("op-scaffold", params, (p) => this.handleOpScaffoldUri(p));
+    });
+
     this.registerObsidianProtocolHandler("op-new", (params) => {
       this.handleOpNewUri(params).catch((err) => {
         console.error("[op-obsidian] op-new URI failed", err);
@@ -199,6 +211,19 @@ export default class OpPlugin extends Plugin {
     );
 
     this.registerCliHandler(
+      "op-scaffold",
+      "Scaffold a new project: create Projects/<slug>/ with <slug>.base + STATUS.md, optionally seed issue.",
+      {
+        slug: { value: "<slug>", description: "Project slug (lowercase, hyphens)" },
+        prefix: { value: "<PREFIX>", description: "Issue id prefix (uppercase)" },
+        title: { value: "<title>", description: "Optional seed issue title" },
+        priority: { value: "<low|med|high>", description: "Seed issue priority (default: med)" },
+        scope: { value: "<lines>", description: "Seed scope bullets, newline-separated" },
+      },
+      (params) => this.handleOpScaffoldCli(params),
+    );
+
+    this.registerCliHandler(
       "op-new",
       "Create a new issue in an existing project.",
       {
@@ -244,6 +269,28 @@ export default class OpPlugin extends Plugin {
 
   onunload(): void {
     this.bus?.clear();
+  }
+
+  private runScaffoldCommand(): void {
+    new ScaffoldProjectModal(this.app, async (input) => {
+      try {
+        const res = await scaffoldProject(this.app, this.store, {
+          slug: input.slug,
+          prefix: input.prefix,
+          seedTitle: input.seedTitle,
+          seedPriority: input.seedPriority,
+        });
+        const extra = res.seed ? ` · seeded ${res.seed.id}` : "";
+        new Notice(`op-scaffold: ${res.slug} (${res.prefix})${extra}`);
+        const status = this.app.vault.getAbstractFileByPath(res.statusPath);
+        if (status instanceof TFile) {
+          await this.app.workspace.getLeaf(false).openFile(status);
+        }
+      } catch (err: any) {
+        console.error("[op-obsidian] op-scaffold failed", err);
+        new Notice(`op-scaffold failed: ${err?.message ?? err}`);
+      }
+    }).open();
   }
 
   private runNewIssueCommand(): void {
@@ -486,6 +533,67 @@ export default class OpPlugin extends Plugin {
       new Notice(`${command} failed: ${msg}`);
       await writeUriResponse(this.app, { ok: false, command, error: msg });
     }
+  }
+
+  private async handleOpScaffoldUri(
+    params: Record<string, string>,
+  ): Promise<UriResponsePayload> {
+    const res = await this.doScaffold(params);
+    return {
+      ok: true,
+      command: "op-scaffold",
+      slug: res.slug,
+      prefix: res.prefix,
+      projectFolder: res.projectFolder,
+      basePath: res.basePath,
+      statusPath: res.statusPath,
+      seedIssueId: res.seed?.id,
+      seedPath: res.seed?.path,
+    };
+  }
+
+  private async handleOpScaffoldCli(params: Record<string, string>): Promise<string> {
+    const command = "op-scaffold";
+    try {
+      const res = await this.doScaffold(params);
+      await writeUriResponse(this.app, {
+        ok: true,
+        command,
+        slug: res.slug,
+        prefix: res.prefix,
+        projectFolder: res.projectFolder,
+        basePath: res.basePath,
+        statusPath: res.statusPath,
+        seedIssueId: res.seed?.id,
+        seedPath: res.seed?.path,
+      });
+      const seedMsg = res.seed ? ` · seeded ${res.seed.id} at ${res.seed.path}` : "";
+      return `${command}: created ${res.projectFolder} (prefix ${res.prefix})${seedMsg}`;
+    } catch (err: any) {
+      const msg = err?.message ?? String(err);
+      console.error("[op-obsidian]", command, err);
+      await writeUriResponse(this.app, { ok: false, command, error: msg });
+      return `${command} failed: ${msg}`;
+    }
+  }
+
+  private async doScaffold(params: Record<string, string>): Promise<ScaffoldProjectResult> {
+    const slug = params.slug;
+    const prefix = params.prefix;
+    if (!slug) throw new Error("--slug is required");
+    if (!prefix) throw new Error("--prefix is required");
+    const seedTitle = params.title?.trim() || undefined;
+    const seedPriority = seedTitle
+      ? ((params.priority as Priority | undefined) ?? "med")
+      : undefined;
+    const seedScope = seedTitle ? collectRepeated(params, "scope") : undefined;
+    return scaffoldProject(this.app, this.store, {
+      slug,
+      prefix,
+      seedTitle,
+      seedPriority,
+      seedScope,
+    });
   }
 
   private async handleOpNewCli(params: Record<string, string>): Promise<string> {
