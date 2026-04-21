@@ -17,12 +17,34 @@ import { appendCommit, setPr } from "./commits";
 import { writeUriResponse, type UriResponsePayload } from "./uriResponse";
 import { runResolve, type ResolveArgs, type ResolveStatus } from "./resolve";
 import type { IssueEntry, LifecycleEvent } from "./types";
+import { DEFAULT_SETTINGS, mergeSettings, OpSettingsTab, type OpSettings } from "./settings";
+import { AgentDetector } from "./agentDetect";
+import { AGENT_IDS, type AgentId } from "./agentProfiles";
+import { openAgent } from "./openAgent";
 
 export default class OpPlugin extends Plugin {
   bus!: EventBus;
   store!: IssueStore;
+  settings: OpSettings = { ...DEFAULT_SETTINGS };
+  detector!: AgentDetector;
+
+  async saveSettings(): Promise<void> {
+    await this.saveData(this.settings);
+  }
 
   async onload(): Promise<void> {
+    this.settings = mergeSettings(await this.loadData());
+    this.detector = new AgentDetector((id) => {
+      const overlay = this.settings.agentOverlays[id];
+      return overlay?.binary ?? defaultBinaryFor(id);
+    });
+    // Kick a probe in the background so the first launch is instant.
+    void this.detector.refresh().catch((err) => {
+      console.debug("[op-obsidian] agent detection probe failed", err);
+    });
+
+    this.addSettingTab(new OpSettingsTab(this.app, this));
+
     this.bus = new EventBus();
     this.store = new IssueStore(this.app, this.bus);
     this.addChild(this.store);
@@ -87,6 +109,18 @@ export default class OpPlugin extends Plugin {
     });
 
     this.addCommand({
+      id: "op-open-agent",
+      name: "op: open agent for issue",
+      callback: () => this.runOpenAgentCommand(false),
+    });
+
+    this.addCommand({
+      id: "op-open-agent-pick",
+      name: "op: open agent (pick at runtime)",
+      callback: () => this.runOpenAgentCommand(true),
+    });
+
+    this.addCommand({
       id: "op-dump-store",
       name: "op: dev — dump IssueStore to console",
       callback: () => {
@@ -137,6 +171,10 @@ export default class OpPlugin extends Plugin {
       this.runUri("op-close-current-issue", params, (p) =>
         this.handleOpResolveUri(p, "op-close-current-issue", true),
       );
+    });
+
+    this.registerObsidianProtocolHandler("op-open-agent", (params) => {
+      this.runUri("op-open-agent", params, (p) => this.handleOpOpenAgentUri(p));
     });
 
     const resolveFlags = {
@@ -613,6 +651,72 @@ export default class OpPlugin extends Plugin {
     };
   }
 
+  private runOpenAgentCommand(forcePick: boolean): void {
+    const activePath = this.activeIssuePath();
+    if (activePath) {
+      const entry = this.store.byPath(activePath);
+      if (entry && entry.type === "issue") {
+        void this.doOpenAgent(entry, { forcePick });
+        return;
+      }
+    }
+    this.pickIssueInteractive((entry) => {
+      void this.doOpenAgent(entry, { forcePick });
+    });
+  }
+
+  private async doOpenAgent(
+    entry: IssueEntry,
+    opts: { forcePick?: boolean; agentOverride?: AgentId } = {},
+  ): Promise<void> {
+    try {
+      const res = await openAgent(
+        this.app,
+        this.store,
+        this.settings,
+        this.detector,
+        () => this.saveSettings(),
+        { entry, forcePick: opts.forcePick, agentOverride: opts.agentOverride },
+      );
+      if (res) {
+        new Notice(`op-open-agent: ${res.issueId} → ${res.agent} in ${res.workingDir}`);
+      }
+    } catch (err: any) {
+      console.error("[op-obsidian] op-open-agent failed", err);
+      new Notice(`op-open-agent failed: ${err?.message ?? err}`);
+    }
+  }
+
+  private async handleOpOpenAgentUri(
+    params: Record<string, string>,
+  ): Promise<UriResponsePayload> {
+    const id = params.id ?? params.issue;
+    if (!id) throw new Error("op-open-agent URI requires id");
+    const entry = this.resolveByIdOrThrow(id);
+    const agentOverride =
+      params.agent && AGENT_IDS.includes(params.agent as AgentId)
+        ? (params.agent as AgentId)
+        : undefined;
+    const forcePick = params.pick === "1" || params.pick === "true";
+    const res = await openAgent(
+      this.app,
+      this.store,
+      this.settings,
+      this.detector,
+      () => this.saveSettings(),
+      { entry, agentOverride, forcePick },
+    );
+    if (!res) throw new Error("op-open-agent was cancelled or no agent available");
+    return {
+      ok: true,
+      command: "op-open-agent",
+      issueId: res.issueId,
+      agent: res.agent,
+      workingDir: res.workingDir,
+      scriptPath: res.scriptPath,
+    };
+  }
+
   private async handleOpNewUri(params: Record<string, string>): Promise<void> {
     const slug = params.project ?? params.slug;
     const title = params.title;
@@ -632,6 +736,17 @@ export default class OpPlugin extends Plugin {
     if (file instanceof TFile) {
       await this.app.workspace.getLeaf(false).openFile(file);
     }
+  }
+}
+
+function defaultBinaryFor(id: AgentId): string {
+  switch (id) {
+    case "claude":
+      return "claude";
+    case "gemini":
+      return "gemini";
+    case "copilot":
+      return "copilot";
   }
 }
 

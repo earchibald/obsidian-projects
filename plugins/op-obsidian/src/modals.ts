@@ -2,6 +2,28 @@ import { App, FuzzySuggestModal, Modal, Notice, Setting } from "obsidian";
 import type { ProjectInfo } from "./projects";
 import type { Priority, CreateIssueInput } from "./createIssue";
 import type { IssueEntry } from "./types";
+import type { AgentId } from "./agentProfiles";
+
+export class AgentPickerModal extends FuzzySuggestModal<AgentId> {
+  constructor(
+    app: App,
+    private agents: AgentId[],
+    private defaultId: AgentId,
+    private onChoose: (id: AgentId) => void,
+  ) {
+    super(app);
+    this.setPlaceholder(`Pick agent (default: ${defaultId})`);
+  }
+  getItems(): AgentId[] {
+    return this.agents;
+  }
+  getItemText(a: AgentId): string {
+    return a === this.defaultId ? `${a} (default)` : a;
+  }
+  onChooseItem(a: AgentId): void {
+    this.onChoose(a);
+  }
+}
 
 export class IssuePickerModal extends FuzzySuggestModal<IssueEntry> {
   constructor(app: App, private items: IssueEntry[], private onChoose: (e: IssueEntry) => void) {
