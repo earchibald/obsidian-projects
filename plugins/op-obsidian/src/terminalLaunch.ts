@@ -26,20 +26,23 @@ export async function launchInTerminal(args: LaunchArgs): Promise<{ scriptPath: 
 async function writeLaunchScript(args: LaunchArgs): Promise<string> {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), "op-agent-"));
   const scriptPath = path.join(dir, "launch.command");
+  const promptPath = path.join(dir, "prompt.txt");
 
-  const marker = `OP_PROMPT_END_${Math.random().toString(36).slice(2, 10).toUpperCase()}`;
+  await fs.writeFile(promptPath, args.prompt, { mode: 0o600 });
+
   const flagsShell = args.launchFlags.map(shSingleQuote).join(" ");
   const cwdShell = shSingleQuote(args.cwd);
   const binShell = shSingleQuote(args.binary);
+  const promptShell = shSingleQuote(promptPath);
 
+  // Read the prompt from a side-file. Avoids the bash 3.2 quirk on macOS
+  // where heredocs nested inside $(...) mis-parse quote characters in the
+  // body and break the script with "unexpected EOF".
   const content = [
     "#!/bin/bash",
     "set -e",
     `cd ${cwdShell}`,
-    `PROMPT=$(cat <<'${marker}'`,
-    args.prompt,
-    marker,
-    ")",
+    `PROMPT=$(<${promptShell})`,
     `exec ${binShell} ${flagsShell} "$PROMPT"`,
     "",
   ].join("\n");
