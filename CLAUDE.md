@@ -1,5 +1,11 @@
 # obsidian-projects — project rules
 
+## Work in a git worktree for all but the simplest issues
+
+Default to an isolated worktree (`EnterWorktree`, or the `superpowers:using-git-worktrees` skill) when starting any issue that touches more than a single file or spans more than one trivial edit. Keeping the main checkout clean lets parallel work, PR review, and vault sync coexist without branch-swap churn.
+
+Skip the worktree only for the simplest issues: a one-line doc tweak, a single-field schema comment, or a typo fix. If in doubt, create the worktree — the cost is low and it's easy to exit cleanly at the end.
+
 ## After any change to `plugins/op-obsidian/`
 
 Always, in order:
