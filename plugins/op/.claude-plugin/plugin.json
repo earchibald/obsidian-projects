@@ -8,5 +8,10 @@
   "homepage": "https://github.com/earchibald/obsidian-projects",
   "repository": "https://github.com/earchibald/obsidian-projects",
   "license": "MIT",
-  "keywords": ["obsidian", "project-management", "issues", "workflow"]
+  "keywords": [
+    "obsidian",
+    "project-management",
+    "issues",
+    "workflow"
+  ]
 }
