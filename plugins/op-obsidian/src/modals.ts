@@ -117,6 +117,94 @@ export class NewIssueModal extends Modal {
   }
 }
 
+export class AppendCommitModal extends Modal {
+  private sha = "";
+  private subject = "";
+
+  constructor(
+    app: App,
+    private issue: IssueEntry,
+    private onSubmit: (sha: string, subject: string) => void,
+  ) {
+    super(app);
+  }
+
+  onOpen(): void {
+    const { contentEl } = this;
+    contentEl.empty();
+    contentEl.createEl("h2", { text: `Append commit to ${this.issue.id}` });
+
+    new Setting(contentEl).setName("SHA (7–40 hex)").addText((t) =>
+      t.setPlaceholder("abc1234").onChange((v) => (this.sha = v)),
+    );
+    new Setting(contentEl).setName("Subject").addText((t) =>
+      t.setPlaceholder("commit message subject").onChange((v) => (this.subject = v)),
+    );
+
+    new Setting(contentEl)
+      .addButton((b) =>
+        b
+          .setButtonText("Append")
+          .setCta()
+          .onClick(() => {
+            if (!this.sha.trim() || !this.subject.trim()) {
+              new Notice("Both SHA and subject are required");
+              return;
+            }
+            this.close();
+            this.onSubmit(this.sha.trim(), this.subject.trim());
+          }),
+      )
+      .addButton((b) => b.setButtonText("Cancel").onClick(() => this.close()));
+  }
+
+  onClose(): void {
+    this.contentEl.empty();
+  }
+}
+
+export class SetPrModal extends Modal {
+  private url = "";
+
+  constructor(
+    app: App,
+    private issue: IssueEntry,
+    private onSubmit: (url: string) => void,
+  ) {
+    super(app);
+  }
+
+  onOpen(): void {
+    const { contentEl } = this;
+    contentEl.empty();
+    contentEl.createEl("h2", { text: `Set PR URL on ${this.issue.id}` });
+
+    new Setting(contentEl).setName("PR URL").addText((t) =>
+      t.setPlaceholder("https://github.com/.../pull/123").onChange((v) => (this.url = v)),
+    );
+
+    new Setting(contentEl)
+      .addButton((b) =>
+        b
+          .setButtonText("Set")
+          .setCta()
+          .onClick(() => {
+            if (!/^https?:\/\//i.test(this.url.trim())) {
+              new Notice("URL must start with http(s)://");
+              return;
+            }
+            this.close();
+            this.onSubmit(this.url.trim());
+          }),
+      )
+      .addButton((b) => b.setButtonText("Cancel").onClick(() => this.close()));
+  }
+
+  onClose(): void {
+    this.contentEl.empty();
+  }
+}
+
 export class FindIssueModal extends Modal {
   private raw = "";
 
