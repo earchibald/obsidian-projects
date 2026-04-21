@@ -5,467 +5,141 @@ description: Run the Obsidian Projects workflow — scaffold new projects, creat
 
 # Obsidian Projects (op) workflow
 
-You are operating on an Obsidian vault that uses the **Projects schema**: a Jira-lite issue tracker where each project is a folder under `Projects/` and each issue/task/doc is a markdown note with structured frontmatter. This skill is the authoritative reference for that workflow.
+You are operating on an Obsidian vault that uses the **Projects schema** — a Jira-lite issue tracker where each project is a folder under `Projects/` and each issue/task/doc is a markdown note with structured frontmatter. Schema details live in [`reference/schema.md`](reference/schema.md); read it on first use or when frontmatter shape comes up.
 
-Before touching the vault, invoke the **`obsidian:obsidian-cli`** skill — it provides the CLI syntax for `property:set`, `move`, `delete`, `create`, etc. Do not guess CLI arguments.
-
-This skill has two execution paths:
-
-- **Plugin-path** — when the `op-obsidian` plugin is enabled, a single `obsidian op-<verb>` call performs the whole verb atomically inside Obsidian (creates/moves files, rewrites frontmatter, trashes TASKS, emits a JSON response). Prefer this whenever it's available: no `property:set` juggling, no `obsidian move`, no stale-index pitfalls.
-- **CLI-path** — fallback using generic `obsidian` CLI primitives (`create`, `move`, `delete`, `property:read|set`). Still the truth when the plugin isn't installed or is disabled.
-
-Detect which path you're on once per session (see [Plugin detection](#plugin-detection)) and use the matching steps inside each verb. The **CLI gotchas** section below still applies to the CLI-path and to anything outside the six `op-*` commands.
-
----
-
-## Finding the vault
-
-Do not guess the vault path or search the filesystem for it. Use the Obsidian CLI:
-
-- `obsidian vault` — prints `name` and `path` of the currently active vault (tab-separated).
-- `obsidian vaults` — lists all known vault names, one per line. Pair with `obsidian vault=<name>` to target a specific one and read its `path`.
-
-Run this once at the start of any `op` operation if you don't already know the vault path; cache it for the rest of the session. All `<vault>` placeholders in this skill refer to that path.
-
----
-
-## Plugin detection
-
-Probe once per session, cache the result, and branch every verb on it:
+All vault mutations go through the **`op-obsidian`** plugin. Probe once per session and cache the result:
 
 ```bash
 obsidian eval code='({enabled: app.plugins.enabledPlugins.has("op-obsidian"), version: app.plugins.plugins["op-obsidian"]?.manifest?.version})'
 ```
 
-`enabled: true` → use the **Plugin-path** steps inside each verb. `enabled: false` (or the key missing) → use the **CLI-path** steps.
+If the plugin is missing or disabled, **stop and ask the user to install/enable it** rather than improvising with raw `obsidian` CLI primitives — the plugin owns filename sanitization, ID numbering, frontmatter shape, atomic move-and-trash on resolve, and the JSON response payload.
 
-### Calling plugin commands
-
-All op-obsidian CLI handlers use `key=value` syntax, the same shape as the rest of the Obsidian CLI. Do **not** use `--flag` form — it won't parse.
-
-```bash
-obsidian op-work   issue=OP-27
-obsidian op-new    project=obsidian-projects title="Fix foo" priority=med
-obsidian op-append-commit issue=OP-27 sha=abc1234 subject="Refactor bar"
-obsidian op-set-pr issue=OP-27 url=https://github.com/earchibald/obsidian-projects/pull/42
-obsidian op-resolve issue=OP-27 status=resolved
-obsidian op-scaffold slug=my-thing prefix=MT title="Kickoff issue"
-```
-
-The plugin commands registered on the CLI are:
-
-| Command | Required args | Notes |
-| :--- | :--- | :--- |
-| `op-scaffold` | `slug`, `prefix` | optional `title`, `priority`, `scope` (newline-separated bullets) |
-| `op-new` | `project`, `title` | optional `priority`, `scope` |
-| `op-work` | `issue` | sets `status: in-progress`, creates the initial TASKS note if none exists |
-| `op-append-commit` | `issue`, `sha`, `subject` | deduplicates; no-op if the `<sha> <subject>` pair is already present |
-| `op-set-pr` | `issue`, `url` | scalar `pr:` frontmatter |
-| `op-resolve` / `op-close-current-issue` | `issue` (or `path`) | optional `status=wontfix`; `confirmed=true` by default for CLI callers |
-
-Each command prints a one-line summary to stdout (e.g. `op-work: OP-27 → in-progress · created OP-27.1 work.md`) **and** writes a full JSON payload to `Projects/_scratch/op-last-response.md` inside the vault. Read that scratch note if you need the structured fields (moved-to path, trashed TASKS list, etc.).
-
-### When to fall back mid-session
-
-Even with the plugin enabled, some steps still require CLI-path tools — they don't have a plugin equivalent:
-
-- Reading `prefix:` from `STATUS.md` for prefix → slug lookups (use direct filesystem scan, never `obsidian search`).
-- Scanning existing issue filenames for legacy projects.
-- Bumping the project's version file (`plugin.json` / `manifest.json` / `package.json`) — that lives in the repo, not the vault.
-- Any doc/note edit outside the six `op-*` verbs.
-
-Keep the **CLI gotchas** section below as the source of truth for those operations.
+Run `obsidian vault` once to learn the active vault path; cache it.
 
 ---
 
-## Verbs
+## Plugin commands
 
-All operations fall into one of four verbs. Slash commands (`/op:scaffold`, `/op:new`, `/op:issue`, `/op:resolve`) are thin entry points into these:
+All `op-*` commands take `key=value` arguments (not `--flag`). Each prints a one-line summary to stdout and writes a full JSON payload to `Projects/_scratch/op-last-response.md` — read that note for structured fields (paths, trashed-task list, etc.).
 
-| Verb | Purpose | Typical trigger |
-| :--- | :--- | :--- |
-| **scaffold** | Create a new project folder with base, STATUS, and frontmatter | `/op:scaffold <slug> <PREFIX> [title]` |
-| **new** | Create a new issue in an existing project | `/op:new <project-or-prefix> [description]` |
-| **work** | Start work on an existing issue (lifecycle, TASKS, resolve) | `/op:issue <project-or-prefix> [N]` |
-| **resolve** | Close the in-progress issue (set status, move file, trash tasks) | `/op:resolve` (or tail end of `work`) |
+| Command | Required | Optional | Effect |
+| :--- | :--- | :--- | :--- |
+| `op-scaffold` | `slug`, `prefix` | `title`, `priority`, `scope` | creates `Projects/<slug>/<slug>.base` + `STATUS.md`; seeds `<PREFIX>-1` if `title` given |
+| `op-new` | `project`, `title` | `priority`, `scope` | creates next-N issue with sanitized filename and schema-conformant frontmatter |
+| `op-work` | `issue` | — | sets `status: in-progress`; creates the initial TASKS note |
+| `op-append-commit` | `issue`, `sha`, `subject` | — | idempotent append to issue's `commits:` list |
+| `op-set-pr` | `issue`, `url` | — | sets scalar `pr:` |
+| `op-resolve` (or `op-close-current-issue`) | `issue` (or `path`) | `status=wontfix` | sets `status: resolved`, writes `resolved: <today>`, moves into `RESOLVED ISSUES/`, trashes linked TASKS — atomically |
 
-Each verb shares the same prerequisites: read the schema (inline below or via `reference/schema.md` for the full version), understand the project's vault state, and confirm before external actions.
+`scope` is a single value containing newline-separated bullets.
 
----
-
-## Schema (inline summary)
-
-Full version: [`reference/schema.md`](reference/schema.md). The summary below is enough for most operations.
-
-### Folder layout per project
-
-```
-Projects/<project-slug>/
-  ISSUES/           ← open issues
-  RESOLVED ISSUES/  ← closed issues (moved here on completion)
-  TASKS/            ← subtask notes (deleted on completion)
-  DOCS/             ← specs, plans, ADRs, runbooks
-  <project>.base    ← Bases dashboard
-  STATUS.md         ← embeds open-issues view + declares `prefix:`
-```
-
-### Frontmatter — ISSUES / RESOLVED ISSUES
-
-```yaml
----
-id: <PREFIX>-<N>         # e.g. JB-2 — stable, never changes
-project: <slug>          # e.g. jira-bases
-type: issue
-status: open | in-progress | blocked | resolved | wontfix
-priority: low | med | high
-created: YYYY-MM-DD
-resolved:                # set on resolve/wontfix
-assignee: <github-handle>
-commits:                 # optional; appended during work — see `work` verb
-  - <sha7> <subject>
-pr:                      # optional; PR or MR URL
-version:                 # optional; semver string set at resolve — see `work` verb
-tags:
-  - project/<slug>
-  - issue
----
-```
-
-Filename: `<PREFIX>-<N> <short-slug>.md`. Example: `JB-2 prepend id to issue filenames.md`.
-
-`commits:` and `pr:` live on the issue (not the task) so the git trail survives the trashing of TASKS on resolve, and lands in `RESOLVED ISSUES/` as a permanent record. Both optional; leave unset for meta-only projects with no code repo.
-
-### Frontmatter — TASKS
-
-```yaml
----
-id: <ISSUE-ID>.<N>       # e.g. JB-2.1
-issue: "[[<issue-filename-no-ext>]]"
-project: <slug>
-type: task
-status: pending | in-progress | completed | blocked
-tags:
-  - project/<slug>
-  - task
----
-```
-
-Lifecycle: create at session start, **trash** when the parent issue resolves.
-
-### Frontmatter — DOCS
-
-```yaml
----
-project: <slug>
-type: doc
-doc_type: spec | plan | adr | runbook
-issue: "[[<issue-filename-no-ext>]]"   # optional
-created: YYYY-MM-DD
-status: draft | accepted | superseded
-tags:
-  - project/<slug>
-  - doc
----
-```
-
-DOCS are **never** trashed on issue completion.
-
-### STATUS.md
-
-Every project root has a `STATUS.md`:
-
-```markdown
----
-project: <slug>
-prefix: <PREFIX>
-type: project-status
----
-![[<slug>.base#Open Issues]]
-```
-
-The `prefix:` field is the canonical location of the project's ID prefix — always read it from there.
-
-### Base dashboard
-
-Every project has `<project>.base` with at minimum: Open Issues, Board, Tasks by Issue, Resolved Log, Docs Index. Copy `Projects/jira-bases/jira-bases.base` as the reference implementation.
-
-### Issue ID numbering
-
-`<PREFIX>-<N>`:
-- **Prefix** comes from `STATUS.md` frontmatter. Fall back to scanning existing filenames only for legacy projects.
-- **N** = max existing N across `ISSUES/` + `RESOLVED ISSUES/`, plus 1.
-
----
-
-## Filename sanitization
-
-Issue filenames are derived from the user-supplied title: `<PREFIX>-<N> <sanitized-title>.md`. Obsidian rejects certain characters in note names — passing them straight to `obsidian create` fails with a cryptic error (see OP-15). Always sanitize before writing, and show the final filename in the confirm step so the user can adjust it.
-
-Rules (apply in order to the title portion only, never to `<PREFIX>-<N>`):
-
-1. **Replace** each character in `# ^ [ ] | \ / : ? " < > *` with a single space.
-2. **Collapse** runs of whitespace into a single space.
-3. **Trim** leading/trailing whitespace and periods (filesystems dislike trailing `.`).
-4. **Truncate** to 80 characters; if the truncation lands mid-word, cut back to the previous space.
-5. If the result is empty, fall back to the id alone: `<PREFIX>-<N>.md`.
-
-Preserve case, hyphens, commas, and apostrophes — the goal is readable titles, not aggressive kebab-casing. Existing filenames in the vault show the convention: `OP-14 skill update, task work should include tracking of work done with gitrefs.md`.
-
-Apply the same rules to any seed-issue title passed to `scaffold`.
-
----
-
-## CLI gotchas
-
-- `obsidian move` destination is `to=<path>` (not `dest=`). Full: `obsidian move path=<src> to=<dst>`.
-- `obsidian create` forces `.md`. For `.base` / `.canvas`, use the Write tool against the vault path directly.
-- `obsidian <subcommand> --help` creates a note called `Untitled N.md` (the CLI treats `--help` as content). Use `obsidian help` at the top level only; rely on the `obsidian:obsidian-cli` skill for subcommand syntax.
-- `obsidian search query="prefix: <PREFIX>"` fails with `Error: Operator "prefix" not recognized`. The CLI parses a leading `<word>:` as a search operator, so it collides with any frontmatter-style query. For prefix → slug lookups, scan `Projects/*/STATUS.md` frontmatter directly instead of using search.
-- `obsidian search` can fail wholesale with `ENOENT: no such file or directory, open '<stale-path>'` when a single entry in the vault index points at a moved or deleted file. Recovery: restart Obsidian or force a reindex. The `op` skill must not depend on `obsidian search` for correctness — use filesystem scans for deterministic lookups.
-- **There is no `property:add` / `property:append`.** The CLI exposes only `property:read`, `property:set`, and `property:remove`. To append to a list-valued property (e.g. `commits:`), read the current list, append in memory, and rewrite the whole list via `property:set name=<k> value='["item1","item2",...]' type=list path=<file>`. Guessing `property:add` fails with `Error: Command "property:add" not found. Did you mean: property:set, property:read?`.
+Prefix → slug is **not** a plugin command — scan `Projects/*/STATUS.md` directly and read the `prefix:` frontmatter to disambiguate. Do not use `obsidian search` for this (it misreads `prefix:` as a query operator).
 
 ---
 
 ## Verb: scaffold
 
-Args: `<slug> <PREFIX> [<title>]`. Creates a new project folder.
+`/op:scaffold <slug> <PREFIX> [<title>]`
 
-### Plugin-path (preferred)
-
-```bash
-obsidian op-scaffold slug=<slug> prefix=<PREFIX> \
-  title="<optional seed title>" priority=med \
-  scope="bullet 1
-bullet 2"
-```
-
-The plugin creates `<slug>.base`, `STATUS.md` (with the correct `prefix:` and base embed), and — if `title` is passed — the seed issue `<PREFIX>-1` with sanitized filename and scope checklist. Read `Projects/_scratch/op-last-response.md` for the exact paths (`projectFolder`, `basePath`, `statusPath`, `seedPath`).
-
-Still validate the slug locally (lowercase + hyphens, `Projects/<slug>/` doesn't exist) before calling — the plugin will reject duplicates, but a local check produces a clearer error.
-
-### CLI-path (fallback)
-
-1. Validate: slug lowercase + hyphens, `Projects/<slug>/` does not exist.
-2. Read `reference/schema.md` (if you haven't) and `Projects/jira-bases/jira-bases.base` as reference.
-3. Write:
-   - `Projects/<slug>/<slug>.base` — derived from jira-bases, with `file.inFolder("Projects/<slug>")` and `project == "<slug>"`.
-   - `Projects/<slug>/STATUS.md` — frontmatter with `prefix: <PREFIX>`, body `![[<slug>.base#Open Issues]]`.
-   - Optional seed issue `<PREFIX>-1` only if `<title>` was supplied. Run the title through [Filename sanitization](#filename-sanitization) before building the path.
-4. Report: files created, note that TASKS/ and RESOLVED ISSUES/ materialize on first use, suggest `/op:new <slug>` next.
+1. Validate `slug` (lowercase + hyphens, `Projects/<slug>/` doesn't already exist).
+2. Run `obsidian op-scaffold slug=<slug> prefix=<PREFIX> [title="…"] [priority=med] [scope="bullet 1\nbullet 2"]`.
+3. Report `projectFolder`, `basePath`, `statusPath`, and `seedPath` (if any) from the JSON response. Suggest `/op:new <slug>` next.
 
 ---
 
 ## Verb: new
 
-Args: `<project-or-prefix> [description]`. Creates a new issue.
+`/op:new <project-or-prefix> [description]`
 
-### Plugin-path (preferred)
-
-Still gather scope and confirm the title/priority with the user first — issue creation is a commitment artifact. Then:
-
-```bash
-obsidian op-new project=<slug> title="<title>" priority=<low|med|high> \
-  scope="bullet 1
-bullet 2"
-```
-
-The plugin picks the next N, sanitizes the filename, and writes schema-conformant frontmatter + body. Read `Projects/_scratch/op-last-response.md` for the issue id and vault path.
-
-Prefix → slug resolution still runs CLI-path-style (scan `Projects/*/STATUS.md` for matching `prefix:`); the plugin's `project=` argument takes a **slug**, not a prefix.
-
-### CLI-path (fallback)
-
-1. **Resolve project**: if first token matches a `Projects/*/` folder, use as slug; else treat as PREFIX and resolve by **direct scan** — read every `Projects/*/STATUS.md` and pick the one whose frontmatter `prefix:` equals `<PREFIX>`. Legacy fallback: scan existing `Projects/*/ISSUES/<PREFIX>-*.md` filenames. Do **not** use `obsidian search` here — it collides with the `prefix:` operator syntax and can crash on a stale index (see CLI gotchas).
-2. **Read prefix**: `obsidian property:read name=prefix path="Projects/<slug>/STATUS.md"`. Legacy fallback: scan existing issue filenames. If unknown, ask user; once supplied, write to STATUS.md with `property:set name=prefix value=<PREFIX> path="Projects/<slug>/STATUS.md"` before continuing.
-3. **Next N**: max N across `ISSUES/` + `RESOLVED ISSUES/` + 1. Start at 1 if none.
-4. **Gather scope** based on description length:
-   - **None** → ask interactively: title, priority (default `med`), scope bullets (optional).
-   - **Brief** (≤~140 chars) → propose title, filename slug, priority guess, 2–5 bullet checklist. Confirm.
-   - **Detailed** (multi-line) → propose title, filename slug, priority, summary paragraph + checklist. Preserve explicit acceptance criteria verbatim. Confirm.
-5. **Always confirm** before writing, even in auto mode. Issue creation is a commitment artifact.
-6. **Write** via `obsidian create … silent`:
-   - Path: `Projects/<slug>/ISSUES/<PREFIX>-<N> <sanitized-title>.md` — apply the rules in [Filename sanitization](#filename-sanitization) before building the path. Never pass the raw title straight to `obsidian create`.
-   - Frontmatter: schema-conformant, `status: open`, `assignee: earchibald` unless overridden.
-   - Body: `# <Title>` + scope. Keep the raw title in the `# <Title>` body heading even when the filename was sanitized — the heading is lossless, the filename is sanitized for the filesystem.
-7. **Do not** set `status: in-progress` — that's the `work` verb.
-8. Report: file path + suggest `/op:issue <PREFIX>-<N>`.
+1. Resolve `project-or-prefix` to a slug (folder match, else prefix scan over STATUS.md).
+2. Gather scope by description length:
+   - **None** → ask interactively for title, priority (default `med`), optional scope bullets.
+   - **Brief** (≤~140 chars) → propose title, priority guess, 2–5 bullet checklist; confirm.
+   - **Detailed** → propose title, priority, summary paragraph + checklist; preserve any explicit acceptance criteria verbatim; confirm.
+3. **Always confirm** before writing — even in auto mode. Issue creation is a commitment artifact.
+4. Run `obsidian op-new project=<slug> title="<title>" priority=<low|med|high> [scope="bullet 1\nbullet 2"]`.
+5. Report the new id and path; suggest `/op:issue <PREFIX>-<N>`.
 
 ---
 
-## Verb: work (issue)
+## Verb: work
 
-Args: `<project-or-prefix> [<N-or-ID>]`. Resume or start work on an issue.
+`/op:issue <project-or-prefix> [<N-or-ID>]`
 
-### Plugin-path (preferred)
+### Pick the issue
 
-Once you know the issue id:
-
-```bash
-obsidian op-work issue=<PREFIX>-<N>
-```
-
-This one call sets `status: in-progress` and creates the initial TASKS note if none exists. Follow up with more TASKS notes for additional subtasks — there is currently no plugin command for multi-task creation, so use `obsidian create` per the CLI-path schema.
-
-Mid-work commit/PR tracking:
-
-```bash
-obsidian op-append-commit issue=<PREFIX>-<N> sha=<sha7> subject="<commit subject>"
-obsidian op-set-pr        issue=<PREFIX>-<N> url=<pr-url>
-```
-
-`op-append-commit` deduplicates — safe to call repeatedly. Neither command touches the repo; run `git rev-parse --short=7 HEAD` / `git log -1 --pretty=%s` yourself to get `sha` and `subject`.
-
-Issue-file discovery (prefix → slug, picking the lowest-numbered `in-progress`/`open` issue when no N is given) still runs CLI-path-style; once you've picked the id, the plugin takes over.
-
-### Resolve the issue file
-
-- Accept any of: `jira-bases 3`, `jira-bases JB-3`, `JB 3`, `JB-3`, or `jira-bases` / `JB` alone (auto-pick next).
-- Prefix → slug: **direct scan** — read every `Projects/*/STATUS.md` and pick the one whose frontmatter `prefix:` equals `<PREFIX>`. Legacy fallback: scan `Projects/*/ISSUES/<PREFIX>-*.md` and `Projects/*/RESOLVED ISSUES/<PREFIX>-*.md`. If multiple matches: stop and ask. Do **not** use `obsidian search` here — it collides with the `prefix:` operator syntax and can crash on a stale index (see CLI gotchas).
-- With N: find filename starting with `<PREFIX>-<N> ` in `ISSUES/` then `RESOLVED ISSUES/`.
-- Without N: prefer lowest-numbered `status: in-progress`; else lowest-numbered `open`; else stop and report.
+Accepts `slug N`, `slug PREFIX-N`, `PREFIX N`, `PREFIX-N`, or just `slug`/`PREFIX` (auto-pick). Without N, prefer the lowest-numbered `in-progress`, else the lowest-numbered `open`. Multiple matches → stop and ask.
 
 ### Start
 
-1. Set `status: in-progress` on the issue.
-2. **If body is empty or one line**: scope is ambiguous — state your interpretation and confirm before implementing, even in auto mode.
-3. **Reconcile scope vs. reality**: re-read scope and check each item against current repo/vault state. Skip items already satisfied; don't redo done work.
-4. **Verify plugin dependencies** (Templater, Dataview, etc.) before implementing: `obsidian eval code='Object.keys(app.plugins.plugins)'`. If missing, note as manual follow-up; proceed only if the deliverable is still useful without.
-5. **Flag stale schema**: if schema contradicts observed vault state (filename convention drifted, etc.), surface the discrepancy.
-6. **Create TASKS notes in `Projects/<slug>/TASKS/` before any implementation work.** One note per logical subtask. Always — even a single-step issue gets one task note. No exceptions, no "trivial" escape hatch. The task list is what you're about to do; writing it down is how you plan.
-7. Confirm before any action affecting shared systems (GitHub push, release, deploy, external API).
+1. `obsidian op-work issue=<PREFIX>-<N>`.
+2. If the body is empty or one line, scope is ambiguous — state your interpretation and confirm before implementing, even in auto mode.
+3. Reconcile scope vs. current repo/vault state — skip items already done; flag drift between the schema and observed reality.
+4. The plugin creates the first TASKS note for you. For additional logical subtasks, create more TASKS notes (`obsidian create` is fine for these auxiliary notes — they're trashed at resolve).
+5. Confirm before any action affecting shared systems (push, release, deploy, external API).
 
-### Track git refs as work lands
+### Track refs as work lands
 
-After each commit that advances the in-progress issue, append `<sha7> <subject>` to the issue's `commits:` list. When a PR is opened for the issue, set `pr:` to the URL. The resolve verb records the shipped release as `version:` — see [Semver bumping](#semver-bumping) below.
-
-**Plugin-path**: `obsidian op-append-commit issue=<PREFIX>-<N> sha=<sha7> subject="<subject>"` for each commit, and `obsidian op-set-pr issue=<PREFIX>-<N> url=<url>` once the PR is open. Both are idempotent.
-
-**CLI-path fallback** — there is **no `property:add` / `property:append`** CLI verb (see CLI gotchas). Appending to a list property is a read → append-in-memory → `property:set` (rewrite whole list) cycle:
+After each commit on this issue:
 
 ```bash
-ISSUE="Projects/<slug>/ISSUES/<PREFIX>-<N> <title>.md"
-sha=$(git -C <repo> rev-parse --short=7 HEAD)
-sub=$(git -C <repo> log -1 --pretty=%s)
-new="$sha $sub"
-
-# 1. Read the current list (YAML — one "- item" per line, or empty).
-current=$(obsidian property:read name=commits path="$ISSUE")
-
-# 2. Build the new list in memory, then 3. rewrite it whole.
-#    Pass a JSON array as the value and type=list.
-obsidian property:set name=commits type=list \
-  value='["<sha1> <subj1>","<sha2> <subj2>","'"$new"'"]' \
-  path="$ISSUE"
+sha=$(git rev-parse --short=7 HEAD)
+sub=$(git log -1 --pretty=%s)
+obsidian op-append-commit issue=<PREFIX>-<N> sha="$sha" subject="$sub"
 ```
 
-For `pr:` (scalar), a plain `property:set name=pr value=<url> path="$ISSUE"` is fine.
+When a PR opens: `obsidian op-set-pr issue=<PREFIX>-<N> url=<pr-url>`.
 
-The trail lives on the issue so it survives TASKS being trashed at resolve time. Skip this step for meta-only projects with no git repo.
+Skip both for meta-only projects with no git repo.
 
-### Semver bumping
+### Semver bumping (at resolve time)
 
-Every issue that ships code also bumps the project's version file per semver. The bump is part of the **resolve** step — one bump per issue — and the shipped version is recorded on the issue as `version:`.
+Every issue that ships code bumps the project's version file — one bump per issue, recorded as `version:` on the issue.
 
-**Version file.** Use whichever the project ships:
-- `<repo>/plugins/<name>/.claude-plugin/plugin.json` for Claude Code plugins
-- `<repo>/manifest.json` for Obsidian community plugins
-- `<repo>/package.json` for node packages
+**Files** (bump in lockstep if multiple ship):
+- `<repo>/plugins/<name>/.claude-plugin/plugin.json` (Claude Code plugins)
+- `<repo>/manifest.json` (Obsidian community plugins)
+- `<repo>/package.json` (node packages)
 
-If a project ships multiple (e.g. plugin.json and manifest.json kept in sync), bump all of them together.
+**Classify**:
+- **patch** — docs, bug fixes, internal refactors, schema clarifications.
+- **minor** — new user-facing behavior (new verb, new slash command, new optional field, additive arg).
+- **major** — breaking change (removed/renamed field, removed verb, schema migration). Confirm before bumping major.
 
-**Classifying the bump** (read the issue scope + diff):
-- **patch** (`0.1.6 → 0.1.7`) — docs, skill-text tweaks, bug fixes, internal refactors, schema clarifications that don't change the data model.
-- **minor** (`0.1.6 → 0.2.0`) — new user-facing behavior: new verb, new slash command, new optional frontmatter field, additive CLI argument.
-- **major** (`0.1.6 → 1.0.0`) — breaking change: removed/renamed frontmatter field, removed verb, incompatible schema change requiring vault migration. Flag and confirm with the user before bumping major.
-
-Pre-`1.0.0` projects MAY treat breaking changes as minor, but prefer an explicit major bump once the schema stabilizes.
-
-**When to bump.** At resolve time, as part of the final commit that closes the issue. Convention is to mention the bump in the commit subject (e.g. `Document foo (OP-NN); bump to 0.1.7`). Do **not** bump per-commit mid-issue — the version records the release that contains the work, not the number of commits.
-
-**Record it on the issue.** Before moving the issue to `RESOLVED ISSUES/`, set `version:` to the new semver string:
-
-```bash
-obsidian property:set name=version value=0.1.7 path="$ISSUE"
-```
-
-Skip this step for meta-only projects with no version file.
-
-### Finish
-
-See the **resolve** verb below.
+Pre-`1.0.0` projects MAY treat breakage as minor; prefer explicit major once the schema stabilizes. Skip entirely for meta-only projects with no version file.
 
 ---
 
 ## Verb: resolve
 
-Close the in-progress issue.
+`/op:resolve` (or run at the tail of `work`).
 
-### Plugin-path (preferred for the vault transition)
-
-After user confirmation (step 1 below), the version bump + commits steps still run in the repo (CLI-path, Write tool), but the **vault lifecycle transition** collapses to:
-
-```bash
-obsidian op-resolve issue=<PREFIX>-<N> status=resolved   # or status=wontfix
-```
-
-The plugin sets `status: resolved`, writes `resolved: <today>`, moves the file into `RESOLVED ISSUES/`, and trashes linked TASKS notes — all atomically. Read `Projects/_scratch/op-last-response.md` for the `movedTo` path and the list of trashed task paths.
-
-If you're already on the issue note in Obsidian and don't want to retype the id, `obsidian op-close-current-issue` falls back to the active file.
-
-### Steps (both paths)
-
-1. **Stop and get explicit user approval before making any changes.** Show the user the planned lifecycle transition:
-   - Source → target: `Projects/<slug>/ISSUES/<filename>` → `Projects/<slug>/RESOLVED ISSUES/<filename>`
-   - Frontmatter change: `status` → `resolved` (or `wontfix`), `resolved` → `<today>`
-   - TASKS notes to trash: list each path
+1. **Stop and get explicit user approval** — even in auto mode. Show the planned transition:
+   - Source → target: `Projects/<slug>/ISSUES/<filename>` → `…/RESOLVED ISSUES/<filename>`
+   - Frontmatter: `status` → `resolved` (or `wontfix`), `resolved` → `<today>`
+   - TASKS to trash (list each path)
    - `commits:` status: "set" / "empty — will back-fill from git log" / "empty — skipping (no repo)"
-   - Version bump: "`<file>`: `<old>` → `<new>` (`patch`/`minor`/`major`)" — or "skipping (no version file)". See [Semver bumping](#semver-bumping) for classification.
-   Proceed only after the user confirms. This gate applies even in auto mode — moving an issue to `RESOLVED ISSUES/` is the closing commitment and must not be implicit.
-2. **Back-fill git refs if missing.** If the project has a git repo and the issue's `commits:` list is empty, offer to back-fill before moving. Scan `git log` for commits whose message references the issue id (e.g. `(OP-14)` or the issue number) since the last resolved-issue date, and append each `<sha7> <subject>` to `commits:`. Skip for meta-only projects with no repo.
-3. **Bump the version file** per semver (see [Semver bumping](#semver-bumping)), commit it (with the issue id in the subject), append the bump commit's `<sha7> <subject>` to `commits:` (plugin-path: `obsidian op-append-commit …`), and set `version:` on the issue to the new semver. Skip for meta-only projects with no version file.
-4. Transition the issue in the vault:
-   - **Plugin-path**: `obsidian op-resolve issue=<PREFIX>-<N>` (or `status=wontfix`) — this handles steps 4–6 atomically.
-   - **CLI-path**: set `status: resolved` and `resolved: <today>` via `property:set`; `obsidian move` the file into `Projects/<slug>/RESOLVED ISSUES/`; then `obsidian delete` each TASKS note (trash, not permanent).
-5. **Do NOT delete DOCS.**
-6. Output:
-   1. External changes (URLs, commands run)
-   2. Vault changes (files moved/created/deleted)
-   3. Manual follow-ups for the user
-
-For `wontfix`, same flow but pass `status=wontfix` (plugin-path) or set `status: wontfix` directly (CLI-path).
+   - Version bump: "`<file>`: `<old>` → `<new>` (`patch`/`minor`/`major`)" — or "skipping (no version file)"
+2. **Back-fill `commits:` if empty.** Scan `git log` for commits referencing the issue id since the last resolved-issue date; append each via `obsidian op-append-commit`.
+3. **Bump the version file**, commit it (with the issue id in the subject), append that commit via `op-append-commit`, then `obsidian property:set name=version value=<new> path="<issue-path>"`. Skip for meta-only projects.
+4. `obsidian op-resolve issue=<PREFIX>-<N>` (or `status=wontfix`). The plugin moves the file, sets `status` and `resolved:`, and trashes linked TASKS atomically. **DOCS are never touched.**
+5. Report: external changes (URLs, commands run), vault changes (paths from the JSON response), and any manual follow-ups.
 
 ---
 
 ## Cross-project surfaces
 
-The `Projects/` root holds aggregate views that span every project — **leave them alone when scaffolding or cleaning up**:
-
-- `Projects/all-projects.base` — filtered to `file.inFolder("Projects") && type != "schema"`.
-- `Projects/All Projects.md` — status surface embedding the cross-project views.
-
-New projects are picked up automatically by any note with a `project` frontmatter key under `Projects/`.
-
----
+`Projects/all-projects.base` and `Projects/All Projects.md` aggregate every project — leave them alone when scaffolding/cleaning. New projects land in them automatically via the `project` frontmatter key.
 
 ## DOCS folder: superpowers symlink
 
-Projects with a code repo keep `DOCS/superpowers/` as a symlink into the repo's `docs/superpowers/` tree. The repo is canonical for everything under `superpowers/`; vault-only docs (project logs, prompt libraries) live directly in `DOCS/` alongside the symlink.
-
-One-time setup:
+Projects with a code repo keep `DOCS/superpowers/` as a symlink into `<repo>/docs/superpowers/`. Vault-only docs (logs, prompt libraries) live directly in `DOCS/` alongside the symlink. One-time setup:
 
 ```bash
 mkdir -p <vault>/Projects/<slug>/DOCS
 ln -s <repo>/docs/superpowers <vault>/Projects/<slug>/DOCS/superpowers
+obsidian eval code='(async()=>{const a=app.vault.adapter;const base="Projects/<slug>/DOCS/superpowers";for(const sub of ["plans","specs","research","testing"]){await a.reconcileFolderCreation(base+"/"+sub, base+"/"+sub);}})()'
 ```
 
-Post-setup reconciliation (Obsidian won't index files inside a mid-session symlink):
-
-```bash
-obsidian vault="<vault>" eval code='(async()=>{const a=app.vault.adapter;const base="Projects/<slug>/DOCS/superpowers";for(const sub of ["plans","specs","research","testing"]){await a.reconcileFolderCreation(base+"/"+sub, base+"/"+sub);}})()'
-```
-
-Writing docs:
-- Repo-tracked (`doc_type: plan|spec|adr|runbook` tied to code work) → `DOCS/superpowers/{plans,specs,…}/`.
-- Vault-only → directly under `DOCS/`.
-
-Meta-only projects (no code repo) keep a plain `DOCS/` folder with no symlink.
+Repo-tracked docs (`doc_type: plan|spec|adr|runbook`) → `DOCS/superpowers/{plans,specs,…}/`. Vault-only docs → `DOCS/` directly. Meta-only projects keep a plain `DOCS/` folder, no symlink.
