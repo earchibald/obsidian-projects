@@ -787,7 +787,9 @@ export default class OpPlugin extends Plugin {
         { entry, forcePick: opts.forcePick, agentOverride: opts.agentOverride },
       );
       if (res) {
-        new Notice(`op-open-agent: ${res.issueId} → ${res.agent} in ${res.workingDir}`);
+        new Notice(
+          `op-open-agent: ${res.issueId} → ${res.agent} in ${res.workingDir} (tmux: ${res.tmuxSession})`,
+        );
       }
     } catch (err: any) {
       console.error("[op-obsidian] op-open-agent failed", err);
@@ -822,6 +824,7 @@ export default class OpPlugin extends Plugin {
       agent: res.agent,
       workingDir: res.workingDir,
       scriptPath: res.scriptPath,
+      tmuxSession: res.tmuxSession,
     };
   }
 

@@ -1,6 +1,7 @@
 import { App, PluginSettingTab, Setting, Notice } from "obsidian";
 import type OpPlugin from "./main";
 import { AGENT_IDS, type AgentId, type ProfileOverlay } from "./agentProfiles";
+import type { ITermPlacement } from "./terminalLaunch";
 
 export interface InjectionSettings {
   injectBody: boolean;
@@ -17,6 +18,7 @@ export interface OpSettings {
   injection: InjectionSettings;
   workingDirs: Record<string, string>;
   terminal: "Terminal" | "iTerm";
+  iTermPlacement: ITermPlacement;
 }
 
 export const DEFAULT_SETTINGS: OpSettings = {
@@ -32,6 +34,7 @@ export const DEFAULT_SETTINGS: OpSettings = {
   },
   workingDirs: {},
   terminal: "Terminal",
+  iTermPlacement: "new-tab",
 };
 
 export function mergeSettings(loaded: unknown): OpSettings {
@@ -52,6 +55,9 @@ export function mergeSettings(loaded: unknown): OpSettings {
     base.workingDirs = { ...l.workingDirs };
   }
   if (l.terminal === "Terminal" || l.terminal === "iTerm") base.terminal = l.terminal;
+  if (l.iTermPlacement === "new-tab" || l.iTermPlacement === "new-window") {
+    base.iTermPlacement = l.iTermPlacement;
+  }
   return base;
 }
 
@@ -237,6 +243,9 @@ export class OpSettingsTab extends PluginSettingTab {
     containerEl.createEl("h2", { text: "Terminal" });
     new Setting(containerEl)
       .setName("Terminal app")
+      .setDesc(
+        "Agents are wrapped in a named tmux session (op-<issueId>) so they survive the terminal closing and can be reattached with `tmux attach -t <session>`. iTerm uses tmux control mode (`tmux -CC`); Terminal.app uses plain tmux.",
+      )
       .addDropdown((d) =>
         d
           .addOption("Terminal", "Terminal")
@@ -244,6 +253,20 @@ export class OpSettingsTab extends PluginSettingTab {
           .setValue(s.terminal)
           .onChange(async (v) => {
             s.terminal = v as "Terminal" | "iTerm";
+            await this.plugin.saveSettings();
+          }),
+      );
+
+    new Setting(containerEl)
+      .setName("iTerm window placement")
+      .setDesc("Where to open the agent when Terminal app is iTerm.")
+      .addDropdown((d) =>
+        d
+          .addOption("new-tab", "New tab in front window")
+          .addOption("new-window", "New window")
+          .setValue(s.iTermPlacement)
+          .onChange(async (v) => {
+            s.iTermPlacement = v as ITermPlacement;
             await this.plugin.saveSettings();
           }),
       );

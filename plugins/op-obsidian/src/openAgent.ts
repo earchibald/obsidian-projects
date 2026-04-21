@@ -5,7 +5,7 @@ import type { OpSettings } from "./settings";
 import { AGENT_IDS, type AgentId, type AgentProfile, mergeProfile } from "./agentProfiles";
 import { buildPrompt } from "./promptBuild";
 import { resolveWorkingDir } from "./workingDir";
-import { launchInTerminal } from "./terminalLaunch";
+import { launchInTerminal, tmuxSessionName } from "./terminalLaunch";
 import type { AgentDetector } from "./agentDetect";
 import { AgentPickerModal } from "./modals";
 
@@ -20,6 +20,7 @@ export interface OpenAgentResult {
   agent: AgentId;
   workingDir: string;
   scriptPath: string;
+  tmuxSession: string;
 }
 
 export async function openAgent(
@@ -57,15 +58,24 @@ export async function openAgent(
     vaultBasePath,
   });
 
+  const tmuxSession = tmuxSessionName(args.entry.id);
   const { scriptPath } = await launchInTerminal({
     cwd: wd.path,
     binary: det.path ?? profile.binary,
     launchFlags: profile.launchFlags,
     prompt,
     terminalApp: settings.terminal,
+    tmuxSession,
+    iTermPlacement: settings.iTermPlacement,
   });
 
-  return { issueId: args.entry.id, agent: agentId, workingDir: wd.path, scriptPath };
+  return {
+    issueId: args.entry.id,
+    agent: agentId,
+    workingDir: wd.path,
+    scriptPath,
+    tmuxSession,
+  };
 }
 
 async function pickAgent(
