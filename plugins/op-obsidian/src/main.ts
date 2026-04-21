@@ -1,4 +1,5 @@
-import { Notice, Plugin, TFile } from "obsidian";
+import { Notice, Plugin, TFile, WorkspaceLeaf } from "obsidian";
+import { OP_SIDEBAR_VIEW_TYPE, OpSidebarView } from "./sidebarView";
 import { EventBus } from "./eventBus";
 import { IssueStore } from "./issueStore";
 import { createIssue, type CreateIssueInput, type Priority } from "./createIssue";
@@ -54,6 +55,24 @@ export default class OpPlugin extends Plugin {
     this.bus.on("*", (ev: LifecycleEvent) => {
       console.debug("[op-obsidian]", ev.kind, "entry" in ev ? ev.entry.path : ev.path);
     });
+
+    this.registerView(
+      OP_SIDEBAR_VIEW_TYPE,
+      (leaf: WorkspaceLeaf) =>
+        new OpSidebarView(leaf, this.store, this.bus, () => this.settings.view),
+    );
+
+    this.addCommand({
+      id: "op-open-sidebar",
+      name: "op: open sidebar",
+      callback: () => this.revealSidebar(),
+    });
+
+    this.addRibbonIcon("list-checks", "op: open sidebar", () => this.revealSidebar());
+
+    if (this.settings.view.openOnStartup) {
+      this.app.workspace.onLayoutReady(() => this.revealSidebar());
+    }
 
     this.addCommand({
       id: "op-scaffold",
@@ -269,6 +288,17 @@ export default class OpPlugin extends Plugin {
 
   onunload(): void {
     this.bus?.clear();
+  }
+
+  private async revealSidebar(): Promise<void> {
+    const existing = this.app.workspace.getLeavesOfType(OP_SIDEBAR_VIEW_TYPE);
+    let leaf: WorkspaceLeaf | null = existing[0] ?? null;
+    if (!leaf) {
+      leaf = this.app.workspace.getRightLeaf(false);
+      if (!leaf) return;
+      await leaf.setViewState({ type: OP_SIDEBAR_VIEW_TYPE, active: true });
+    }
+    this.app.workspace.revealLeaf(leaf);
   }
 
   private runScaffoldCommand(): void {
