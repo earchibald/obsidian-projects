@@ -4,7 +4,17 @@ import { IssueStore } from "./issueStore";
 import { createIssue, type CreateIssueInput, type Priority } from "./createIssue";
 import { findIssue } from "./findIssue";
 import { listProjects } from "./projects";
-import { FindIssueModal, IssuePickerModal, NewIssueModal, ProjectSuggestModal } from "./modals";
+import {
+  AppendCommitModal,
+  FindIssueModal,
+  IssuePickerModal,
+  NewIssueModal,
+  ProjectSuggestModal,
+  SetPrModal,
+} from "./modals";
+import { workIssue } from "./workIssue";
+import { appendCommit, setPr } from "./commits";
+import { writeUriResponse, type UriResponsePayload } from "./uriResponse";
 import type { IssueEntry, LifecycleEvent } from "./types";
 
 export default class OpPlugin extends Plugin {
@@ -30,6 +40,24 @@ export default class OpPlugin extends Plugin {
       id: "op-find-issue",
       name: "op: find issue",
       callback: () => this.runFindIssueCommand(),
+    });
+
+    this.addCommand({
+      id: "op-work",
+      name: "op: work on issue",
+      callback: () => this.runWorkCommand(),
+    });
+
+    this.addCommand({
+      id: "op-append-commit",
+      name: "op: append commit to issue",
+      callback: () => this.runAppendCommitCommand(),
+    });
+
+    this.addCommand({
+      id: "op-set-pr",
+      name: "op: set PR URL on issue",
+      callback: () => this.runSetPrCommand(),
     });
 
     this.addCommand({
@@ -61,6 +89,18 @@ export default class OpPlugin extends Plugin {
         console.error("[op-obsidian] op-new URI failed", err);
         new Notice(`op-new failed: ${err.message ?? err}`);
       });
+    });
+
+    this.registerObsidianProtocolHandler("op-work", (params) => {
+      this.runUri("op-work", params, (p) => this.handleOpWorkUri(p));
+    });
+
+    this.registerObsidianProtocolHandler("op-append-commit", (params) => {
+      this.runUri("op-append-commit", params, (p) => this.handleOpAppendCommitUri(p));
+    });
+
+    this.registerObsidianProtocolHandler("op-set-pr", (params) => {
+      this.runUri("op-set-pr", params, (p) => this.handleOpSetPrUri(p));
     });
   }
 
@@ -122,6 +162,148 @@ export default class OpPlugin extends Plugin {
       console.error("[op-obsidian] createIssue failed", err);
       new Notice(`op: create failed — ${err?.message ?? err}`);
     }
+  }
+
+  private runWorkCommand(): void {
+    this.pickIssueInteractive(async (entry) => {
+      try {
+        const res = await workIssue(this.app, this.store, entry);
+        const extra = res.createdTaskPath ? ` · created ${res.createdTaskPath.split("/").pop()}` : "";
+        new Notice(`op-work: ${res.issueId} → in-progress${extra}`);
+        await this.openIssue(entry);
+      } catch (err: any) {
+        console.error("[op-obsidian] op-work failed", err);
+        new Notice(`op-work failed: ${err?.message ?? err}`);
+      }
+    });
+  }
+
+  private runAppendCommitCommand(): void {
+    this.pickIssueInteractive((entry) => {
+      new AppendCommitModal(this.app, entry, async (sha, subject) => {
+        try {
+          const res = await appendCommit(this.app, entry, { sha, subject });
+          new Notice(
+            res.added
+              ? `op: appended commit to ${res.issueId}`
+              : `op: commit already present on ${res.issueId}`,
+          );
+        } catch (err: any) {
+          console.error("[op-obsidian] op-append-commit failed", err);
+          new Notice(`op-append-commit failed: ${err?.message ?? err}`);
+        }
+      }).open();
+    });
+  }
+
+  private runSetPrCommand(): void {
+    this.pickIssueInteractive((entry) => {
+      new SetPrModal(this.app, entry, async (url) => {
+        try {
+          const res = await setPr(this.app, entry, url);
+          new Notice(`op: pr set on ${res.issueId}`);
+        } catch (err: any) {
+          console.error("[op-obsidian] op-set-pr failed", err);
+          new Notice(`op-set-pr failed: ${err?.message ?? err}`);
+        }
+      }).open();
+    });
+  }
+
+  private pickIssueInteractive(onPick: (entry: IssueEntry) => void): void {
+    new FindIssueModal(this.app, (raw) => {
+      const projects = listProjects(this.app);
+      const result = findIssue(this.store, { raw, projects });
+      if (result.matches.length === 0) {
+        new Notice(`op: no match — ${result.interpretation}`);
+        return;
+      }
+      if (result.matches.length === 1) {
+        onPick(result.matches[0]);
+        return;
+      }
+      new IssuePickerModal(this.app, result.matches, onPick).open();
+    }).open();
+  }
+
+  private resolveByIdOrThrow(id: string): IssueEntry {
+    const entry = this.store
+      .issues()
+      .find((e) => e.id === id);
+    if (!entry) throw new Error(`Issue not found: ${id}`);
+    return entry;
+  }
+
+  private runUri(
+    command: string,
+    params: Record<string, string>,
+    handler: (params: Record<string, string>) => Promise<UriResponsePayload>,
+  ): void {
+    handler(params)
+      .then((payload) => writeUriResponse(this.app, payload))
+      .catch(async (err) => {
+        console.error(`[op-obsidian] ${command} URI failed`, err);
+        const msg = err?.message ?? String(err);
+        new Notice(`${command} failed: ${msg}`);
+        await writeUriResponse(this.app, {
+          ok: false,
+          command,
+          error: msg,
+          params,
+        });
+      });
+  }
+
+  private async handleOpWorkUri(params: Record<string, string>): Promise<UriResponsePayload> {
+    const id = params.id ?? params.issue;
+    if (!id) throw new Error("op-work URI requires id");
+    const entry = this.resolveByIdOrThrow(id);
+    const res = await workIssue(this.app, this.store, entry);
+    return {
+      ok: true,
+      command: "op-work",
+      issueId: res.issueId,
+      path: res.path,
+      previousStatus: res.previousStatus,
+      createdTaskPath: res.createdTaskPath,
+    };
+  }
+
+  private async handleOpAppendCommitUri(
+    params: Record<string, string>,
+  ): Promise<UriResponsePayload> {
+    const id = params.id ?? params.issue;
+    const sha = params.sha;
+    const subject = params.subject;
+    if (!id || !sha || !subject) {
+      throw new Error("op-append-commit URI requires id, sha, subject");
+    }
+    const entry = this.resolveByIdOrThrow(id);
+    const res = await appendCommit(this.app, entry, { sha, subject });
+    return {
+      ok: true,
+      command: "op-append-commit",
+      issueId: res.issueId,
+      path: res.path,
+      entry: res.entry,
+      added: res.added,
+      commits: res.commits,
+    };
+  }
+
+  private async handleOpSetPrUri(params: Record<string, string>): Promise<UriResponsePayload> {
+    const id = params.id ?? params.issue;
+    const url = params.url ?? params.pr;
+    if (!id || !url) throw new Error("op-set-pr URI requires id and url");
+    const entry = this.resolveByIdOrThrow(id);
+    const res = await setPr(this.app, entry, url);
+    return {
+      ok: true,
+      command: "op-set-pr",
+      issueId: res.issueId,
+      path: res.path,
+      pr: res.pr,
+    };
   }
 
   private async handleOpNewUri(params: Record<string, string>): Promise<void> {
