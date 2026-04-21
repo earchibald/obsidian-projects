@@ -68,6 +68,7 @@ assignee: <github-handle>
 commits:                 # optional; appended during work — see `work` verb
   - <sha7> <subject>
 pr:                      # optional; PR or MR URL
+version:                 # optional; semver string set at resolve — see `work` verb
 tags:
   - project/<slug>
   - issue
@@ -227,7 +228,7 @@ Args: `<project-or-prefix> [<N-or-ID>]`. Resume or start work on an issue.
 
 ### Track git refs as work lands
 
-After each commit that advances the in-progress issue, append `<sha7> <subject>` to the issue's `commits:` list. When a PR is opened for the issue, set `pr:` to the URL.
+After each commit that advances the in-progress issue, append `<sha7> <subject>` to the issue's `commits:` list. When a PR is opened for the issue, set `pr:` to the URL. The resolve verb records the shipped release as `version:` — see [Semver bumping](#semver-bumping) below.
 
 There is **no `property:add` / `property:append`** CLI verb (see CLI gotchas). Appending to a list property is a read → append-in-memory → `property:set` (rewrite whole list) cycle:
 
@@ -251,6 +252,34 @@ For `pr:` (scalar), a plain `property:set name=pr value=<url> path="$ISSUE"` is 
 
 The trail lives on the issue so it survives TASKS being trashed at resolve time. Skip this step for meta-only projects with no git repo.
 
+### Semver bumping
+
+Every issue that ships code also bumps the project's version file per semver. The bump is part of the **resolve** step — one bump per issue — and the shipped version is recorded on the issue as `version:`.
+
+**Version file.** Use whichever the project ships:
+- `<repo>/plugins/<name>/.claude-plugin/plugin.json` for Claude Code plugins
+- `<repo>/manifest.json` for Obsidian community plugins
+- `<repo>/package.json` for node packages
+
+If a project ships multiple (e.g. plugin.json and manifest.json kept in sync), bump all of them together.
+
+**Classifying the bump** (read the issue scope + diff):
+- **patch** (`0.1.6 → 0.1.7`) — docs, skill-text tweaks, bug fixes, internal refactors, schema clarifications that don't change the data model.
+- **minor** (`0.1.6 → 0.2.0`) — new user-facing behavior: new verb, new slash command, new optional frontmatter field, additive CLI argument.
+- **major** (`0.1.6 → 1.0.0`) — breaking change: removed/renamed frontmatter field, removed verb, incompatible schema change requiring vault migration. Flag and confirm with the user before bumping major.
+
+Pre-`1.0.0` projects MAY treat breaking changes as minor, but prefer an explicit major bump once the schema stabilizes.
+
+**When to bump.** At resolve time, as part of the final commit that closes the issue. Convention is to mention the bump in the commit subject (e.g. `Document foo (OP-NN); bump to 0.1.7`). Do **not** bump per-commit mid-issue — the version records the release that contains the work, not the number of commits.
+
+**Record it on the issue.** Before moving the issue to `RESOLVED ISSUES/`, set `version:` to the new semver string:
+
+```bash
+obsidian property:set name=version value=0.1.7 path="$ISSUE"
+```
+
+Skip this step for meta-only projects with no version file.
+
 ### Finish
 
 See the **resolve** verb below.
@@ -266,13 +295,15 @@ Close the in-progress issue.
    - Frontmatter change: `status` → `resolved` (or `wontfix`), `resolved` → `<today>`
    - TASKS notes to trash: list each path
    - `commits:` status: "set" / "empty — will back-fill from git log" / "empty — skipping (no repo)"
+   - Version bump: "`<file>`: `<old>` → `<new>` (`patch`/`minor`/`major`)" — or "skipping (no version file)". See [Semver bumping](#semver-bumping) for classification.
    Proceed only after the user confirms. This gate applies even in auto mode — moving an issue to `RESOLVED ISSUES/` is the closing commitment and must not be implicit.
 2. **Back-fill git refs if missing.** If the project has a git repo and the issue's `commits:` list is empty, offer to back-fill before moving. Scan `git log` for commits whose message references the issue id (e.g. `(OP-14)` or the issue number) since the last resolved-issue date, and append each `<sha7> <subject>` to `commits:`. Skip for meta-only projects with no repo.
-3. Set issue `status: resolved`, `resolved: <today>`.
-4. `obsidian move` the issue to `Projects/<slug>/RESOLVED ISSUES/`.
-5. Delete TASKS notes via `obsidian delete` (trash, not permanent).
-6. **Do NOT delete DOCS.**
-7. Output:
+3. **Bump the version file** per semver (see [Semver bumping](#semver-bumping)), commit it (with the issue id in the subject), append the bump commit's `<sha7> <subject>` to `commits:`, and set `version:` on the issue to the new semver. Skip for meta-only projects with no version file.
+4. Set issue `status: resolved`, `resolved: <today>`.
+5. `obsidian move` the issue to `Projects/<slug>/RESOLVED ISSUES/`.
+6. Delete TASKS notes via `obsidian delete` (trash, not permanent).
+7. **Do NOT delete DOCS.**
+8. Output:
    1. External changes (URLs, commands run)
    2. Vault changes (files moved/created/deleted)
    3. Manual follow-ups for the user
