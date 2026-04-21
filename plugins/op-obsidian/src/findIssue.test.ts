@@ -80,4 +80,13 @@ describe("nextIssueNumber", () => {
   it("returns 1 for an empty project", () => {
     expect(nextIssueNumber(store, "ghost")).toBe(1);
   });
+
+  it("does not reuse IDs from resolved issues when ISSUES/ is empty", () => {
+    const resolvedOnly: IssueEntry[] = [
+      issue("XX-1", "x-proj", "Projects/x-proj/RESOLVED ISSUES/XX-1 a.md", "resolved"),
+      issue("XX-2", "x-proj", "Projects/x-proj/RESOLVED ISSUES/XX-2 b.md", "resolved"),
+    ];
+    const s = { issues: () => resolvedOnly } as any;
+    expect(nextIssueNumber(s, "x-proj")).toBe(3);
+  });
 });
