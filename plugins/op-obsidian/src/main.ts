@@ -138,6 +138,27 @@ export default class OpPlugin extends Plugin {
         this.handleOpResolveUri(p, "op-close-current-issue", true),
       );
     });
+
+    const resolveFlags = {
+      issue: { value: "<id>", description: "Issue id (e.g. OP-24) or vault path" },
+      path: { value: "<path>", description: "Vault path to the issue note" },
+      status: { value: "<resolved|wontfix>", description: "Target status (default: resolved)" },
+      confirmed: { description: "Skip the confirmation modal (default: true for CLI)" },
+    };
+
+    this.registerCliHandler(
+      "op-resolve",
+      "Resolve an issue (status → resolved, move to RESOLVED ISSUES/, trash linked TASKS).",
+      resolveFlags,
+      (params) => this.handleOpResolveCli(params, "op-resolve", false),
+    );
+
+    this.registerCliHandler(
+      "op-close-current-issue",
+      "Close an issue — same as op-resolve but falls back to the active issue when no id/path given.",
+      resolveFlags,
+      (params) => this.handleOpResolveCli(params, "op-close-current-issue", true),
+    );
   }
 
   onunload(): void {
@@ -383,6 +404,41 @@ export default class OpPlugin extends Plugin {
       const msg = err?.message ?? String(err);
       new Notice(`${command} failed: ${msg}`);
       await writeUriResponse(this.app, { ok: false, command, error: msg });
+    }
+  }
+
+  private async handleOpResolveCli(
+    params: Record<string, string>,
+    command: string,
+    fallbackActive: boolean,
+  ): Promise<string> {
+    try {
+      const args = this.resolveUriArgs(params);
+      // CLI caller is an agent — default to confirmed unless explicitly opted out.
+      if (!("confirmed" in params)) args.confirmed = true;
+      if (fallbackActive && !args.issue && !args.path) {
+        const p = this.activeIssuePath();
+        if (p) args.path = p;
+      }
+      const result = await runResolve(this.app, this.store, args);
+      await writeUriResponse(this.app, {
+        ok: result.ok,
+        command,
+        issueId: result.issueId,
+        path: result.sourcePath,
+        movedTo: result.movedTo,
+        trashed: result.trashed,
+        status: result.status,
+        error: result.error,
+      });
+      if (!result.ok) return `${command} failed: ${result.error ?? "unknown error"}`;
+      const tCount = result.trashed?.length ?? 0;
+      return `${command}: ${result.issueId} → ${result.status} · moved to ${result.movedTo} · trashed ${tCount} task(s)`;
+    } catch (err: any) {
+      const msg = err?.message ?? String(err);
+      console.error("[op-obsidian]", command, err);
+      await writeUriResponse(this.app, { ok: false, command, error: msg });
+      return `${command} failed: ${msg}`;
     }
   }
 
