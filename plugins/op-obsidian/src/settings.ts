@@ -11,6 +11,14 @@ export interface InjectionSettings {
   extraPreamble: string;
 }
 
+export type SidebarTab = "issues" | "in-flight" | "resolved";
+
+export interface ViewSettings {
+  defaultTab: SidebarTab;
+  recentResolvedLimit: number;
+  openOnStartup: boolean;
+}
+
 export interface OpSettings {
   defaultAgent: AgentId;
   alwaysPick: boolean;
@@ -20,6 +28,7 @@ export interface OpSettings {
   terminal: "Terminal" | "iTerm";
   iTermPlacement: ITermPlacement;
   tmuxBinary: string;
+  view: ViewSettings;
 }
 
 export const DEFAULT_SETTINGS: OpSettings = {
@@ -37,7 +46,14 @@ export const DEFAULT_SETTINGS: OpSettings = {
   terminal: "Terminal",
   iTermPlacement: "new-tab",
   tmuxBinary: "/opt/homebrew/bin/tmux",
+  view: {
+    defaultTab: "issues",
+    recentResolvedLimit: 20,
+    openOnStartup: false,
+  },
 };
+
+const SIDEBAR_TABS: ReadonlySet<SidebarTab> = new Set(["issues", "in-flight", "resolved"]);
 
 export function mergeSettings(loaded: unknown): OpSettings {
   const base: OpSettings = JSON.parse(JSON.stringify(DEFAULT_SETTINGS));
@@ -62,6 +78,14 @@ export function mergeSettings(loaded: unknown): OpSettings {
   }
   if (typeof l.tmuxBinary === "string" && l.tmuxBinary.trim()) {
     base.tmuxBinary = l.tmuxBinary.trim();
+  }
+  if (l.view && typeof l.view === "object") {
+    const v = l.view as Partial<ViewSettings>;
+    if (v.defaultTab && SIDEBAR_TABS.has(v.defaultTab)) base.view.defaultTab = v.defaultTab;
+    if (typeof v.recentResolvedLimit === "number" && v.recentResolvedLimit > 0) {
+      base.view.recentResolvedLimit = Math.floor(v.recentResolvedLimit);
+    }
+    if (typeof v.openOnStartup === "boolean") base.view.openOnStartup = v.openOnStartup;
   }
   return base;
 }
@@ -289,6 +313,46 @@ export class OpSettingsTab extends PluginSettingTab {
             s.iTermPlacement = v as ITermPlacement;
             await this.plugin.saveSettings();
           }),
+      );
+
+    containerEl.createEl("h2", { text: "Sidebar view" });
+
+    new Setting(containerEl)
+      .setName("Default tab")
+      .setDesc("Tab shown when the op sidebar opens.")
+      .addDropdown((d) =>
+        d
+          .addOption("issues", "Issues")
+          .addOption("in-flight", "In flight")
+          .addOption("resolved", "Recently resolved")
+          .setValue(s.view.defaultTab)
+          .onChange(async (v) => {
+            s.view.defaultTab = v as SidebarTab;
+            await this.plugin.saveSettings();
+          }),
+      );
+
+    new Setting(containerEl)
+      .setName("Recently resolved limit")
+      .setDesc("Max issues shown in the Recently resolved tab.")
+      .addText((t) =>
+        t.setValue(String(s.view.recentResolvedLimit)).onChange(async (v) => {
+          const n = parseInt(v, 10);
+          if (Number.isFinite(n) && n > 0) {
+            s.view.recentResolvedLimit = n;
+            await this.plugin.saveSettings();
+          }
+        }),
+      );
+
+    new Setting(containerEl)
+      .setName("Open on startup")
+      .setDesc("Reveal the op sidebar automatically when Obsidian starts.")
+      .addToggle((t) =>
+        t.setValue(s.view.openOnStartup).onChange(async (v) => {
+          s.view.openOnStartup = v;
+          await this.plugin.saveSettings();
+        }),
       );
   }
 }
