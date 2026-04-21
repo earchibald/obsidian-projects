@@ -227,6 +227,85 @@ export class SetPrModal extends Modal {
   }
 }
 
+export interface ScaffoldModalInput {
+  slug: string;
+  prefix: string;
+  seedTitle?: string;
+  seedPriority?: Priority;
+}
+
+export class ScaffoldProjectModal extends Modal {
+  private slug = "";
+  private prefix = "";
+  private seedTitle = "";
+  private seedPriority: Priority = "med";
+
+  constructor(app: App, private onSubmit: (input: ScaffoldModalInput) => void) {
+    super(app);
+  }
+
+  onOpen(): void {
+    const { contentEl } = this;
+    contentEl.empty();
+    contentEl.createEl("h2", { text: "Scaffold new project" });
+
+    new Setting(contentEl)
+      .setName("Slug")
+      .setDesc("Lowercase, hyphen-separated — becomes the folder under Projects/")
+      .addText((t) =>
+        t.setPlaceholder("my-project").onChange((v) => (this.slug = v)),
+      );
+
+    new Setting(contentEl)
+      .setName("Prefix")
+      .setDesc("Uppercase issue-ID prefix, e.g. MP")
+      .addText((t) => t.setPlaceholder("MP").onChange((v) => (this.prefix = v)));
+
+    new Setting(contentEl)
+      .setName("Seed issue title (optional)")
+      .addText((t) =>
+        t.setPlaceholder("Leave blank to skip").onChange((v) => (this.seedTitle = v)),
+      );
+
+    new Setting(contentEl).setName("Seed priority").addDropdown((d) =>
+      d
+        .addOption("low", "low")
+        .addOption("med", "med")
+        .addOption("high", "high")
+        .setValue(this.seedPriority)
+        .onChange((v) => (this.seedPriority = v as Priority)),
+    );
+
+    new Setting(contentEl)
+      .addButton((b) =>
+        b
+          .setButtonText("Scaffold")
+          .setCta()
+          .onClick(() => {
+            const slug = this.slug.trim();
+            const prefix = this.prefix.trim();
+            if (!slug || !prefix) {
+              new Notice("Slug and prefix are required");
+              return;
+            }
+            this.close();
+            const seedTitle = this.seedTitle.trim() || undefined;
+            this.onSubmit({
+              slug,
+              prefix,
+              seedTitle,
+              seedPriority: seedTitle ? this.seedPriority : undefined,
+            });
+          }),
+      )
+      .addButton((b) => b.setButtonText("Cancel").onClick(() => this.close()));
+  }
+
+  onClose(): void {
+    this.contentEl.empty();
+  }
+}
+
 export class FindIssueModal extends Modal {
   private raw = "";
 
