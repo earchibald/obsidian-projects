@@ -159,6 +159,49 @@ export default class OpPlugin extends Plugin {
       resolveFlags,
       (params) => this.handleOpResolveCli(params, "op-close-current-issue", true),
     );
+
+    this.registerCliHandler(
+      "op-new",
+      "Create a new issue in an existing project.",
+      {
+        project: { value: "<slug>", description: "Project slug (folder name under Projects/)" },
+        title: { value: "<title>", description: "Issue title" },
+        priority: { value: "<low|med|high>", description: "Priority (default: med)" },
+        scope: { value: "<lines>", description: "Scope bullets, newline-separated" },
+      },
+      (params) => this.handleOpNewCli(params),
+    );
+
+    this.registerCliHandler(
+      "op-work",
+      "Start or resume work on an issue (status → in-progress, create task note).",
+      {
+        issue: { value: "<id>", description: "Issue id (e.g. OP-34)" },
+        id: { value: "<id>", description: "Alias for issue" },
+      },
+      (params) => this.handleOpWorkCli(params),
+    );
+
+    this.registerCliHandler(
+      "op-append-commit",
+      "Append a commit (sha + subject) to an issue's commits: list.",
+      {
+        issue: { value: "<id>", description: "Issue id (e.g. OP-34)" },
+        sha: { value: "<sha7>", description: "Short commit SHA" },
+        subject: { value: "<subject>", description: "Commit subject line" },
+      },
+      (params) => this.handleOpAppendCommitCli(params),
+    );
+
+    this.registerCliHandler(
+      "op-set-pr",
+      "Set the pr: URL on an issue.",
+      {
+        issue: { value: "<id>", description: "Issue id (e.g. OP-34)" },
+        url: { value: "<url>", description: "PR URL" },
+      },
+      (params) => this.handleOpSetPrCli(params),
+    );
   }
 
   onunload(): void {
@@ -404,6 +447,111 @@ export default class OpPlugin extends Plugin {
       const msg = err?.message ?? String(err);
       new Notice(`${command} failed: ${msg}`);
       await writeUriResponse(this.app, { ok: false, command, error: msg });
+    }
+  }
+
+  private async handleOpNewCli(params: Record<string, string>): Promise<string> {
+    const command = "op-new";
+    try {
+      const slug = params.project ?? params.slug;
+      const title = params.title;
+      if (!slug) return `${command} failed: --project is required`;
+      if (!title) return `${command} failed: --title is required`;
+      const priority = (params.priority as Priority | undefined) ?? "med";
+      const scope = collectRepeated(params, "scope");
+      const res = await createIssue(this.app, this.store, { slug, title, priority, scope });
+      await writeUriResponse(this.app, {
+        ok: true,
+        command,
+        issueId: res.id,
+        path: res.path,
+      });
+      return `${command}: created ${res.id} at ${res.path}`;
+    } catch (err: any) {
+      const msg = err?.message ?? String(err);
+      console.error("[op-obsidian]", command, err);
+      await writeUriResponse(this.app, { ok: false, command, error: msg });
+      return `${command} failed: ${msg}`;
+    }
+  }
+
+  private async handleOpWorkCli(params: Record<string, string>): Promise<string> {
+    const command = "op-work";
+    try {
+      const id = params.issue ?? params.id;
+      if (!id) return `${command} failed: --issue is required`;
+      const entry = this.resolveByIdOrThrow(id);
+      const res = await workIssue(this.app, this.store, entry);
+      await writeUriResponse(this.app, {
+        ok: true,
+        command,
+        issueId: res.issueId,
+        path: res.path,
+        previousStatus: res.previousStatus,
+        createdTaskPath: res.createdTaskPath,
+      });
+      const extra = res.createdTaskPath ? ` · created ${res.createdTaskPath.split("/").pop()}` : "";
+      return `${command}: ${res.issueId} → in-progress${extra}`;
+    } catch (err: any) {
+      const msg = err?.message ?? String(err);
+      console.error("[op-obsidian]", command, err);
+      await writeUriResponse(this.app, { ok: false, command, error: msg });
+      return `${command} failed: ${msg}`;
+    }
+  }
+
+  private async handleOpAppendCommitCli(params: Record<string, string>): Promise<string> {
+    const command = "op-append-commit";
+    try {
+      const id = params.issue ?? params.id;
+      const sha = params.sha;
+      const subject = params.subject;
+      if (!id || !sha || !subject) {
+        return `${command} failed: --issue, --sha, --subject all required`;
+      }
+      const entry = this.resolveByIdOrThrow(id);
+      const res = await appendCommit(this.app, entry, { sha, subject });
+      await writeUriResponse(this.app, {
+        ok: true,
+        command,
+        issueId: res.issueId,
+        path: res.path,
+        entry: res.entry,
+        added: res.added,
+        commits: res.commits,
+      });
+      return res.added
+        ? `${command}: appended ${res.entry} to ${res.issueId}`
+        : `${command}: ${res.entry} already present on ${res.issueId}`;
+    } catch (err: any) {
+      const msg = err?.message ?? String(err);
+      console.error("[op-obsidian]", command, err);
+      await writeUriResponse(this.app, { ok: false, command, error: msg });
+      return `${command} failed: ${msg}`;
+    }
+  }
+
+  private async handleOpSetPrCli(params: Record<string, string>): Promise<string> {
+    const command = "op-set-pr";
+    try {
+      const id = params.issue ?? params.id;
+      const url = params.url ?? params.pr;
+      if (!id || !url) return `${command} failed: --issue and --url required`;
+      const entry = this.resolveByIdOrThrow(id);
+      const res = await setPr(this.app, entry, url);
+      await writeUriResponse(this.app, {
+        ok: true,
+        command,
+        issueId: res.issueId,
+        path: res.path,
+        pr: res.pr,
+      });
+      return `${command}: ${res.issueId} pr=${res.pr}`;
+    } catch (err: any) {
+      const msg = err?.message ?? String(err);
+      console.error("[op-obsidian]", command, err);
+      await writeUriResponse(this.app, { ok: false, command, error: msg });
+      return `${command} failed: ${msg}`;
     }
   }
 
