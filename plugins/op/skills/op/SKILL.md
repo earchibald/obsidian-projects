@@ -165,6 +165,7 @@ Apply the same rules to any seed-issue title passed to `scaffold`.
 - `obsidian <subcommand> --help` creates a note called `Untitled N.md` (the CLI treats `--help` as content). Use `obsidian help` at the top level only; rely on the `obsidian:obsidian-cli` skill for subcommand syntax.
 - `obsidian search query="prefix: <PREFIX>"` fails with `Error: Operator "prefix" not recognized`. The CLI parses a leading `<word>:` as a search operator, so it collides with any frontmatter-style query. For prefix → slug lookups, scan `Projects/*/STATUS.md` frontmatter directly instead of using search.
 - `obsidian search` can fail wholesale with `ENOENT: no such file or directory, open '<stale-path>'` when a single entry in the vault index points at a moved or deleted file. Recovery: restart Obsidian or force a reindex. The `op` skill must not depend on `obsidian search` for correctness — use filesystem scans for deterministic lookups.
+- **There is no `property:add` / `property:append`.** The CLI exposes only `property:read`, `property:set`, and `property:remove`. To append to a list-valued property (e.g. `commits:`), read the current list, append in memory, and rewrite the whole list via `property:set name=<k> value='["item1","item2",...]' type=list path=<file>`. Guessing `property:add` fails with `Error: Command "property:add" not found. Did you mean: property:set, property:read?`.
 
 ---
 
@@ -228,12 +229,25 @@ Args: `<project-or-prefix> [<N-or-ID>]`. Resume or start work on an issue.
 
 After each commit that advances the in-progress issue, append `<sha7> <subject>` to the issue's `commits:` list. When a PR is opened for the issue, set `pr:` to the URL.
 
+There is **no `property:add` / `property:append`** CLI verb (see CLI gotchas). Appending to a list property is a read → append-in-memory → `property:set` (rewrite whole list) cycle:
+
 ```bash
-# After committing:
+ISSUE="Projects/<slug>/ISSUES/<PREFIX>-<N> <title>.md"
 sha=$(git -C <repo> rev-parse --short=7 HEAD)
 sub=$(git -C <repo> log -1 --pretty=%s)
-# Then via obsidian-cli, append to the issue's commits list.
+new="$sha $sub"
+
+# 1. Read the current list (YAML — one "- item" per line, or empty).
+current=$(obsidian property:read name=commits path="$ISSUE")
+
+# 2. Build the new list in memory, then 3. rewrite it whole.
+#    Pass a JSON array as the value and type=list.
+obsidian property:set name=commits type=list \
+  value='["<sha1> <subj1>","<sha2> <subj2>","'"$new"'"]' \
+  path="$ISSUE"
 ```
+
+For `pr:` (scalar), a plain `property:set name=pr value=<url> path="$ISSUE"` is fine.
 
 The trail lives on the issue so it survives TASKS being trashed at resolve time. Skip this step for meta-only projects with no git repo.
 
