@@ -611,7 +611,7 @@ export default class OpPlugin extends Plugin {
   }
 
   private runCreateGithubIssueCommand(): void {
-    this.pickIssueInteractive(async (entry) => {
+    const run = async (entry: IssueEntry) => {
       try {
         const repoPath = resolveRepoPath(this.app, this.settings, entry.project);
         if (!repoPath) {
@@ -627,7 +627,14 @@ export default class OpPlugin extends Plugin {
         console.error("[op-obsidian] op-create-github-issue failed", err);
         new Notice(`op-create-github-issue failed: ${err?.message ?? err}`);
       }
-    });
+    };
+    const activePath = this.activeIssuePath();
+    const active = activePath ? this.store.byPath(activePath) : undefined;
+    if (active && active.type === "issue") {
+      void run(active);
+      return;
+    }
+    this.pickIssueInteractive(run);
   }
 
   private runOpenGithubIssueCommand(): void {
