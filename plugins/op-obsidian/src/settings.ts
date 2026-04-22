@@ -292,7 +292,7 @@ export class OpSettingsTab extends PluginSettingTab {
     new Setting(containerEl)
       .setName("Terminal app")
       .setDesc(
-        "Agents are wrapped in a named tmux session (op-<issueId>) so they survive the terminal closing and can be reattached with `tmux attach -t <session>`. iTerm uses tmux control mode (`tmux -CC`); Terminal.app uses plain tmux.",
+        "All agents share a single tmux session (`op-agents`), one window per issue (window name = issue id). Agents survive the terminal closing — reattach with `tmux attach -t op-agents`. Re-launching an agent whose window already exists selects that window instead of creating a duplicate. iTerm uses tmux control mode (`tmux -CC`); Terminal.app uses plain tmux.",
       )
       .addDropdown((d) =>
         d

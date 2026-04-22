@@ -8,13 +8,17 @@ const pExecFile = promisify(execFile);
 
 export type ITermPlacement = "new-tab" | "new-window";
 
+// All op-obsidian agents share one tmux session; each agent is a window
+// inside it, named by issueId. Windows (not sessions) are the per-agent
+// unit — one shared session means one place to reattach everything.
+export const SHARED_TMUX_SESSION = "op-agents";
+
 export interface LaunchArgs {
   cwd: string;
   binary: string;
   launchFlags: string[];
   prompt: string;
   terminalApp: "Terminal" | "iTerm";
-  tmuxSession: string;
   iTermPlacement: ITermPlacement;
   // Absolute path or bare name of the tmux binary. Obsidian's PATH omits
   // /opt/homebrew/bin, so bare `tmux` fails on Apple Silicon brew installs.
@@ -28,28 +32,42 @@ export interface LaunchArgs {
 export interface LaunchResult {
   scriptPath: string;
   tmuxSession: string;
+  tmuxWindow: string;
 }
 
-// Launches the agent inside a named tmux session so the process survives the
-// terminal window being closed and can be re-attached by name. iTerm uses
-// tmux -CC (control mode) so tmux windows render as native iTerm tabs;
-// Terminal.app uses plain tmux since it has no control-mode integration.
 export async function launchInTerminal(args: LaunchArgs): Promise<LaunchResult> {
   if (process.platform !== "darwin") {
     throw new Error(`op: terminal launch currently supports macOS only (platform=${process.platform})`);
   }
   await assertTmuxAvailable(args.tmuxBinary);
 
-  const { innerPath, outerPath } = await writeLaunchScripts(args);
+  const session = SHARED_TMUX_SESSION;
+  const windowName = tmuxWindowName(args.issueId);
+  const { innerPath, outerPath } = await writeLaunchScripts({ args, session, windowName });
 
   if (args.terminalApp === "iTerm") {
-    const osa = buildITermOsascript(args.iTermPlacement, args.tmuxSession, innerPath, args.tmuxBinary);
+    // Run session/window prep synchronously so the shared session and the
+    // agent's window exist before we hand iTerm a -CC attach command.
+    await runPrep(args.tmuxBinary, session, windowName, innerPath);
+
+    // If a tmux client is already attached (e.g. an existing iTerm -CC
+    // window), the new-window call above already surfaced as a new tab
+    // there — another -CC attach would just mirror the session in a
+    // second iTerm window. Only launch iTerm when nothing is attached.
+    if (await isSessionAttached(args.tmuxBinary, session)) {
+      return { scriptPath: innerPath, tmuxSession: session, tmuxWindow: windowName };
+    }
+
+    const osa = buildITermOsascript(args.iTermPlacement, session, args.tmuxBinary);
     await pExecFile("/usr/bin/osascript", ["-e", osa]);
-    return { scriptPath: innerPath, tmuxSession: args.tmuxSession };
+    return { scriptPath: innerPath, tmuxSession: session, tmuxWindow: windowName };
   }
 
+  // Terminal.app has no tmux control-mode integration, so each launch
+  // opens its own Terminal window attached to the shared session.
+  // Multiple attached clients mirror each other — accepted trade-off.
   await pExecFile("/usr/bin/open", ["-a", "Terminal", outerPath]);
-  return { scriptPath: innerPath, tmuxSession: args.tmuxSession };
+  return { scriptPath: innerPath, tmuxSession: session, tmuxWindow: windowName };
 }
 
 async function assertTmuxAvailable(tmuxBinary: string): Promise<void> {
@@ -63,7 +81,36 @@ async function assertTmuxAvailable(tmuxBinary: string): Promise<void> {
   }
 }
 
-async function writeLaunchScripts(args: LaunchArgs): Promise<{ innerPath: string; outerPath: string }> {
+async function runPrep(
+  tmuxBinary: string,
+  session: string,
+  windowName: string,
+  innerPath: string,
+): Promise<void> {
+  const script = buildPrepScript({ tmuxBinary, session, windowName, innerPath });
+  await pExecFile("/bin/bash", ["-c", script]);
+}
+
+async function isSessionAttached(tmuxBinary: string, session: string): Promise<boolean> {
+  try {
+    const { stdout } = await pExecFile(tmuxBinary, ["list-clients", "-t", session]);
+    return stdout.trim().length > 0;
+  } catch {
+    return false;
+  }
+}
+
+interface WriteScriptsArgs {
+  args: LaunchArgs;
+  session: string;
+  windowName: string;
+}
+
+async function writeLaunchScripts({
+  args,
+  session,
+  windowName,
+}: WriteScriptsArgs): Promise<{ innerPath: string; outerPath: string }> {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), "op-agent-"));
   const innerPath = path.join(dir, "agent.command");
   const outerPath = path.join(dir, "launch.command");
@@ -75,9 +122,8 @@ async function writeLaunchScripts(args: LaunchArgs): Promise<{ innerPath: string
   const cwdShell = shSingleQuote(args.cwd);
   const binShell = shSingleQuote(args.binary);
   const promptShell = shSingleQuote(promptPath);
-  const sessShell = shSingleQuote(args.tmuxSession);
-  const innerShell = shSingleQuote(innerPath);
   const tmuxShell = shSingleQuote(args.tmuxBinary);
+  const sessShell = shSingleQuote(session);
 
   // Inner: cd + read prompt from side-file (bash 3.2 heredoc-in-$() bug
   // otherwise, see OP-25) + exec the agent binary.
@@ -95,13 +141,18 @@ async function writeLaunchScripts(args: LaunchArgs): Promise<{ innerPath: string
   ].join("\n");
   await fs.writeFile(innerPath, inner, { mode: 0o755 });
 
-  // Outer (Terminal.app only): tmux attach-or-create, run inner inside it.
-  // tmux -A means "attach if session with this name already exists",
-  // so re-launching the agent for the same issue reattaches the live session.
+  // Outer (Terminal.app only): ensure session/window exists, then attach.
+  const prep = buildPrepScript({
+    tmuxBinary: args.tmuxBinary,
+    session,
+    windowName,
+    innerPath,
+  });
   const outer = [
     "#!/bin/bash",
     "set -e",
-    `exec ${tmuxShell} new-session -A -s ${sessShell} bash ${innerShell}`,
+    prep,
+    `exec ${tmuxShell} attach -t ${sessShell}`,
     "",
   ].join("\n");
   await fs.writeFile(outerPath, outer, { mode: 0o755 });
@@ -109,15 +160,42 @@ async function writeLaunchScripts(args: LaunchArgs): Promise<{ innerPath: string
   return { innerPath, outerPath };
 }
 
+interface PrepArgs {
+  tmuxBinary: string;
+  session: string;
+  windowName: string;
+  innerPath: string;
+}
+
+// Bash snippet: if the shared session is missing, create it detached
+// with the agent's window running the inner script. If a window with
+// this issue's name already exists, select it (reattach semantics).
+// Otherwise create a new window running the inner script. `grep -Fxq`
+// ensures a window named `OP-3` doesn't match `OP-31`.
+export function buildPrepScript({ tmuxBinary, session, windowName, innerPath }: PrepArgs): string {
+  const tmux = shSingleQuote(tmuxBinary);
+  const sess = shSingleQuote(session);
+  const wname = shSingleQuote(windowName);
+  const inner = shSingleQuote(innerPath);
+  return [
+    `if ! ${tmux} has-session -t ${sess} 2>/dev/null; then`,
+    `  ${tmux} new-session -d -s ${sess} -n ${wname} bash ${inner}`,
+    `elif ${tmux} list-windows -t ${sess} -F '#W' | grep -Fxq ${wname}; then`,
+    `  ${tmux} select-window -t ${sess}:${wname}`,
+    `else`,
+    `  ${tmux} new-window -t ${sess} -n ${wname} bash ${inner}`,
+    `fi`,
+  ].join("\n");
+}
+
 export function buildITermOsascript(
   placement: ITermPlacement,
   session: string,
-  innerScriptPath: string,
   tmuxBinary: string = "tmux",
 ): string {
   // iTerm detects `tmux -CC` and surfaces tmux windows as native iTerm
-  // tabs/windows (control mode).
-  const tmuxCmd = `${shSingleQuote(tmuxBinary)} -CC new-session -A -s ${shSingleQuote(session)} ${shSingleQuote(`bash ${innerScriptPath}`)}`;
+  // tabs. Session/window prep already ran, so this just attaches.
+  const tmuxCmd = `${shSingleQuote(tmuxBinary)} -CC attach -t ${shSingleQuote(session)}`;
   const cmd = osaQuote(tmuxCmd);
 
   if (placement === "new-window") {
@@ -143,15 +221,16 @@ export function buildITermOsascript(
   ].join("\n");
 }
 
-// Sanitize arbitrary text into a tmux-safe session name. tmux forbids
-// periods and colons; we map everything that isn't alnum/dash/underscore
-// to a dash, collapse runs, and trim.
-export function tmuxSessionName(issueId: string): string {
+// Sanitize arbitrary text into a tmux-safe window name. tmux uses `:`
+// as the session:window separator in target specs, so we map it (and
+// anything other than alnum/dash/underscore) to a dash, collapse runs,
+// and trim. Falls back to "agent" for empty input.
+export function tmuxWindowName(issueId: string): string {
   const safe = issueId
     .replace(/[^A-Za-z0-9_-]+/g, "-")
     .replace(/-+/g, "-")
     .replace(/^-|-$/g, "");
-  return `op-${safe || "agent"}`;
+  return safe || "agent";
 }
 
 function shSingleQuote(s: string): string {

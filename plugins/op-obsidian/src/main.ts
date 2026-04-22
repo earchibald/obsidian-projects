@@ -967,7 +967,7 @@ export default class OpPlugin extends Plugin {
       );
       if (res) {
         new Notice(
-          `op-open-agent: ${res.issueId} → ${res.agent} in ${res.workingDir} (tmux: ${res.tmuxSession})`,
+          `op-open-agent: ${res.issueId} → ${res.agent} in ${res.workingDir} (tmux: ${res.tmuxSession}:${res.tmuxWindow})`,
         );
       }
     } catch (err: any) {
@@ -1004,6 +1004,7 @@ export default class OpPlugin extends Plugin {
       workingDir: res.workingDir,
       scriptPath: res.scriptPath,
       tmuxSession: res.tmuxSession,
+      tmuxWindow: res.tmuxWindow,
     };
   }
 
