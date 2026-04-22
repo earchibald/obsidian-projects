@@ -89,12 +89,24 @@ export async function orchestrateLaunch(
   const spec = LAYOUTS[ceiling];
   const windowName = tmuxWindowName(args.issueId);
 
-  // Active window = last window in registry that isn't full. If the
-  // registered window no longer exists in iTerm (user closed it), we'll
-  // treat overflow as new-window.
+  // Active window = last window in registry that isn't full and still exists
+  // in iTerm. If the user closed all iTerm windows, the registry's parent
+  // sessions are stale ghosts — splitting them throws "session not found".
+  // Detect that here, prune the dead windows + their surface refs, and fall
+  // through to the new-window path.
   let win = activeWindow(reg);
-  if (win && win.sessionIds.filter(Boolean).length >= LAYOUTS[win.layoutId].cells) {
-    win = undefined;
+  while (win) {
+    if (win.sessionIds.filter(Boolean).length >= LAYOUTS[win.layoutId].cells) {
+      win = undefined;
+      break;
+    }
+    const probe = win.sessionIds.find((s): s is string => typeof s === "string");
+    if (probe && !(await sessionExists(probe))) {
+      pruneWindow(reg, win.windowId);
+      win = activeWindow(reg);
+      continue;
+    }
+    break;
   }
 
   if (win) {
@@ -270,6 +282,14 @@ async function writeAgentInnerScript(args: OrchestrateArgs): Promise<string> {
   lines.push("");
   await fs.writeFile(innerPath, lines.join("\n"), { mode: 0o755 });
   return innerPath;
+}
+
+function pruneWindow(reg: RegistryData, windowId: string): void {
+  delete reg.windows[windowId];
+  reg.windowOrder = reg.windowOrder.filter((id) => id !== windowId);
+  for (const [issueId, ref] of Object.entries(reg.surfaces)) {
+    if (ref.windowId === windowId) delete reg.surfaces[issueId];
+  }
 }
 
 function shSingleQuote(s: string): string {
