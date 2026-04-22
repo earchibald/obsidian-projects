@@ -20,6 +20,9 @@ export interface LaunchArgs {
   prompt: string;
   terminalApp: "Terminal" | "iTerm";
   iTermPlacement: ITermPlacement;
+  // Debug mode: skip running the agent; drop into an interactive login
+  // shell in the tmux window so the launch flow can be exercised manually.
+  debug?: boolean;
   // Absolute path or bare name of the tmux binary. Obsidian's PATH omits
   // /opt/homebrew/bin, so bare `tmux` fails on Apple Silicon brew installs.
   tmuxBinary: string;
@@ -135,17 +138,30 @@ async function writeLaunchScripts({
   // See OP-41.
   const issueIdShell = shSingleQuote(args.issueId);
   const agentIdShell = shSingleQuote(args.agentId);
-  const inner = [
+  const innerLines = [
     "#!/bin/bash",
     "set -e",
     `cd ${cwdShell}`,
     `export PATH="/opt/homebrew/bin:/usr/local/bin:$HOME/.local/bin:$HOME/bin:$PATH"`,
     `export OP_ISSUE_ID=${issueIdShell}`,
     `export OP_AGENT_ID=${agentIdShell}`,
-    `PROMPT=$(<${promptShell})`,
-    `exec ${binShell} ${flagsShell} "$PROMPT"`,
-    "",
-  ].join("\n");
+  ];
+  if (args.debug) {
+    // Launch the agent binary interactively with no initial prompt so
+    // the launch flow (PATH, env, tmux window) can be exercised end-to-end
+    // while a human drives the session.
+    innerLines.push(
+      `echo "[op] debug agent launch — no prompt (issue=${args.issueId} agent=${args.agentId})"`,
+      `exec ${binShell} ${flagsShell}`,
+    );
+  } else {
+    innerLines.push(
+      `PROMPT=$(<${promptShell})`,
+      `exec ${binShell} ${flagsShell} "$PROMPT"`,
+    );
+  }
+  innerLines.push("");
+  const inner = innerLines.join("\n");
   await fs.writeFile(innerPath, inner, { mode: 0o755 });
 
   // Outer (Terminal.app only): ensure session/window exists, then attach.
