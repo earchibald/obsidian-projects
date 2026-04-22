@@ -166,7 +166,7 @@ export class OpSidebarView extends ItemView {
     const all = this.store.issues();
     if (tab === "in-flight") {
       return all
-        .filter((e) => e.status === "in-progress" || e.status === "blocked")
+        .filter((e) => e.status === "in-progress" || e.status === "blocked" || !!e.agent)
         .sort(byId);
     }
     if (tab === "resolved") {
