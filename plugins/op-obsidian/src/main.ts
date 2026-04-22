@@ -35,6 +35,7 @@ import { AGENT_IDS, type AgentId } from "./agentProfiles";
 import { openAgent, clearAgentOnIssue, resolveProfile } from "./openAgent";
 import { launchInTerminal } from "./terminalLaunch";
 import { installAgentHooks, type HookInstallResult } from "./agentHooks";
+import { cleanupAgentSessions } from "./agentSessionCleanup";
 
 export default class OpPlugin extends Plugin {
   bus!: EventBus;
@@ -65,6 +66,23 @@ export default class OpPlugin extends Plugin {
 
     this.bus.on("*", (ev: LifecycleEvent) => {
       console.debug("[op-obsidian]", ev.kind, "entry" in ev ? ev.entry.path : ev.path);
+    });
+
+    // When an issue note is deleted, kill its agent tmux window and prune
+    // the orchestrator registry — otherwise a re-used issue id (user deletes
+    // then creates a new issue that happens to reuse the slot) reconnects
+    // to the stale agent (OP-52).
+    this.bus.on("issue:deleted", (ev) => {
+      if (ev.kind !== "issue:deleted") return;
+      void this.cleanupAgentStateFor([ev.prev.id]);
+    });
+
+    // Startup reconciliation: deletions that happened while the plugin
+    // wasn't listening (Finder, CLI, or while Obsidian was closed) leave
+    // stale tmux windows + registry surfaces. Reap any registry surface
+    // whose issue no longer exists in the vault.
+    this.app.workspace.onLayoutReady(() => {
+      void this.reconcileAgentStateOnStartup();
     });
 
     this.registerView(
@@ -357,6 +375,33 @@ export default class OpPlugin extends Plugin {
 
   onunload(): void {
     this.bus?.clear();
+  }
+
+  private async cleanupAgentStateFor(issueIds: string[]): Promise<void> {
+    try {
+      const res = await cleanupAgentSessions({
+        tmuxBinary: this.settings.tmuxBinary,
+        reg: this.settings.orchestratorState,
+        issueIds,
+      });
+      if (res.killed.length || res.prunedSurfaces.length) {
+        console.debug("[op-obsidian] cleaned up agent state", res);
+        await this.saveSettings();
+      }
+    } catch (err) {
+      console.warn("[op-obsidian] agent cleanup failed", err);
+    }
+  }
+
+  private async reconcileAgentStateOnStartup(): Promise<void> {
+    const reg = this.settings.orchestratorState;
+    const alive = new Set(this.store.issues().map((e) => e.id));
+    const stale: string[] = [];
+    for (const id of Object.keys(reg.surfaces)) {
+      if (!alive.has(id)) stale.push(id);
+    }
+    if (stale.length === 0) return;
+    await this.cleanupAgentStateFor(stale);
   }
 
   private async revealSidebar(): Promise<void> {
