@@ -30,7 +30,8 @@ import type { IssueEntry, LifecycleEvent } from "./types";
 import { DEFAULT_SETTINGS, mergeSettings, OpSettingsTab, type OpSettings } from "./settings";
 import { AgentDetector } from "./agentDetect";
 import { AGENT_IDS, type AgentId } from "./agentProfiles";
-import { openAgent, clearAgentOnIssue } from "./openAgent";
+import { openAgent, clearAgentOnIssue, resolveProfile } from "./openAgent";
+import { launchInTerminal } from "./terminalLaunch";
 import { installAgentHooks, type HookInstallResult } from "./agentHooks";
 
 export default class OpPlugin extends Plugin {
@@ -171,6 +172,12 @@ export default class OpPlugin extends Plugin {
       id: "op-open-agent-pick",
       name: "op: open agent (pick at runtime)",
       callback: () => this.runOpenAgentCommand(true),
+    });
+
+    this.addCommand({
+      id: "op-debug-agent-launch",
+      name: "op: open agent to debug agent launch",
+      callback: () => void this.runDebugAgentLaunch(),
     });
 
     this.addCommand({
@@ -950,6 +957,39 @@ export default class OpPlugin extends Plugin {
     this.pickIssueInteractive((entry) => {
       void this.doOpenAgent(entry, { forcePick });
     });
+  }
+
+  private async runDebugAgentLaunch(): Promise<void> {
+    try {
+      const detection = this.detector.get() ?? (await this.detector.refresh());
+      const agentId: AgentId = AGENT_IDS.find((id) => detection[id]?.installed) ?? this.settings.defaultAgent;
+      const profile = resolveProfile(this.settings, agentId);
+      const det = detection[agentId];
+      const binary = det?.path ?? profile.binary;
+
+      const vaultBasePath = (this.app.vault.adapter as unknown as { basePath?: string }).basePath;
+      const cwd = vaultBasePath ?? process.env.HOME ?? "/tmp";
+      const issueId = `debug-${Date.now().toString(36)}`;
+
+      const res = await launchInTerminal({
+        cwd,
+        binary,
+        launchFlags: profile.launchFlags,
+        prompt: "",
+        terminalApp: this.settings.terminal,
+        iTermPlacement: this.settings.iTermPlacement,
+        tmuxBinary: this.settings.tmuxBinary,
+        issueId,
+        agentId,
+        debug: true,
+      });
+      new Notice(
+        `op-debug-agent-launch: ${issueId} (tmux: ${res.tmuxSession}:${res.tmuxWindow})`,
+      );
+    } catch (err: any) {
+      console.error("[op-obsidian] op-debug-agent-launch failed", err);
+      new Notice(`op-debug-agent-launch failed: ${err?.message ?? err}`);
+    }
   }
 
   private async doOpenAgent(
