@@ -36,7 +36,7 @@ All `op-*` commands take `key=value` arguments (not `--flag`). Each prints a one
 
 **URI senders (`obsidian://op-new?…`):** Obsidian's protocol parser is `Record<string, string>` and last-wins, so repeated `scope=a&scope=b` keys collapse to only the last value. Pack multi-value lists into a single `scope=` param using `%0A` (newline) or `,` as the delimiter; the plugin's `collectRepeated` helper splits on either. Spaces and `+`: the parser uses `decodeURIComponent`, which leaves `+` untouched — but the plugin normalizes `+` → space at the dispatch boundary to match `URLSearchParams.toString()` semantics. To preserve a literal `+`, encode it as `%2B`.
 
-Prefix → slug is **not** a plugin command — scan `Projects/*/STATUS.md` directly and read the `prefix:` frontmatter to disambiguate. Do not use `obsidian search` for this (it misreads `prefix:` as a query operator).
+Prefix → slug is **not** a plugin command — scan `Projects/*/STATUS.md` directly and read the `prefix:` frontmatter to disambiguate. Do not use `obsidian search` for this (it misreads `prefix:` as a query operator). **Legacy fallback:** if no `STATUS.md` declares that prefix (pre-`prefix:`-field projects, or the file is missing), scan `Projects/*/ISSUES/<PREFIX>-*.md` and `Projects/*/RESOLVED ISSUES/<PREFIX>-*.md` filenames instead and infer the slug from the parent folder. If still no match, stop and ask the user for the slug, then write `prefix:` into that project's `STATUS.md` before continuing so the next lookup is deterministic.
 
 ---
 
@@ -58,8 +58,9 @@ Prefix → slug is **not** a plugin command — scan `Projects/*/STATUS.md` dire
 1. Resolve `project-or-prefix` to a slug (folder match, else prefix scan over STATUS.md).
 2. Gather scope by description length:
    - **None** → ask interactively for title, priority (default `med`), optional scope bullets.
-   - **Brief** (≤~140 chars) → propose title, priority guess, 2–5 bullet checklist; confirm.
-   - **Detailed** → propose title, priority, summary paragraph + checklist; preserve any explicit acceptance criteria verbatim; confirm.
+   - **Brief** (description ≤ 140 chars, single line) → propose title, priority guess, 2–5 bullet checklist; confirm.
+   - **Detailed** (> 140 chars, or multi-line regardless of length) → propose title, priority, summary paragraph + checklist; preserve any explicit acceptance criteria verbatim; confirm.
+   - **If unsure** (borderline length, ambiguous structure) → treat as detailed and surface the ambiguity in the confirm step rather than guessing silently.
 3. **Always pause for explicit user confirmation before mutating vault or repo** — even in auto mode. Issue creation is a commitment artifact.
 4. Run `obsidian op-new project=<slug> title="<title>" priority=<low|med|high> [scope="bullet 1\nbullet 2"]`.
 5. Report the new id and path; suggest `/op:issue <PREFIX>-<N>`.
@@ -104,6 +105,12 @@ obsidian op-append-commit issue=<PREFIX>-<N> sha="$sha" subject="$sub"
 When a PR opens: `obsidian op-set-pr issue=<PREFIX>-<N> url=<pr-url>`.
 
 Skip both for meta-only projects with no git repo.
+
+**If something fails, do this:**
+
+- `git rev-parse` / `git log` errors (not a repo, detached state, empty history) → note the failure once, skip the append for that commit, and continue with the work. Do **not** retry in a loop, and do **not** synthesize a sha. Surface the skipped commits in the resolve-time back-fill step instead.
+- Missing or unknown issue id (the caller didn't pass one, or the id doesn't resolve to a file) → stop and ask the user for the `<PREFIX>-<N>`. Never append to a guessed issue — the `commits:` trail is a permanent record and wrong attribution is worse than a missing entry.
+- `obsidian op-append-commit` returns an error (vault unreachable, plugin disabled, issue file moved mid-session) → re-probe the plugin (`app.plugins.enabledPlugins.has("op-obsidian")`) and re-resolve the issue path. If it still fails, record the `<sha7> <subject>` pair in the session (or a scratch note) and batch-append at resolve time; don't block the commit cadence on vault health.
 
 ### GitHub issue linkage
 
