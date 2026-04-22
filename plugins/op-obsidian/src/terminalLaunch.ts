@@ -147,10 +147,12 @@ async function writeLaunchScripts({
     `export OP_AGENT_ID=${agentIdShell}`,
   ];
   if (args.debug) {
+    // Launch the agent binary interactively with no initial prompt so
+    // the launch flow (PATH, env, tmux window) can be exercised end-to-end
+    // while a human drives the session.
     innerLines.push(
-      `echo "[op] debug agent launch — interactive shell (issue=${args.issueId} agent=${args.agentId})"`,
-      `echo "[op] would have run: ${args.binary} ${args.launchFlags.join(" ")} <prompt>"`,
-      `exec "$SHELL" -l`,
+      `echo "[op] debug agent launch — no prompt (issue=${args.issueId} agent=${args.agentId})"`,
+      `exec ${binShell} ${flagsShell}`,
     );
   } else {
     innerLines.push(
