@@ -97,6 +97,16 @@
   letter-spacing: 0.02em;
   color: var(--text-on-accent, #fff);
   background: var(--background-modifier-border);
+  text-decoration: none;
+}
+
+a.op-sidebar__agent {
+  cursor: pointer;
+}
+
+a.op-sidebar__agent:hover {
+  filter: brightness(1.15);
+  text-decoration: none;
 }
 
 .op-sidebar__agent--claude   { background: #d97706; }
