@@ -12,6 +12,7 @@ export interface CreateIssueInput {
   priority?: Priority;
   scope?: string[];
   assignee?: string;
+  githubIssue?: string;
 }
 
 export interface CreateIssueResult {
@@ -52,6 +53,7 @@ export async function createIssue(
     priority: input.priority ?? "med",
     scope: input.scope ?? [],
     assignee: input.assignee ?? "earchibald",
+    githubIssue: input.githubIssue?.trim() || undefined,
   });
 
   const file = await app.vault.create(path, content);
@@ -65,11 +67,12 @@ interface RenderInput {
   priority: Priority;
   scope: string[];
   assignee: string;
+  githubIssue?: string;
 }
 
 function renderIssueNote(i: RenderInput): string {
   const today = new Date().toISOString().slice(0, 10);
-  const fm = [
+  const fmLines = [
     "---",
     `id: ${i.id}`,
     `project: ${i.project}`,
@@ -78,12 +81,10 @@ function renderIssueNote(i: RenderInput): string {
     `priority: ${i.priority}`,
     `created: ${today}`,
     `assignee: ${i.assignee}`,
-    "tags:",
-    `  - project/${i.project}`,
-    "  - issue",
-    "---",
-    "",
-  ].join("\n");
+  ];
+  if (i.githubIssue) fmLines.push(`github_issue: ${i.githubIssue}`);
+  fmLines.push("tags:", `  - project/${i.project}`, "  - issue", "---", "");
+  const fm = fmLines.join("\n");
 
   const body = [`# ${i.title}`, ""];
   if (i.scope.length > 0) {

@@ -14,6 +14,7 @@ export interface IssueEntry {
   assignee?: string;
   commits?: string[];
   pr?: string;
+  githubIssue?: string;
   title: string;
   resolvedFolder: boolean;
 }

@@ -11,6 +11,7 @@ export interface ResolveArgs {
   path?: string;
   status?: ResolveStatus;
   confirmed?: boolean;
+  onAfterMove?: (entry: IssueEntry) => Promise<void>;
 }
 
 export interface ResolveResult {
@@ -21,6 +22,8 @@ export interface ResolveResult {
   trashed?: string[];
   status?: ResolveStatus;
   error?: string;
+  githubClosed?: boolean;
+  githubCloseError?: string;
 }
 
 export async function runResolve(
@@ -78,6 +81,18 @@ export async function runResolve(
     }
   }
 
+  let githubClosed: boolean | undefined;
+  let githubCloseError: string | undefined;
+  if (args.onAfterMove) {
+    try {
+      await args.onAfterMove(entry);
+      if (entry.githubIssue) githubClosed = true;
+    } catch (err: any) {
+      githubCloseError = err?.message ?? String(err);
+      new Notice(`op: github close failed — ${githubCloseError}`);
+    }
+  }
+
   new Notice(`op: ${entry.id} → ${targetStatus} (${trashed.length} tasks trashed)`);
 
   return {
@@ -87,6 +102,8 @@ export async function runResolve(
     movedTo: targetPath,
     trashed,
     status: targetStatus,
+    githubClosed,
+    githubCloseError,
   };
 }
 
