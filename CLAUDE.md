@@ -12,7 +12,7 @@ Always, in order:
 
 1. **Semver bump.** Run `node scripts/bump-version.mjs <patch|minor|major>` so `plugins/op-obsidian/manifest.json`, `plugins/op-obsidian/package.json`, and `plugins/op/.claude-plugin/plugin.json` move in lockstep. Pick the bump level by judgment (patch = fix, minor = additive, major = breaking).
 
-2. **Build.** `cd plugins/op-obsidian && npm run build` — produces `main.js`.
+2. **Build.** `cd plugins/op-obsidian`, then install deps if `node_modules/` is missing (`npm ci` when `package-lock.json` exists, else `npm install`), then `npm run build` — produces `main.js`.
 
 3. **Sync into the active vault.**
    ```bash
