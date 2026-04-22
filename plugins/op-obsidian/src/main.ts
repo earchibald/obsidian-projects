@@ -1,5 +1,6 @@
 import { Notice, Plugin, TFile, WorkspaceLeaf } from "obsidian";
 import { OP_SIDEBAR_VIEW_TYPE, OpSidebarView } from "./sidebarView";
+import { revealAgentSession } from "./revealAgentSession";
 import { EventBus } from "./eventBus";
 import { IssueStore } from "./issueStore";
 import { createIssue, type CreateIssueInput, type Priority } from "./createIssue";
@@ -69,7 +70,13 @@ export default class OpPlugin extends Plugin {
     this.registerView(
       OP_SIDEBAR_VIEW_TYPE,
       (leaf: WorkspaceLeaf) =>
-        new OpSidebarView(leaf, this.store, this.bus, () => this.settings.view),
+        new OpSidebarView(
+          leaf,
+          this.store,
+          this.bus,
+          () => this.settings.view,
+          (entry) => revealAgentSession(this.settings, entry.id),
+        ),
     );
 
     this.addCommand({
