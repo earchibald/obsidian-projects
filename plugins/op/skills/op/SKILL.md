@@ -1,6 +1,6 @@
 ---
 name: op
-description: Run the Obsidian Projects workflow — scaffold new projects, create/work/resolve issues, and maintain schema-conformant notes in an Obsidian vault that follows the Projects schema. Use whenever the user invokes /op:* commands, references an Obsidian project by slug or ID prefix (e.g. JB-3, TMB-9, OP-11), or edits files under `Projects/<slug>/ISSUES|TASKS|DOCS|RESOLVED ISSUES/`.
+description: Run the Obsidian Projects workflow — scaffold new projects, create/work/resolve issues, and maintain schema-conformant notes in an Obsidian vault that follows the Projects schema. Use whenever the user invokes /op:* commands or references an Obsidian project by ID prefix (e.g. JB-3, TMB-9, OP-11).
 ---
 
 # Obsidian Projects (op) workflow
@@ -60,7 +60,7 @@ Prefix → slug is **not** a plugin command — scan `Projects/*/STATUS.md` dire
    - **None** → ask interactively for title, priority (default `med`), optional scope bullets.
    - **Brief** (≤~140 chars) → propose title, priority guess, 2–5 bullet checklist; confirm.
    - **Detailed** → propose title, priority, summary paragraph + checklist; preserve any explicit acceptance criteria verbatim; confirm.
-3. **Always confirm** before writing — even in auto mode. Issue creation is a commitment artifact.
+3. **Always pause for explicit user confirmation before mutating vault or repo** — even in auto mode. Issue creation is a commitment artifact.
 4. Run `obsidian op-new project=<slug> title="<title>" priority=<low|med|high> [scope="bullet 1\nbullet 2"]`.
 5. Report the new id and path; suggest `/op:issue <PREFIX>-<N>`.
 
@@ -131,7 +131,7 @@ Pre-`1.0.0` projects MAY treat breakage as minor; prefer explicit major once the
 
 `/op:resolve` (or run at the tail of `work`).
 
-1. **Stop and get explicit user approval** — even in auto mode. Show the planned transition:
+1. **Always pause for explicit user confirmation before mutating vault or repo** — even in auto mode. Show the planned transition:
    - Source → target: `Projects/<slug>/ISSUES/<filename>` → `…/RESOLVED ISSUES/<filename>`
    - Frontmatter: `status` → `resolved` (or `wontfix`), `resolved` → `<today>`
    - TASKS to trash (list each path)
