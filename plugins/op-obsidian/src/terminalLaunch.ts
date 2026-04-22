@@ -127,12 +127,19 @@ async function writeLaunchScripts({
 
   // Inner: cd + read prompt from side-file (bash 3.2 heredoc-in-$() bug
   // otherwise, see OP-25) + exec the agent binary.
+  //
+  // Obsidian's launch PATH omits /opt/homebrew/bin and ~/.local/bin, so
+  // `claude`'s statusLine (commonly `npx -y ccstatusline@latest`) silently
+  // fails to resolve in spawned agent windows. Prepend the usual user-shell
+  // dirs so statusline and other CLI tools behave as in a normal terminal.
+  // See OP-41.
   const issueIdShell = shSingleQuote(args.issueId);
   const agentIdShell = shSingleQuote(args.agentId);
   const inner = [
     "#!/bin/bash",
     "set -e",
     `cd ${cwdShell}`,
+    `export PATH="/opt/homebrew/bin:/usr/local/bin:$HOME/.local/bin:$HOME/bin:$PATH"`,
     `export OP_ISSUE_ID=${issueIdShell}`,
     `export OP_AGENT_ID=${agentIdShell}`,
     `PROMPT=$(<${promptShell})`,
