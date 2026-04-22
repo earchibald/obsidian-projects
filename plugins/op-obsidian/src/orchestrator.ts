@@ -239,7 +239,7 @@ async function writeViewScript({ args, tmuxSession, tmuxWindow }: ViewArgs): Pro
     "set -e",
     `export PATH="/opt/homebrew/bin:/usr/local/bin:$HOME/.local/bin:$HOME/bin:$PATH"`,
     `${tmux} new-session -d -s ${groupSess} -t ${sess} 2>/dev/null || true`,
-    `exec ${tmux} attach -t ${groupSess} \\; select-window -t ${sess}:${win}`,
+    `exec ${tmux} attach -t ${groupSess} \\; select-window -t ${groupSess}:${win}`,
     "",
   ];
   await fs.writeFile(viewPath, lines.join("\n"), { mode: 0o755 });
