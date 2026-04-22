@@ -77,6 +77,32 @@ export default class OpPlugin extends Plugin {
       void this.cleanupAgentStateFor([ev.prev.id]);
     });
 
+    // Close the linked GitHub issue whenever an op issue transitions to a
+    // terminal status, regardless of the path that made the change: the
+    // `op-resolve` command, a raw CLI `property:set status=resolved`, or a
+    // manual frontmatter edit in Obsidian. `withGhCloseHook` in `runResolve`
+    // only covers paths that flow through the plugin's resolve logic; this
+    // listener covers everything else. `gh issue close` is idempotent on an
+    // already-closed issue, so a double-fire with the hook is harmless.
+    this.bus.on("issue:status-changed", (ev) => {
+      if (ev.kind !== "issue:status-changed") return;
+      const { entry, prev } = ev;
+      if (entry.status !== "resolved" && entry.status !== "wontfix") return;
+      if (prev === "resolved" || prev === "wontfix") return;
+      if (!entry.githubIssue) return;
+      if (!this.settings.github.closeGithubIssueOnResolve) return;
+      const repoPath = resolveRepoPath(this.app, this.settings, entry.project);
+      if (!repoPath) {
+        new Notice(`op: no repo_path for ${entry.project} — skipping gh issue close`);
+        return;
+      }
+      void closeGithubIssue(repoPath, entry.githubIssue).catch((err: any) => {
+        const msg = err?.message ?? String(err);
+        console.error("[op-obsidian] gh issue close failed", msg);
+        new Notice(`op: gh issue close failed — ${msg}`);
+      });
+    });
+
     // Startup reconciliation: deletions that happened while the plugin
     // wasn't listening (Finder, CLI, or while Obsidian was closed) leave
     // stale tmux windows + registry surfaces. Reap any registry surface
@@ -993,7 +1019,7 @@ export default class OpPlugin extends Plugin {
       const p = this.activeIssuePath();
       if (p) args.path = p;
     }
-    const result = await runResolve(this.app, this.store, args);
+    const result = await runResolve(this.app, this.store, this.withGhCloseHook(args));
     if (!result.ok) throw new Error(result.error ?? "resolve failed");
     return {
       ok: true,
