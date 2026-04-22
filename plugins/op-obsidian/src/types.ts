@@ -15,6 +15,7 @@ export interface IssueEntry {
   commits?: string[];
   pr?: string;
   githubIssue?: string;
+  agent?: string;
   title: string;
   resolvedFolder: boolean;
 }

@@ -173,6 +173,7 @@ export class IssueStore extends Component {
       commits: arr(fm.commits),
       pr: str(fm.pr),
       githubIssue: str(fm.github_issue),
+      agent: str(fm.agent),
       title: file.basename,
       resolvedFolder: inResolved,
     };

@@ -1,4 +1,4 @@
-import { App, Notice } from "obsidian";
+import { App, Notice, TFile } from "obsidian";
 import type { IssueStore } from "./issueStore";
 import type { IssueEntry } from "./types";
 import type { OpSettings } from "./settings";
@@ -68,7 +68,11 @@ export async function openAgent(
     tmuxSession,
     iTermPlacement: settings.iTermPlacement,
     tmuxBinary: settings.tmuxBinary,
+    issueId: args.entry.id,
+    agentId,
   });
+
+  await recordAgentOnIssue(app, args.entry.path, agentId);
 
   return {
     issueId: args.entry.id,
@@ -106,6 +110,22 @@ async function pickAgent(
 
 export function resolveProfile(settings: OpSettings, id: AgentId): AgentProfile {
   return mergeProfile(id, settings.agentOverlays[id]);
+}
+
+export async function recordAgentOnIssue(app: App, path: string, agentId: AgentId): Promise<void> {
+  const file = app.vault.getAbstractFileByPath(path);
+  if (!(file instanceof TFile)) return;
+  await app.fileManager.processFrontMatter(file, (fm) => {
+    fm.agent = agentId;
+  });
+}
+
+export async function clearAgentOnIssue(app: App, path: string): Promise<void> {
+  const file = app.vault.getAbstractFileByPath(path);
+  if (!(file instanceof TFile)) return;
+  await app.fileManager.processFrontMatter(file, (fm) => {
+    delete fm.agent;
+  });
 }
 
 function getVaultBasePath(app: App): string | undefined {

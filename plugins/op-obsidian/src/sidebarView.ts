@@ -116,6 +116,12 @@ export class OpSidebarView extends ItemView {
       });
       const meta = li.createDiv({ cls: "op-sidebar__meta" });
       meta.createSpan({ text: e.project, cls: "op-sidebar__project" });
+      if (e.agent) {
+        meta.createSpan({
+          text: e.agent,
+          cls: `op-sidebar__agent op-sidebar__agent--${e.agent}`,
+        });
+      }
       if (e.priority) {
         meta.createSpan({ text: e.priority, cls: `op-sidebar__prio op-sidebar__prio--${e.priority}` });
       }
