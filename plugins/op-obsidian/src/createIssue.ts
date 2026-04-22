@@ -1,7 +1,7 @@
 import { App, TFile, normalizePath } from "obsidian";
 import type { IssueStore } from "./issueStore";
 import { findProjectBySlug, type ProjectInfo } from "./projects";
-import { nextIssueNumber } from "./findIssue";
+import { nextIssueNumberFromVault } from "./findIssue";
 import { issueFilename } from "./sanitize";
 
 export type Priority = "low" | "med" | "high";
@@ -35,16 +35,33 @@ export async function createIssue(
     );
   }
 
-  const n = nextIssueNumber(store, project.slug);
-  const id = `${project.prefix}-${n}`;
-  const filename = issueFilename(id, input.title);
   const folder = `Projects/${project.slug}/ISSUES`;
-  const path = normalizePath(`${folder}/${filename}`);
-
-  if (app.vault.getAbstractFileByPath(path)) {
-    throw new Error(`Issue file already exists: ${path}`);
-  }
+  const resolvedFolder = `Projects/${project.slug}/RESOLVED ISSUES`;
   await ensureFolder(app, folder);
+
+  let n = nextIssueNumberFromVault(app, { slug: project.slug, prefix: project.prefix });
+  let id = `${project.prefix}-${n}`;
+  let filename = issueFilename(id, input.title);
+  let path = normalizePath(`${folder}/${filename}`);
+
+  // Belt-and-suspenders: if any file already claims this ID in either folder,
+  // walk forward until free. Guards against races with scaffolding and any
+  // future drift between the filesystem scan and the actual vault state.
+  const MAX_ATTEMPTS = 1000;
+  let attempts = 0;
+  while (
+    idExistsInFolder(app, folder, project.prefix, n) ||
+    idExistsInFolder(app, resolvedFolder, project.prefix, n) ||
+    app.vault.getAbstractFileByPath(path)
+  ) {
+    n += 1;
+    id = `${project.prefix}-${n}`;
+    filename = issueFilename(id, input.title);
+    path = normalizePath(`${folder}/${filename}`);
+    if (++attempts > MAX_ATTEMPTS) {
+      throw new Error(`Could not find a free issue id for ${project.prefix}`);
+    }
+  }
 
   const content = renderIssueNote({
     id,
@@ -101,4 +118,16 @@ async function ensureFolder(app: App, folder: string): Promise<void> {
   if (!app.vault.getAbstractFileByPath(folder)) {
     await app.vault.createFolder(folder);
   }
+}
+
+function idExistsInFolder(app: App, folderPath: string, prefix: string, n: number): boolean {
+  const folder = app.vault.getAbstractFileByPath(folderPath) as unknown as
+    | { children?: { name: string }[] }
+    | null;
+  if (!folder || !folder.children) return false;
+  const needle = `${prefix}-${n}`;
+  // Match the id as a standalone token at the start: "<PREFIX>-<N>" followed by
+  // end-of-name, space, or a file extension dot.
+  const re = new RegExp(`^${needle.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?:\\b|[ .])`);
+  return folder.children.some((c) => re.test(c.name));
 }

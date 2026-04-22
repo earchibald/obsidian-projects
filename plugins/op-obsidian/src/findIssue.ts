@@ -1,3 +1,4 @@
+import type { App, TFolder, TAbstractFile } from "obsidian";
 import type { IssueStore } from "./issueStore";
 import type { IssueEntry } from "./types";
 import type { ProjectInfo } from "./projects";
@@ -85,4 +86,43 @@ export function nextIssueNumber(store: IssueStore, slug: string): number {
     .map((e) => parseInt(e.id.split("-").pop() ?? "0", 10))
     .filter((n) => Number.isFinite(n));
   return ns.length === 0 ? 1 : Math.max(...ns) + 1;
+}
+
+/**
+ * Scan the vault filesystem directly for the next free issue number.
+ *
+ * Unlike `nextIssueNumber`, this does not rely on `IssueStore` /
+ * `metadataCache` being hydrated — it reads filenames under
+ * `Projects/<slug>/ISSUES/` and `Projects/<slug>/RESOLVED ISSUES/`
+ * and parses `<PREFIX>-<N>` from the basename.
+ */
+export function nextIssueNumberFromVault(
+  app: App,
+  project: { slug: string; prefix: string },
+): number {
+  const folders = [
+    `Projects/${project.slug}/ISSUES`,
+    `Projects/${project.slug}/RESOLVED ISSUES`,
+  ];
+  const re = new RegExp(`^${escapeRegex(project.prefix)}-(\\d+)(?:\\b|[ .-])`);
+  let max = 0;
+  for (const folderPath of folders) {
+    const folder = app.vault.getAbstractFileByPath(folderPath);
+    if (!folder || !isFolder(folder)) continue;
+    for (const child of folder.children) {
+      const m = child.name.match(re);
+      if (!m) continue;
+      const n = parseInt(m[1], 10);
+      if (Number.isFinite(n) && n > max) max = n;
+    }
+  }
+  return max + 1;
+}
+
+function isFolder(f: TAbstractFile): f is TFolder {
+  return (f as TFolder).children !== undefined;
+}
+
+function escapeRegex(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
