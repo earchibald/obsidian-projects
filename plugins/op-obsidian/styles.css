@@ -102,3 +102,14 @@
 .op-sidebar__agent--claude   { background: #d97706; }
 .op-sidebar__agent--gemini   { background: #1e88e5; }
 .op-sidebar__agent--copilot  { background: #6f42c1; }
+
+.op-sidebar__github {
+  color: var(--text-muted);
+  text-decoration: none;
+  font-variant-numeric: tabular-nums;
+}
+
+.op-sidebar__github:hover {
+  color: var(--text-accent);
+  text-decoration: underline;
+}
