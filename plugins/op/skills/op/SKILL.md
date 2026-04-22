@@ -26,11 +26,11 @@ All `op-*` commands take `key=value` arguments (not `--flag`). Each prints a one
 | Command | Required | Optional | Effect |
 | :--- | :--- | :--- | :--- |
 | `op-scaffold` | `slug`, `prefix` | `repo_path`, `title`, `priority`, `scope` | creates `Projects/<slug>/<slug>.base` + `STATUS.md`; writes `repo_path:` (absolute path only) if given; seeds `<PREFIX>-1` if `title` given |
-| `op-new` | `project`, `title` | `priority`, `scope` | creates next-N issue with sanitized filename and schema-conformant frontmatter |
+| `op-new` | `project`, `title` | `priority`, `scope`, `github_issue` | creates next-N issue with sanitized filename and schema-conformant frontmatter; when the plugin's `autoCreateGithubIssue` setting is on and no `github_issue` is passed, also runs `gh issue create` in the project's `repo_path` and writes the URL to `github_issue:` |
 | `op-work` | `issue` | — | sets `status: in-progress`; creates the initial TASKS note |
 | `op-append-commit` | `issue`, `sha`, `subject` | — | idempotent append to issue's `commits:` list |
 | `op-set-pr` | `issue`, `url` | — | sets scalar `pr:` |
-| `op-resolve` (or `op-close-current-issue`) | `issue` (or `path`) | `status=wontfix` | sets `status: resolved`, writes `resolved: <today>`, moves into `RESOLVED ISSUES/`, trashes linked TASKS — atomically |
+| `op-resolve` (or `op-close-current-issue`) | `issue` (or `path`) | `status=wontfix` | sets `status: resolved`, writes `resolved: <today>`, moves into `RESOLVED ISSUES/`, trashes linked TASKS — atomically. When `closeGithubIssueOnResolve` is on and the issue has a `github_issue:` URL, also runs `gh issue close` on it; the JSON response reports `githubClosed` / `githubCloseError` |
 
 `scope` is a single value containing newline-separated bullets.
 
@@ -96,6 +96,10 @@ When a PR opens: `obsidian op-set-pr issue=<PREFIX>-<N> url=<pr-url>`.
 
 Skip both for meta-only projects with no git repo.
 
+### GitHub issue linkage
+
+If the issue has a `github_issue:` frontmatter field, it mirrors a GitHub issue. The URL may have been populated automatically at `op-new` time (when `autoCreateGithubIssue` is on) or set later via the plugin's "Set GitHub issue URL" command. While working, treat it as a one-way mirror: you may comment on, label, or reference the GH issue, but do **not** close it manually — the plugin closes it atomically during `op-resolve` (see below). If the user asks "is the GitHub issue still open?", check live state with `gh issue view <url>` rather than inferring from the op status.
+
 ### Semver bumping (at resolve time)
 
 Every issue that ships code bumps the project's version file — one bump per issue, recorded as `version:` on the issue.
@@ -124,10 +128,11 @@ Pre-`1.0.0` projects MAY treat breakage as minor; prefer explicit major once the
    - TASKS to trash (list each path)
    - `commits:` status: "set" / "empty — will back-fill from git log" / "empty — skipping (no repo)"
    - Version bump: "`<file>`: `<old>` → `<new>` (`patch`/`minor`/`major`)" — or "skipping (no version file)"
+   - GitHub issue: if `github_issue:` is set and `closeGithubIssueOnResolve` is on, note that the plugin will run `gh issue close` on the URL as part of `op-resolve` — do **not** close it yourself beforehand
 2. **Back-fill `commits:` if empty.** Scan `git log` for commits referencing the issue id since the last resolved-issue date; append each via `obsidian op-append-commit`.
 3. **Bump the version file**, commit it (with the issue id in the subject), append that commit via `op-append-commit`, then `obsidian property:set name=version value=<new> path="<issue-path>"`. Skip for meta-only projects.
-4. `obsidian op-resolve issue=<PREFIX>-<N>` (or `status=wontfix`). The plugin moves the file, sets `status` and `resolved:`, and trashes linked TASKS atomically. **DOCS are never touched.**
-5. Report: external changes (URLs, commands run), vault changes (paths from the JSON response), and any manual follow-ups.
+4. `obsidian op-resolve issue=<PREFIX>-<N>` (or `status=wontfix`). The plugin moves the file, sets `status` and `resolved:`, and trashes linked TASKS atomically. If the issue has a `github_issue:` URL and `closeGithubIssueOnResolve` is on, the plugin also runs `gh issue close` on it — check `githubClosed` / `githubCloseError` in the JSON response. **DOCS are never touched.**
+5. Report: external changes (URLs, commands run, including the linked GH issue if it was auto-closed), vault changes (paths from the JSON response), and any manual follow-ups (e.g. retrying `gh issue close` manually if `githubCloseError` is set).
 
 ---
 
