@@ -65,6 +65,7 @@ export async function runResolve(
   await app.fileManager.processFrontMatter(file, (fm) => {
     fm.status = targetStatus;
     fm.resolved = today;
+    delete fm.agent;
   });
 
   await app.fileManager.renameFile(file, targetPath);

@@ -87,3 +87,18 @@
 .op-sidebar__date {
   color: var(--text-faint);
 }
+
+.op-sidebar__agent {
+  padding: 0 0.3rem;
+  border-radius: 3px;
+  font-size: calc(var(--font-ui-smaller, 0.72rem));
+  font-weight: 600;
+  text-transform: lowercase;
+  letter-spacing: 0.02em;
+  color: var(--text-on-accent, #fff);
+  background: var(--background-modifier-border);
+}
+
+.op-sidebar__agent--claude   { background: #d97706; }
+.op-sidebar__agent--gemini   { background: #1e88e5; }
+.op-sidebar__agent--copilot  { background: #6f42c1; }

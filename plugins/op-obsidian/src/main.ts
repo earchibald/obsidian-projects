@@ -23,7 +23,8 @@ import type { IssueEntry, LifecycleEvent } from "./types";
 import { DEFAULT_SETTINGS, mergeSettings, OpSettingsTab, type OpSettings } from "./settings";
 import { AgentDetector } from "./agentDetect";
 import { AGENT_IDS, type AgentId } from "./agentProfiles";
-import { openAgent } from "./openAgent";
+import { openAgent, clearAgentOnIssue } from "./openAgent";
+import { installAgentHooks, type HookInstallResult } from "./agentHooks";
 
 export default class OpPlugin extends Plugin {
   bus!: EventBus;
@@ -207,6 +208,21 @@ export default class OpPlugin extends Plugin {
     this.registerObsidianProtocolHandler("op-open-agent", (params) => {
       this.runUri("op-open-agent", params, (p) => this.handleOpOpenAgentUri(p));
     });
+
+    this.registerObsidianProtocolHandler("op-agent-ended", (params) => {
+      this.runUri("op-agent-ended", params, (p) => this.handleOpAgentEndedUri(p));
+    });
+
+    this.addCommand({
+      id: "op-install-agent-hooks",
+      name: "op: install SessionEnd hooks for agents",
+      callback: () => {
+        void this.runInstallAgentHooks(true);
+      },
+    });
+
+    // Install hooks in the background so SessionEnd reports land reliably.
+    void this.runInstallAgentHooks(false);
 
     const resolveFlags = {
       issue: { value: "<id>", description: "Issue id (e.g. OP-24) or vault path" },
@@ -856,6 +872,35 @@ export default class OpPlugin extends Plugin {
       scriptPath: res.scriptPath,
       tmuxSession: res.tmuxSession,
     };
+  }
+
+  private async handleOpAgentEndedUri(
+    params: Record<string, string>,
+  ): Promise<UriResponsePayload> {
+    const id = params.id ?? params.issue;
+    if (!id) throw new Error("op-agent-ended URI requires id");
+    const entry = this.store.issues().find((e) => e.id === id);
+    if (!entry) {
+      return { ok: true, command: "op-agent-ended", issueId: id, cleared: false };
+    }
+    await clearAgentOnIssue(this.app, entry.path);
+    return { ok: true, command: "op-agent-ended", issueId: id, path: entry.path, cleared: true };
+  }
+
+  private async runInstallAgentHooks(announce: boolean): Promise<void> {
+    try {
+      const res: HookInstallResult = await installAgentHooks();
+      if (announce) {
+        const summary = res.installed.length
+          ? `installed: ${res.installed.join(", ")}`
+          : "no changes";
+        const skipped = res.skipped.length ? ` · skipped: ${res.skipped.join(", ")}` : "";
+        new Notice(`op: agent hooks ${summary}${skipped}`);
+      }
+    } catch (err: any) {
+      console.error("[op-obsidian] agent hook install failed", err);
+      if (announce) new Notice(`op: agent hook install failed — ${err?.message ?? err}`);
+    }
   }
 
   private async handleOpNewUri(params: Record<string, string>): Promise<void> {

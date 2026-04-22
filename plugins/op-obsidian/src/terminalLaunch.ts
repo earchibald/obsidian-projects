@@ -19,6 +19,10 @@ export interface LaunchArgs {
   // Absolute path or bare name of the tmux binary. Obsidian's PATH omits
   // /opt/homebrew/bin, so bare `tmux` fails on Apple Silicon brew installs.
   tmuxBinary: string;
+  // Exported into the agent's env so SessionEnd hooks can identify which
+  // op-obsidian issue/agent a terminating session belongs to.
+  issueId: string;
+  agentId: string;
 }
 
 export interface LaunchResult {
@@ -77,10 +81,14 @@ async function writeLaunchScripts(args: LaunchArgs): Promise<{ innerPath: string
 
   // Inner: cd + read prompt from side-file (bash 3.2 heredoc-in-$() bug
   // otherwise, see OP-25) + exec the agent binary.
+  const issueIdShell = shSingleQuote(args.issueId);
+  const agentIdShell = shSingleQuote(args.agentId);
   const inner = [
     "#!/bin/bash",
     "set -e",
     `cd ${cwdShell}`,
+    `export OP_ISSUE_ID=${issueIdShell}`,
+    `export OP_AGENT_ID=${agentIdShell}`,
     `PROMPT=$(<${promptShell})`,
     `exec ${binShell} ${flagsShell} "$PROMPT"`,
     "",
