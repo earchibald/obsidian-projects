@@ -43,8 +43,9 @@ Prefix → slug is **not** a plugin command — scan `Projects/*/STATUS.md` dire
 `/op:scaffold <slug> <PREFIX> [<title>]`
 
 1. Validate `slug` (lowercase + hyphens, `Projects/<slug>/` doesn't already exist).
-2. Run `obsidian op-scaffold slug=<slug> prefix=<PREFIX> [title="…"] [priority=med] [scope="bullet 1\nbullet 2"]`.
-3. Report `projectFolder`, `basePath`, `statusPath`, and `seedPath` (if any) from the JSON response. Suggest `/op:new <slug>` next.
+2. If the project has a code repo, ask the user for its absolute path (e.g. `/Users/you/Projects/<slug>`) and pass it as `repo_path=`. The plugin writes it to `STATUS.md` frontmatter, where `op:open-agent` reads it to set the agent's working directory and skip the working-dir modal. Must be absolute — no `~`, no vault-relative. Skip this prompt for meta-only projects with no repo.
+3. Run `obsidian op-scaffold slug=<slug> prefix=<PREFIX> [repo_path=/abs/path] [title="…"] [priority=med] [scope="bullet 1\nbullet 2"]`.
+4. Report `projectFolder`, `basePath`, `statusPath`, and `seedPath` (if any) from the JSON response. Suggest `/op:new <slug>` next.
 
 ---
 

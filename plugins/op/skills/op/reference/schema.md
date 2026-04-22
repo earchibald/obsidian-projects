@@ -167,6 +167,7 @@ Each project root must contain a `STATUS.md` that carries project-level metadata
 project: <slug>
 prefix: <PREFIX>
 type: project-status
+repo_path: /Users/you/Projects/<slug>   # optional, absolute path
 ---
 ![[<project>.base#Open Issues]]
 ```
@@ -175,6 +176,7 @@ type: project-status
 - `project` — slug, matches the folder name.
 - `prefix` — canonical issue-ID prefix (e.g. `JB`, `TMB`). This is the authoritative location for the prefix; commands that need it (`/issue`, `/create-issue`) MUST read it from here first.
 - `type: project-status` — lets Bases distinguish STATUS notes from issues/tasks/docs.
+- `repo_path` — *optional* absolute path to the project's code repo. When set, the `op-obsidian` plugin's `op:open-agent` command uses it as the agent's working directory and skips the working-dir modal. Must be an absolute path — no `~` expansion, no vault-relative paths. Leave unset for meta-only projects with no repo; the plugin falls back to the per-project working-dir setting, then prompts.
 
 **Fallback for legacy projects:** if `prefix` is missing from STATUS.md, fall back to scanning issue filenames (`Projects/<slug>/ISSUES/*.md` and `RESOLVED ISSUES/*.md`). If neither the field nor any issue exists, stop and ask the user — a freshly scaffolded project with zero issues has no implicit prefix, so the scaffolder is responsible for writing `prefix` at creation time.
 

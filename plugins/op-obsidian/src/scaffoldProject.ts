@@ -5,6 +5,7 @@ import { createIssue, type CreateIssueResult, type Priority } from "./createIssu
 export interface ScaffoldProjectInput {
   slug: string;
   prefix: string;
+  repoPath?: string;
   seedTitle?: string;
   seedPriority?: Priority;
   seedScope?: string[];
@@ -36,6 +37,15 @@ export async function scaffoldProject(
     throw new Error(`Invalid prefix "${prefix}" — use uppercase letters/digits starting with a letter.`);
   }
 
+  const repoPath = input.repoPath?.trim();
+  if (repoPath !== undefined && repoPath !== "") {
+    if (!repoPath.startsWith("/")) {
+      throw new Error(
+        `Invalid repo_path "${repoPath}" — must be an absolute path (no ~ expansion, no vault-relative).`,
+      );
+    }
+  }
+
   const projectFolder = normalizePath(`Projects/${slug}`);
   if (app.vault.getAbstractFileByPath(projectFolder)) {
     throw new Error(`Project folder already exists: ${projectFolder}`);
@@ -56,7 +66,7 @@ export async function scaffoldProject(
   await app.vault.create(basePath, renderBase(slug));
 
   const statusPath = normalizePath(`${projectFolder}/STATUS.md`);
-  await app.vault.create(statusPath, renderStatus(slug, prefix));
+  await app.vault.create(statusPath, renderStatus(slug, prefix, repoPath));
 
   let seed: CreateIssueResult | undefined;
   const seedTitle = input.seedTitle?.trim();
@@ -97,19 +107,25 @@ function sleep(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms));
 }
 
-function renderStatus(slug: string, prefix: string): string {
-  return [
+function renderStatus(slug: string, prefix: string, repoPath?: string): string {
+  const lines = [
     "---",
     `project: ${slug}`,
     `prefix: ${prefix}`,
     "type: project-status",
+  ];
+  if (repoPath && repoPath.trim()) {
+    lines.push(`repo_path: ${repoPath.trim()}`);
+  }
+  lines.push(
     "tags:",
     `  - project/${slug}`,
     "---",
     "",
     `![[${slug}.base#Open Issues]]`,
     "",
-  ].join("\n");
+  );
+  return lines.join("\n");
 }
 
 function renderBase(slug: string): string {
