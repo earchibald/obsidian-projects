@@ -25,6 +25,7 @@ import {
 } from "./github";
 import { resolveRepoPath } from "./repoPath";
 import { writeUriResponse, type UriResponsePayload } from "./uriResponse";
+import { normalizeUriParams, collectRepeated } from "./uriParams";
 import { runResolve, type ResolveArgs, type ResolveStatus } from "./resolve";
 import type { IssueEntry, LifecycleEvent } from "./types";
 import { DEFAULT_SETTINGS, mergeSettings, OpSettingsTab, type OpSettings } from "./settings";
@@ -205,44 +206,52 @@ export default class OpPlugin extends Plugin {
     });
 
     this.registerObsidianProtocolHandler("op-scaffold", (params) => {
-      this.runUri("op-scaffold", params, (p) => this.handleOpScaffoldUri(p));
+      this.runUri("op-scaffold", normalizeUriParams(params), (p) => this.handleOpScaffoldUri(p));
     });
 
     this.registerObsidianProtocolHandler("op-new", (params) => {
-      this.handleOpNewUri(params).catch((err) => {
+      this.handleOpNewUri(normalizeUriParams(params)).catch((err) => {
         console.error("[op-obsidian] op-new URI failed", err);
         new Notice(`op-new failed: ${err.message ?? err}`);
       });
     });
 
     this.registerObsidianProtocolHandler("op-work", (params) => {
-      this.runUri("op-work", params, (p) => this.handleOpWorkUri(p));
+      this.runUri("op-work", normalizeUriParams(params), (p) => this.handleOpWorkUri(p));
     });
 
     this.registerObsidianProtocolHandler("op-append-commit", (params) => {
-      this.runUri("op-append-commit", params, (p) => this.handleOpAppendCommitUri(p));
+      this.runUri("op-append-commit", normalizeUriParams(params), (p) =>
+        this.handleOpAppendCommitUri(p),
+      );
     });
 
     this.registerObsidianProtocolHandler("op-set-pr", (params) => {
-      this.runUri("op-set-pr", params, (p) => this.handleOpSetPrUri(p));
+      this.runUri("op-set-pr", normalizeUriParams(params), (p) => this.handleOpSetPrUri(p));
     });
 
     this.registerObsidianProtocolHandler("op-resolve", (params) => {
-      this.runUri("op-resolve", params, (p) => this.handleOpResolveUri(p, "op-resolve"));
+      this.runUri("op-resolve", normalizeUriParams(params), (p) =>
+        this.handleOpResolveUri(p, "op-resolve"),
+      );
     });
 
     this.registerObsidianProtocolHandler("op-close-current-issue", (params) => {
-      this.runUri("op-close-current-issue", params, (p) =>
+      this.runUri("op-close-current-issue", normalizeUriParams(params), (p) =>
         this.handleOpResolveUri(p, "op-close-current-issue", true),
       );
     });
 
     this.registerObsidianProtocolHandler("op-open-agent", (params) => {
-      this.runUri("op-open-agent", params, (p) => this.handleOpOpenAgentUri(p));
+      this.runUri("op-open-agent", normalizeUriParams(params), (p) =>
+        this.handleOpOpenAgentUri(p),
+      );
     });
 
     this.registerObsidianProtocolHandler("op-agent-ended", (params) => {
-      this.runUri("op-agent-ended", params, (p) => this.handleOpAgentEndedUri(p));
+      this.runUri("op-agent-ended", normalizeUriParams(params), (p) =>
+        this.handleOpAgentEndedUri(p),
+      );
     });
 
     this.addCommand({
@@ -1126,11 +1135,3 @@ function buildGithubBody(id: string, input: CreateIssueInput): string {
   return lines.join("\n").trim();
 }
 
-function collectRepeated(params: Record<string, string>, key: string): string[] {
-  const single = params[key];
-  if (!single) return [];
-  return single
-    .split("\n")
-    .map((l) => l.trim())
-    .filter(Boolean);
-}
