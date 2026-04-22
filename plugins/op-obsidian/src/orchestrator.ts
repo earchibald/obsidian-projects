@@ -7,7 +7,14 @@ import { promisify } from "util";
 import { LAYOUTS, type LayoutId } from "./layout/layouts";
 import type { RegistryData, SurfaceRef, WindowState } from "./layout/registry";
 import { activeWindow, addWindow, assignSurface } from "./layout/registry";
-import { createWindow, selectSession, sessionExists, splitSession } from "./iterm/applescript";
+import {
+  createWindow,
+  selectSession,
+  sessionExists,
+  setSessionName,
+  setWindowName,
+  splitSession,
+} from "./iterm/applescript";
 import { buildPrepScript, tmuxWindowName } from "./terminalLaunch";
 
 const pExecFile = promisify(execFile);
@@ -68,6 +75,7 @@ export async function orchestrateLaunch(
   const existing = reg.surfaces[args.issueId];
   if (existing && (await sessionExists(existing.sessionId))) {
     await selectSession(existing.sessionId);
+    await setSessionName(existing.sessionId, args.issueId);
     // tmux window still owns the agent process; the pane just reattaches.
     const scriptPath = await writeViewScript({
       args,
@@ -149,6 +157,7 @@ export async function orchestrateLaunch(
     });
 
     const sessionId = await splitSession(parentId, op.dir, quoteForBash(viewScript));
+    await setSessionName(sessionId, args.issueId);
     win.sessionIds[nextCellIndex] = sessionId;
 
     const ref: SurfaceRef = {
@@ -179,6 +188,8 @@ export async function orchestrateLaunch(
   await ensureAgentWindow({ args, tmuxSession, windowName });
   const viewScript = await writeViewScript({ args, tmuxSession, tmuxWindow: windowName });
   const { windowId, sessionId } = await createWindow(quoteForBash(viewScript));
+  await setWindowName(windowId, tmuxSession);
+  await setSessionName(sessionId, args.issueId);
 
   const newWin: WindowState = {
     windowId,
