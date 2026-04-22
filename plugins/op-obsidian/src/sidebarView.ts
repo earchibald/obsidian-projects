@@ -130,6 +130,25 @@ export class OpSidebarView extends ItemView {
       } else if (this.active === "issues" && e.status !== "open") {
         meta.createSpan({ text: e.status, cls: "op-sidebar__status" });
       }
+      if (e.githubIssue) {
+        const n = ghIssueNumber(e.githubIssue);
+        if (n !== undefined) {
+          const url = e.githubIssue;
+          const gh = meta.createEl("a", {
+            cls: "op-sidebar__github",
+            text: `GH #${n}`,
+          });
+          gh.setAttr("href", url);
+          gh.setAttr("target", "_blank");
+          gh.setAttr("rel", "noopener");
+          gh.setAttr("aria-label", `GitHub issue ${url}`);
+          gh.addEventListener("click", (ev) => {
+            ev.preventDefault();
+            ev.stopPropagation();
+            window.open(url, "_blank");
+          });
+        }
+      }
     }
   }
 
@@ -173,4 +192,11 @@ function byResolvedDesc(a: IssueEntry, b: IssueEntry): number {
 
 function stripIdPrefix(title: string, id: string): string {
   return title.startsWith(`${id} `) ? title.slice(id.length + 1) : title;
+}
+
+function ghIssueNumber(url: string): number | undefined {
+  const m = url.match(/\/issues\/(\d+)(?:[/?#]|$)/);
+  if (!m) return undefined;
+  const n = Number(m[1]);
+  return Number.isFinite(n) ? n : undefined;
 }
