@@ -2,6 +2,9 @@ import { App, PluginSettingTab, Setting, Notice } from "obsidian";
 import type OpPlugin from "./main";
 import { AGENT_IDS, type AgentId, type ProfileOverlay } from "./agentProfiles";
 import type { ITermPlacement } from "./terminalLaunch";
+import { LAYOUT_IDS, type LayoutId } from "./layout/layouts";
+import { type RegistryData, emptyRegistry, mergeRegistry } from "./layout/registry";
+import type { OrchestratorSettings } from "./orchestrator";
 
 export interface InjectionSettings {
   injectBody: boolean;
@@ -35,6 +38,8 @@ export interface OpSettings {
   tmuxBinary: string;
   view: ViewSettings;
   github: GithubSettings;
+  orchestrator: OrchestratorSettings;
+  orchestratorState: RegistryData;
 }
 
 export const DEFAULT_SETTINGS: OpSettings = {
@@ -61,6 +66,13 @@ export const DEFAULT_SETTINGS: OpSettings = {
     autoCreateGithubIssue: false,
     closeGithubIssueOnResolve: true,
   },
+  orchestrator: {
+    enabled: false,
+    maxRows: 3,
+    maxCols: 3,
+    preferred: "2x2",
+  },
+  orchestratorState: emptyRegistry(),
 };
 
 const SIDEBAR_TABS: ReadonlySet<SidebarTab> = new Set(["issues", "in-flight", "resolved"]);
@@ -97,6 +109,20 @@ export function mergeSettings(loaded: unknown): OpSettings {
     }
     if (typeof v.openOnStartup === "boolean") base.view.openOnStartup = v.openOnStartup;
   }
+  if (l.orchestrator && typeof l.orchestrator === "object") {
+    const o = l.orchestrator as Partial<OrchestratorSettings>;
+    if (typeof o.enabled === "boolean") base.orchestrator.enabled = o.enabled;
+    if (typeof o.maxRows === "number" && o.maxRows >= 1 && o.maxRows <= 3) {
+      base.orchestrator.maxRows = Math.floor(o.maxRows);
+    }
+    if (typeof o.maxCols === "number" && o.maxCols >= 1 && o.maxCols <= 3) {
+      base.orchestrator.maxCols = Math.floor(o.maxCols);
+    }
+    if (o.preferred && LAYOUT_IDS.includes(o.preferred as LayoutId)) {
+      base.orchestrator.preferred = o.preferred as LayoutId;
+    }
+  }
+  base.orchestratorState = mergeRegistry((l as { orchestratorState?: unknown }).orchestratorState);
   if (l.github && typeof l.github === "object") {
     const g = l.github as Partial<GithubSettings>;
     if (typeof g.autoCreateGithubIssue === "boolean") {
@@ -332,6 +358,70 @@ export class OpSettingsTab extends PluginSettingTab {
             s.iTermPlacement = v as ITermPlacement;
             await this.plugin.saveSettings();
           }),
+      );
+
+    containerEl.createEl("h2", { text: "iTerm layout orchestrator" });
+    containerEl.createEl("p", {
+      text: "When enabled, op lays out agent panes in the current iTerm window per the chosen layout. Overflow spills to a new iTerm window backed by a fresh tmux session. macOS + iTerm only.",
+      cls: "setting-item-description",
+    });
+
+    new Setting(containerEl)
+      .setName("Enable orchestrator")
+      .setDesc("Route iTerm launches through the layout orchestrator instead of tmux -CC attach.")
+      .addToggle((t) =>
+        t.setValue(s.orchestrator.enabled).onChange(async (v) => {
+          s.orchestrator.enabled = v;
+          await this.plugin.saveSettings();
+        }),
+      );
+
+    new Setting(containerEl)
+      .setName("Default layout")
+      .setDesc("Grid shape for new iTerm windows. Determines the per-window agent ceiling.")
+      .addDropdown((d) => {
+        for (const id of LAYOUT_IDS) d.addOption(id, id);
+        d.setValue(s.orchestrator.preferred).onChange(async (v) => {
+          s.orchestrator.preferred = v as LayoutId;
+          await this.plugin.saveSettings();
+        });
+      });
+
+    new Setting(containerEl)
+      .setName("Max rows per window")
+      .setDesc("1–3. Layouts exceeding this are unavailable.")
+      .addText((t) =>
+        t.setValue(String(s.orchestrator.maxRows)).onChange(async (v) => {
+          const n = parseInt(v, 10);
+          if (Number.isFinite(n) && n >= 1 && n <= 3) {
+            s.orchestrator.maxRows = n;
+            await this.plugin.saveSettings();
+          }
+        }),
+      );
+
+    new Setting(containerEl)
+      .setName("Max columns per window")
+      .setDesc("1–3. Layouts exceeding this are unavailable.")
+      .addText((t) =>
+        t.setValue(String(s.orchestrator.maxCols)).onChange(async (v) => {
+          const n = parseInt(v, 10);
+          if (Number.isFinite(n) && n >= 1 && n <= 3) {
+            s.orchestrator.maxCols = n;
+            await this.plugin.saveSettings();
+          }
+        }),
+      );
+
+    new Setting(containerEl)
+      .setName("Reset pane assignments")
+      .setDesc("Forget the issueId → pane mapping. Useful after closing all orchestrated iTerm windows.")
+      .addButton((b) =>
+        b.setButtonText("Reset").onClick(async () => {
+          s.orchestratorState = emptyRegistry();
+          await this.plugin.saveSettings();
+          new Notice("op: orchestrator state cleared");
+        }),
       );
 
     containerEl.createEl("h2", { text: "Sidebar view" });
