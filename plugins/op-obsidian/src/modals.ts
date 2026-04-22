@@ -296,6 +296,7 @@ export class SetGithubIssueModal extends Modal {
 export interface ScaffoldModalInput {
   slug: string;
   prefix: string;
+  repoPath?: string;
   seedTitle?: string;
   seedPriority?: Priority;
 }
@@ -303,6 +304,7 @@ export interface ScaffoldModalInput {
 export class ScaffoldProjectModal extends Modal {
   private slug = "";
   private prefix = "";
+  private repoPath = "";
   private seedTitle = "";
   private seedPriority: Priority = "med";
 
@@ -326,6 +328,15 @@ export class ScaffoldProjectModal extends Modal {
       .setName("Prefix")
       .setDesc("Uppercase issue-ID prefix, e.g. MP")
       .addText((t) => t.setPlaceholder("MP").onChange((v) => (this.prefix = v)));
+
+    new Setting(contentEl)
+      .setName("Repo path (optional)")
+      .setDesc("Absolute path to the code repo — written to STATUS.md as repo_path, used by op:open-agent as the working directory")
+      .addText((t) =>
+        t
+          .setPlaceholder("/Users/you/Projects/my-project")
+          .onChange((v) => (this.repoPath = v)),
+      );
 
     new Setting(contentEl)
       .setName("Seed issue title (optional)")
@@ -354,11 +365,17 @@ export class ScaffoldProjectModal extends Modal {
               new Notice("Slug and prefix are required");
               return;
             }
-            this.close();
             const seedTitle = this.seedTitle.trim() || undefined;
+            const repoPath = this.repoPath.trim() || undefined;
+            if (repoPath && !repoPath.startsWith("/")) {
+              new Notice("Repo path must be absolute (start with /)");
+              return;
+            }
+            this.close();
             this.onSubmit({
               slug,
               prefix,
+              repoPath,
               seedTitle,
               seedPriority: seedTitle ? this.seedPriority : undefined,
             });

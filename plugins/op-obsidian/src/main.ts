@@ -276,6 +276,11 @@ export default class OpPlugin extends Plugin {
       {
         slug: { value: "<slug>", description: "Project slug (lowercase, hyphens)" },
         prefix: { value: "<PREFIX>", description: "Issue id prefix (uppercase)" },
+        repo_path: {
+          value: "<absolute-path>",
+          description:
+            "Optional absolute path to the project's code repo (written to STATUS.md, used by op:open-agent)",
+        },
         title: { value: "<title>", description: "Optional seed issue title" },
         priority: { value: "<low|med|high>", description: "Seed issue priority (default: med)" },
         scope: { value: "<lines>", description: "Seed scope bullets, newline-separated" },
@@ -348,6 +353,7 @@ export default class OpPlugin extends Plugin {
         const res = await scaffoldProject(this.app, this.store, {
           slug: input.slug,
           prefix: input.prefix,
+          repoPath: input.repoPath,
           seedTitle: input.seedTitle,
           seedPriority: input.seedPriority,
         });
@@ -758,9 +764,11 @@ export default class OpPlugin extends Plugin {
       ? ((params.priority as Priority | undefined) ?? "med")
       : undefined;
     const seedScope = seedTitle ? collectRepeated(params, "scope") : undefined;
+    const repoPath = params.repo_path?.trim() || undefined;
     return scaffoldProject(this.app, this.store, {
       slug,
       prefix,
+      repoPath,
       seedTitle,
       seedPriority,
       seedScope,
