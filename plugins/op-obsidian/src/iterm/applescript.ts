@@ -69,6 +69,45 @@ export async function splitSession(
   return out;
 }
 
+// Set the iTerm session's display name. iTerm uses the session name as the
+// tab title (when the tab has one session) and as the pane title in splits.
+// Without this, panes attached to a `tmux attach` show "tmux" as their title
+// because iTerm falls back to the running process name.
+export async function setSessionName(sessionId: string, name: string): Promise<void> {
+  const script = [
+    'tell application "iTerm2"',
+    "  repeat with _w in windows",
+    "    repeat with _t in tabs of _w",
+    "      repeat with _s in sessions of _t",
+    `        if (id of _s as string) = ${osaQuote(sessionId)} then`,
+    `          set name of _s to ${osaQuote(name)}`,
+    "          return",
+    "        end if",
+    "      end repeat",
+    "    end repeat",
+    "  end repeat",
+    "end tell",
+  ].join("\n");
+  await runOsa(script);
+}
+
+// Set the iTerm window's display name. Shown in the window title bar above
+// the tab strip; useful for distinguishing the orchestrator's per-tmux-session
+// windows (op-agents-1, op-agents-2, ...).
+export async function setWindowName(windowId: string, name: string): Promise<void> {
+  const script = [
+    'tell application "iTerm2"',
+    "  repeat with _w in windows",
+    `    if (id of _w as string) = ${osaQuote(windowId)} then`,
+    `      set name of _w to ${osaQuote(name)}`,
+    "      return",
+    "    end if",
+    "  end repeat",
+    "end tell",
+  ].join("\n");
+  await runOsa(script);
+}
+
 export async function selectSession(sessionId: string): Promise<void> {
   const script = [
     'tell application "iTerm2"',

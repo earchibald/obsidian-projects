@@ -7,7 +7,14 @@ import { promisify } from "util";
 import { LAYOUTS, type LayoutId } from "./layout/layouts";
 import type { RegistryData, SurfaceRef, WindowState } from "./layout/registry";
 import { activeWindow, addWindow, assignSurface } from "./layout/registry";
-import { createWindow, selectSession, sessionExists, splitSession } from "./iterm/applescript";
+import {
+  createWindow,
+  selectSession,
+  sessionExists,
+  setSessionName,
+  setWindowName,
+  splitSession,
+} from "./iterm/applescript";
 import { buildPrepScript, tmuxWindowName } from "./terminalLaunch";
 
 const pExecFile = promisify(execFile);
@@ -68,6 +75,7 @@ export async function orchestrateLaunch(
   const existing = reg.surfaces[args.issueId];
   if (existing && (await sessionExists(existing.sessionId))) {
     await selectSession(existing.sessionId);
+    await setSessionName(existing.sessionId, args.issueId);
     // tmux window still owns the agent process; the pane just reattaches.
     const scriptPath = await writeViewScript({
       args,
@@ -149,6 +157,7 @@ export async function orchestrateLaunch(
     });
 
     const sessionId = await splitSession(parentId, op.dir, quoteForBash(viewScript));
+    await setSessionName(sessionId, args.issueId);
     win.sessionIds[nextCellIndex] = sessionId;
 
     const ref: SurfaceRef = {
@@ -179,6 +188,8 @@ export async function orchestrateLaunch(
   await ensureAgentWindow({ args, tmuxSession, windowName });
   const viewScript = await writeViewScript({ args, tmuxSession, tmuxWindow: windowName });
   const { windowId, sessionId } = await createWindow(quoteForBash(viewScript));
+  await setWindowName(windowId, tmuxSession);
+  await setSessionName(sessionId, args.issueId);
 
   const newWin: WindowState = {
     windowId,
@@ -246,11 +257,22 @@ async function writeViewScript({ args, tmuxSession, tmuxWindow }: ViewArgs): Pro
   const sess = shSingleQuote(tmuxSession);
   const groupSess = shSingleQuote(`view-${args.issueId}`);
   const win = shSingleQuote(tmuxWindow);
+  // iTerm's tab/session title falls back to the running process name ("tmux")
+  // unless the terminal itself reports a title. Two-pronged fix:
+  // 1. Emit OSC 2 directly before exec so the title is set immediately,
+  //    even before tmux attaches.
+  // 2. Tell tmux to forward window titles to the outer terminal via
+  //    `set-titles on` + `set-titles-string '#W'`, so subsequent window
+  //    activity keeps the title in sync with the tmux window name (= issueId).
+  const issueIdShell = shSingleQuote(args.issueId);
   const lines = [
     "#!/bin/bash",
     "set -e",
     `export PATH="/opt/homebrew/bin:/usr/local/bin:$HOME/.local/bin:$HOME/bin:$PATH"`,
     `${tmux} new-session -d -s ${groupSess} -t ${sess} 2>/dev/null || true`,
+    `${tmux} set-option -t ${groupSess} set-titles on >/dev/null 2>&1 || true`,
+    `${tmux} set-option -t ${groupSess} set-titles-string '#W' >/dev/null 2>&1 || true`,
+    `printf '\\033]2;%s\\007' ${issueIdShell}`,
     `exec ${tmux} attach -t ${groupSess} \\; select-window -t ${groupSess}:${win}`,
     "",
   ];
