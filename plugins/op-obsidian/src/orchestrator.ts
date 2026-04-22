@@ -90,35 +90,47 @@ export async function orchestrateLaunch(
   const windowName = tmuxWindowName(args.issueId);
 
   // Active window = last window in registry that isn't full and still exists
-  // in iTerm. If the user closed all iTerm windows, the registry's parent
-  // sessions are stale ghosts — splitting them throws "session not found".
-  // Detect that here, prune the dead windows + their surface refs, and fall
-  // through to the new-window path.
+  // in iTerm. Closing a single agent pane invalidates only that cell's
+  // session; other panes in the same iTerm window keep running. Probe every
+  // tracked session, clear dead slots so they can be reused, and only
+  // discard the whole window when every cell is gone.
   let win = activeWindow(reg);
   while (win) {
-    if (win.sessionIds.filter(Boolean).length >= LAYOUTS[win.layoutId].cells) {
-      win = undefined;
-      break;
-    }
-    const probe = win.sessionIds.find((s): s is string => typeof s === "string");
-    if (probe && !(await sessionExists(probe))) {
+    const anyAlive = await pruneDeadSessionSlots(reg, win);
+    if (!anyAlive) {
       pruneWindow(reg, win.windowId);
       win = activeWindow(reg);
       continue;
+    }
+    if (win.sessionIds.filter(Boolean).length >= LAYOUTS[win.layoutId].cells) {
+      win = undefined;
     }
     break;
   }
 
   if (win) {
-    // Growth step: apply the next split from the window's layout recipe.
-    const nextCellIndex = win.sessionIds.filter(Boolean).length;
+    // Growth step: fill the first empty slot in the window's layout. After
+    // pruning dead cells the slot array can be sparse, so pick the lowest
+    // empty index rather than counting filled slots.
+    const cellCount = LAYOUTS[win.layoutId].cells;
+    const nextCellIndex = firstEmptyCell(win.sessionIds, cellCount);
+    if (nextCellIndex === -1) {
+      throw new Error(
+        `op: orchestrator found no empty cell in window ${win.windowId} (layout ${win.layoutId})`,
+      );
+    }
     const op = LAYOUTS[win.layoutId].splits[nextCellIndex - 1];
     if (!op) {
       throw new Error(
         `op: orchestrator expected split for cell ${nextCellIndex} in layout ${win.layoutId}`,
       );
     }
-    const parentId = win.sessionIds[op.from];
+    // If the layout's prescribed parent cell was the one the user closed,
+    // fall back to any live cell. iTerm already reflowed the window when
+    // the pane closed, so the spec's geometry is approximate at this point.
+    const parentId =
+      win.sessionIds[op.from] ??
+      win.sessionIds.find((s): s is string => typeof s === "string");
     if (!parentId) {
       throw new Error(
         `op: orchestrator cannot split missing parent cell ${op.from} in window ${win.windowId}`,
@@ -282,6 +294,41 @@ async function writeAgentInnerScript(args: OrchestrateArgs): Promise<string> {
   lines.push("");
   await fs.writeFile(innerPath, lines.join("\n"), { mode: 0o755 });
   return innerPath;
+}
+
+// Probe each tracked session in a window. Clear slots whose iTerm session
+// is gone (and drop any surface ref that pointed at it) so the freed cell
+// can host a new agent. Returns whether the window still has at least one
+// live cell.
+export async function pruneDeadSessionSlots(
+  reg: RegistryData,
+  win: WindowState,
+  exists: (sessionId: string) => Promise<boolean> = sessionExists,
+): Promise<boolean> {
+  let anyAlive = false;
+  for (let i = 0; i < win.sessionIds.length; i++) {
+    const sid = win.sessionIds[i];
+    if (!sid) continue;
+    if (await exists(sid)) {
+      anyAlive = true;
+    } else {
+      win.sessionIds[i] = undefined;
+      for (const [issueId, ref] of Object.entries(reg.surfaces)) {
+        if (ref.sessionId === sid) delete reg.surfaces[issueId];
+      }
+    }
+  }
+  return anyAlive;
+}
+
+export function firstEmptyCell(
+  sessionIds: (string | undefined)[],
+  cellCount: number,
+): number {
+  for (let i = 0; i < cellCount; i++) {
+    if (!sessionIds[i]) return i;
+  }
+  return -1;
 }
 
 function pruneWindow(reg: RegistryData, windowId: string): void {
