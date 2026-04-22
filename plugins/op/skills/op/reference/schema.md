@@ -40,6 +40,7 @@ assignee: <github-handle>
 commits:                 # optional; short-sha + subject, appended during work
   - <sha7> <subject>
 pr:                      # optional; PR or MR URL if one exists
+github_issue:            # optional; direct mapping to a GitHub issue URL
 version:                 # optional; semver string of the release that shipped this issue, set at resolve
 tags:
   - project/<slug>
@@ -55,6 +56,8 @@ Why: keeps the project key visible in file lists and makes wikilinks from TASKS 
 **Body:** one-line summary checklist at minimum. Agents may expand freely.
 
 **Git refs.** `commits:` and `pr:` are the canonical trail of *what shipped* for the issue. They live on the issue (not on TASKS) because TASKS are trashed on resolve; the issue and its refs persist in `RESOLVED ISSUES/` forever. Both fields are optional — meta-only projects without a code repo leave them unset.
+
+**GitHub issue mapping.** `github_issue:` is an optional URL pointing at a GitHub issue that mirrors this op issue. Set manually via the plugin's "Set GitHub issue URL" command, auto-populated at creation time when the `autoCreateGithubIssue` plugin setting is on (runs `gh issue create` in the project's repo), or passed in at creation. When `closeGithubIssueOnResolve` is on, resolving the op issue runs `gh issue close` on the linked URL.
 
 **Version.** `version:` records the semver release that shipped the issue (e.g. `0.1.7`). Set at resolve time, in the same commit that bumps the project's version file (`plugin.json` / `manifest.json` / `package.json`). One bump per issue; classify as patch (fixes, docs, internal), minor (new user-facing behavior, additive schema), or major (breaking schema change). See the `op` skill's "Semver bumping" section for the full rules. Optional — meta-only projects without a version file leave it unset.
 

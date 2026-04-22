@@ -19,6 +19,11 @@ export interface ViewSettings {
   openOnStartup: boolean;
 }
 
+export interface GithubSettings {
+  autoCreateGithubIssue: boolean;
+  closeGithubIssueOnResolve: boolean;
+}
+
 export interface OpSettings {
   defaultAgent: AgentId;
   alwaysPick: boolean;
@@ -29,6 +34,7 @@ export interface OpSettings {
   iTermPlacement: ITermPlacement;
   tmuxBinary: string;
   view: ViewSettings;
+  github: GithubSettings;
 }
 
 export const DEFAULT_SETTINGS: OpSettings = {
@@ -50,6 +56,10 @@ export const DEFAULT_SETTINGS: OpSettings = {
     defaultTab: "issues",
     recentResolvedLimit: 20,
     openOnStartup: false,
+  },
+  github: {
+    autoCreateGithubIssue: false,
+    closeGithubIssueOnResolve: true,
   },
 };
 
@@ -86,6 +96,15 @@ export function mergeSettings(loaded: unknown): OpSettings {
       base.view.recentResolvedLimit = Math.floor(v.recentResolvedLimit);
     }
     if (typeof v.openOnStartup === "boolean") base.view.openOnStartup = v.openOnStartup;
+  }
+  if (l.github && typeof l.github === "object") {
+    const g = l.github as Partial<GithubSettings>;
+    if (typeof g.autoCreateGithubIssue === "boolean") {
+      base.github.autoCreateGithubIssue = g.autoCreateGithubIssue;
+    }
+    if (typeof g.closeGithubIssueOnResolve === "boolean") {
+      base.github.closeGithubIssueOnResolve = g.closeGithubIssueOnResolve;
+    }
   }
   return base;
 }
@@ -351,6 +370,32 @@ export class OpSettingsTab extends PluginSettingTab {
       .addToggle((t) =>
         t.setValue(s.view.openOnStartup).onChange(async (v) => {
           s.view.openOnStartup = v;
+          await this.plugin.saveSettings();
+        }),
+      );
+
+    containerEl.createEl("h2", { text: "GitHub integration" });
+    containerEl.createEl("p", {
+      text: "Requires the `gh` CLI installed and authenticated. `gh` is run in the project's repo (repo_path in STATUS.md or the working-dir setting above).",
+      cls: "setting-item-description",
+    });
+
+    new Setting(containerEl)
+      .setName("Auto-create GitHub issue on new op issue")
+      .setDesc("When creating an op issue, if no GitHub URL is provided, run `gh issue create` and link the returned URL.")
+      .addToggle((t) =>
+        t.setValue(s.github.autoCreateGithubIssue).onChange(async (v) => {
+          s.github.autoCreateGithubIssue = v;
+          await this.plugin.saveSettings();
+        }),
+      );
+
+    new Setting(containerEl)
+      .setName("Close linked GitHub issue on resolve")
+      .setDesc("When resolving an op issue with a github_issue: URL, run `gh issue close` on it.")
+      .addToggle((t) =>
+        t.setValue(s.github.closeGithubIssueOnResolve).onChange(async (v) => {
+          s.github.closeGithubIssueOnResolve = v;
           await this.plugin.saveSettings();
         }),
       );

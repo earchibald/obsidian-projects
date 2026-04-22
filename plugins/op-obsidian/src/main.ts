@@ -12,11 +12,18 @@ import {
   NewIssueModal,
   ProjectSuggestModal,
   ScaffoldProjectModal,
+  SetGithubIssueModal,
   SetPrModal,
 } from "./modals";
 import { scaffoldProject, type ScaffoldProjectResult } from "./scaffoldProject";
 import { workIssue } from "./workIssue";
 import { appendCommit, setPr } from "./commits";
+import {
+  closeGithubIssue,
+  createGithubIssue,
+  setGithubIssue,
+} from "./github";
+import { resolveRepoPath } from "./repoPath";
 import { writeUriResponse, type UriResponsePayload } from "./uriResponse";
 import { runResolve, type ResolveArgs, type ResolveStatus } from "./resolve";
 import type { IssueEntry, LifecycleEvent } from "./types";
@@ -108,6 +115,24 @@ export default class OpPlugin extends Plugin {
       id: "op-set-pr",
       name: "op: set PR URL on issue",
       callback: () => this.runSetPrCommand(),
+    });
+
+    this.addCommand({
+      id: "op-set-github-issue",
+      name: "op: set GitHub issue URL on issue",
+      callback: () => this.runSetGithubIssueCommand(),
+    });
+
+    this.addCommand({
+      id: "op-create-github-issue",
+      name: "op: create GitHub issue for this issue",
+      callback: () => this.runCreateGithubIssueCommand(),
+    });
+
+    this.addCommand({
+      id: "op-open-github-issue",
+      name: "op: open linked GitHub issue in browser",
+      callback: () => this.runOpenGithubIssueCommand(),
     });
 
     this.addCommand({
@@ -330,9 +355,14 @@ export default class OpPlugin extends Plugin {
       return;
     }
     new ProjectSuggestModal(this.app, projects, (project) => {
-      new NewIssueModal(this.app, project, (input) => {
-        this.submitCreateIssue(input);
-      }).open();
+      new NewIssueModal(
+        this.app,
+        project,
+        (input) => {
+          this.submitCreateIssue(input);
+        },
+        { autoCreateGithubIssue: this.settings.github.autoCreateGithubIssue },
+      ).open();
     }).open();
   }
 
@@ -373,9 +403,34 @@ export default class OpPlugin extends Plugin {
       if (file instanceof TFile) {
         await this.app.workspace.getLeaf(false).openFile(file);
       }
+      if (!input.githubIssue && this.settings.github.autoCreateGithubIssue) {
+        await this.autoCreateGithubIssueFor(res.path, res.id, input).catch((err) => {
+          console.error("[op-obsidian] auto-create github issue failed", err);
+          new Notice(`op: gh create failed — ${err?.message ?? err}`);
+        });
+      }
     } catch (err: any) {
       console.error("[op-obsidian] createIssue failed", err);
       new Notice(`op: create failed — ${err?.message ?? err}`);
+    }
+  }
+
+  private async autoCreateGithubIssueFor(
+    path: string,
+    id: string,
+    input: CreateIssueInput,
+  ): Promise<void> {
+    const repoPath = resolveRepoPath(this.app, this.settings, input.slug);
+    if (!repoPath) {
+      new Notice(`op: no repo_path for ${input.slug} — skipping gh create`);
+      return;
+    }
+    const body = buildGithubBody(id, input);
+    const url = await createGithubIssue({ repoPath, title: input.title, body });
+    const entry = this.store.byPath(path);
+    if (entry && entry.type === "issue") {
+      await setGithubIssue(this.app, entry, url);
+      new Notice(`op: linked ${id} → ${url}`);
     }
   }
 
@@ -423,6 +478,60 @@ export default class OpPlugin extends Plugin {
         }
       }).open();
     });
+  }
+
+  private runSetGithubIssueCommand(): void {
+    this.pickIssueInteractive((entry) => {
+      new SetGithubIssueModal(this.app, entry, async (url) => {
+        try {
+          const res = await setGithubIssue(this.app, entry, url);
+          new Notice(`op: github_issue set on ${res.issueId}`);
+        } catch (err: any) {
+          console.error("[op-obsidian] op-set-github-issue failed", err);
+          new Notice(`op-set-github-issue failed: ${err?.message ?? err}`);
+        }
+      }).open();
+    });
+  }
+
+  private runCreateGithubIssueCommand(): void {
+    this.pickIssueInteractive(async (entry) => {
+      try {
+        const repoPath = resolveRepoPath(this.app, this.settings, entry.project);
+        if (!repoPath) {
+          new Notice(`op: no repo_path for ${entry.project}`);
+          return;
+        }
+        const title = entry.title.replace(/^[A-Z]+-\d+\s+/, "");
+        const body = await this.readIssueBody(entry.path);
+        const url = await createGithubIssue({ repoPath, title, body });
+        await setGithubIssue(this.app, entry, url);
+        new Notice(`op: created ${url}`);
+      } catch (err: any) {
+        console.error("[op-obsidian] op-create-github-issue failed", err);
+        new Notice(`op-create-github-issue failed: ${err?.message ?? err}`);
+      }
+    });
+  }
+
+  private runOpenGithubIssueCommand(): void {
+    this.pickIssueInteractive((entry) => {
+      const url = entry.githubIssue;
+      if (!url) {
+        new Notice(`${entry.id} has no github_issue URL`);
+        return;
+      }
+      window.open(url, "_blank");
+    });
+  }
+
+  private async readIssueBody(path: string): Promise<string> {
+    const f = this.app.vault.getAbstractFileByPath(path);
+    if (!(f instanceof TFile)) return "";
+    const raw = await this.app.vault.read(f);
+    // strip leading frontmatter block
+    const m = raw.match(/^---\n[\s\S]*?\n---\n?/);
+    return (m ? raw.slice(m[0].length) : raw).trim();
   }
 
   private pickIssueInteractive(onPick: (entry: IssueEntry) => void): void {
@@ -528,6 +637,22 @@ export default class OpPlugin extends Plugin {
     return entry && entry.type === "issue" ? f.path : undefined;
   }
 
+  private withGhCloseHook(args: ResolveArgs): ResolveArgs {
+    if (!this.settings.github.closeGithubIssueOnResolve) return args;
+    return {
+      ...args,
+      onAfterMove: async (entry) => {
+        if (!entry.githubIssue) return;
+        const repoPath = resolveRepoPath(this.app, this.settings, entry.project);
+        if (!repoPath) {
+          new Notice(`op: no repo_path for ${entry.project} — skipping gh issue close`);
+          return;
+        }
+        await closeGithubIssue(repoPath, entry.githubIssue);
+      },
+    };
+  }
+
   private resolveUriArgs(params: Record<string, string>): ResolveArgs {
     const status =
       params.status === "wontfix"
@@ -546,7 +671,7 @@ export default class OpPlugin extends Plugin {
   private async runResolveCommand(args: ResolveArgs): Promise<void> {
     const command = "op-resolve";
     try {
-      const result = await runResolve(this.app, this.store, args);
+      const result = await runResolve(this.app, this.store, this.withGhCloseHook(args));
       await writeUriResponse(this.app, {
         ok: result.ok,
         command,
@@ -744,7 +869,7 @@ export default class OpPlugin extends Plugin {
         const p = this.activeIssuePath();
         if (p) args.path = p;
       }
-      const result = await runResolve(this.app, this.store, args);
+      const result = await runResolve(this.app, this.store, this.withGhCloseHook(args));
       await writeUriResponse(this.app, {
         ok: result.ok,
         command,
@@ -866,13 +991,20 @@ export default class OpPlugin extends Plugin {
     }
     const priority = (params.priority as Priority | undefined) ?? "med";
     const scope = collectRepeated(params, "scope");
+    const githubIssue = params.github_issue?.trim() || undefined;
     const res = await createIssue(this.app, this.store, {
       slug,
       title,
       priority,
       scope,
+      githubIssue,
     });
     new Notice(`Created ${res.id}`);
+    if (!githubIssue && this.settings.github.autoCreateGithubIssue) {
+      await this.autoCreateGithubIssueFor(res.path, res.id, { slug, title, priority, scope }).catch(
+        (err) => console.error("[op-obsidian] uri auto-create failed", err),
+      );
+    }
     const file = this.app.vault.getAbstractFileByPath(res.path);
     if (file instanceof TFile) {
       await this.app.workspace.getLeaf(false).openFile(file);
@@ -889,6 +1021,15 @@ function defaultBinaryFor(id: AgentId): string {
     case "copilot":
       return "copilot";
   }
+}
+
+function buildGithubBody(id: string, input: CreateIssueInput): string {
+  const lines = [`Tracked as op issue **${id}**.`, ""];
+  if (input.scope && input.scope.length > 0) {
+    lines.push("## Scope", "");
+    for (const b of input.scope) lines.push(`- [ ] ${b}`);
+  }
+  return lines.join("\n").trim();
 }
 
 function collectRepeated(params: Record<string, string>, key: string): string[] {

@@ -68,11 +68,13 @@ export class NewIssueModal extends Modal {
   private title = "";
   private priority: Priority = "med";
   private scopeRaw = "";
+  private githubIssue = "";
 
   constructor(
     app: App,
     private project: ProjectInfo,
     private onSubmit: (input: CreateIssueInput) => void,
+    private opts: { autoCreateGithubIssue?: boolean } = {},
   ) {
     super(app);
   }
@@ -108,6 +110,18 @@ export class NewIssueModal extends Modal {
         t.inputEl.style.width = "100%";
       });
 
+    const ghDesc = this.opts.autoCreateGithubIssue
+      ? "Leave blank to auto-create a GitHub issue via `gh`."
+      : "Optional — paste an existing GitHub issue URL to link.";
+    new Setting(contentEl)
+      .setName("GitHub issue URL (optional)")
+      .setDesc(ghDesc)
+      .addText((t) =>
+        t
+          .setPlaceholder("https://github.com/owner/repo/issues/123")
+          .onChange((v) => (this.githubIssue = v)),
+      );
+
     new Setting(contentEl)
       .addButton((b) =>
         b
@@ -122,12 +136,18 @@ export class NewIssueModal extends Modal {
               .split("\n")
               .map((l) => l.replace(/^\s*[-*]\s*/, "").trim())
               .filter((l) => l.length > 0);
+            const gh = this.githubIssue.trim();
+            if (gh && !/^https?:\/\//i.test(gh)) {
+              new Notice("GitHub URL must start with http(s)://");
+              return;
+            }
             this.close();
             this.onSubmit({
               slug: this.project.slug,
               title: this.title.trim(),
               priority: this.priority,
               scope,
+              githubIssue: gh || undefined,
             });
           }),
       )
@@ -217,6 +237,52 @@ export class SetPrModal extends Modal {
             }
             this.close();
             this.onSubmit(this.url.trim());
+          }),
+      )
+      .addButton((b) => b.setButtonText("Cancel").onClick(() => this.close()));
+  }
+
+  onClose(): void {
+    this.contentEl.empty();
+  }
+}
+
+export class SetGithubIssueModal extends Modal {
+  private url = "";
+
+  constructor(
+    app: App,
+    private issue: IssueEntry,
+    private onSubmit: (url: string) => void,
+  ) {
+    super(app);
+  }
+
+  onOpen(): void {
+    const { contentEl } = this;
+    contentEl.empty();
+    contentEl.createEl("h2", { text: `Set GitHub issue URL on ${this.issue.id}` });
+
+    new Setting(contentEl).setName("GitHub issue URL").addText((t) =>
+      t
+        .setPlaceholder("https://github.com/owner/repo/issues/123")
+        .setValue(this.issue.githubIssue ?? "")
+        .onChange((v) => (this.url = v)),
+    );
+
+    new Setting(contentEl)
+      .addButton((b) =>
+        b
+          .setButtonText("Set")
+          .setCta()
+          .onClick(() => {
+            const u = this.url.trim() || (this.issue.githubIssue ?? "");
+            if (!/^https?:\/\//i.test(u)) {
+              new Notice("URL must start with http(s)://");
+              return;
+            }
+            this.close();
+            this.onSubmit(u);
           }),
       )
       .addButton((b) => b.setButtonText("Cancel").onClick(() => this.close()));
