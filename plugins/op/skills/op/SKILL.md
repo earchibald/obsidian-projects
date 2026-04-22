@@ -80,7 +80,16 @@ Accepts `slug N`, `slug PREFIX-N`, `PREFIX N`, `PREFIX-N`, or just `slug`/`PREFI
 2. If the body is empty or one line, scope is ambiguous — state your interpretation and confirm before implementing, even in auto mode.
 3. Reconcile scope vs. current repo/vault state — skip items already done; flag drift between the schema and observed reality.
 4. The plugin creates the first TASKS note for you. For additional logical subtasks, create more TASKS notes (`obsidian create` is fine for these auxiliary notes — they're trashed at resolve).
-5. Confirm before any action affecting shared systems (push, release, deploy, external API).
+5. **Mirror every TASK note into a `## Tasks` checklist in the issue body.** After creating the TASK notes (planned upfront, or fix-up tasks discovered mid-session), append a line to the issue body's `## Tasks` section for each one:
+
+   ```markdown
+   ## Tasks
+
+   - [ ] <ISSUE-ID>.<N> — <task title>
+   ```
+
+   Reconcile rather than overwrite: if the section already exists (prior session, completed task, user-authored entry), preserve existing entries (`- [completed]` / `- [x]`) and append any new tasks not already listed. Mark entries `- [completed]` when the corresponding TASK note flips to `status: completed`. The body checklist is the durable record — TASK notes are trashed at resolve, the issue body isn't.
+6. Confirm before any action affecting shared systems (push, release, deploy, external API).
 
 ### Track refs as work lands
 
