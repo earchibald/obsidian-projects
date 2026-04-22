@@ -27,6 +27,16 @@ export interface LaunchArgs {
   // op-obsidian issue/agent a terminating session belongs to.
   issueId: string;
   agentId: string;
+  // Debug mode: skip running the agent; drop into an interactive login shell
+  // in the tmux window so the launch flow can be exercised manually (OP-43).
+  debug?: boolean;
+  // When present and `terminalApp === "iTerm"`, launch routes through the
+  // layout orchestrator (one iTerm pane per agent) instead of the legacy
+  // tmux -CC single-window attach.
+  orchestrator?: {
+    settings: import("./orchestrator").OrchestratorSettings;
+    registry: import("./orchestrator").RegistryIO;
+  };
 }
 
 export interface LaunchResult {
@@ -44,6 +54,32 @@ export async function launchInTerminal(args: LaunchArgs): Promise<LaunchResult> 
   const session = SHARED_TMUX_SESSION;
   const windowName = tmuxWindowName(args.issueId);
   const { innerPath, outerPath } = await writeLaunchScripts({ args, session, windowName });
+
+  if (args.terminalApp === "iTerm" && args.orchestrator?.settings.enabled) {
+    // Layout orchestrator takes over: it manages tmux session naming per
+    // iTerm window and drives AppleScript splits itself.
+    const { orchestrateLaunch } = await import("./orchestrator");
+    const r = await orchestrateLaunch(
+      {
+        issueId: args.issueId,
+        agentId: args.agentId,
+        cwd: args.cwd,
+        binary: args.binary,
+        launchFlags: args.launchFlags,
+        prompt: args.prompt,
+        debug: args.debug,
+        tmuxBinary: args.tmuxBinary,
+        baseTmuxSession: SHARED_TMUX_SESSION,
+      },
+      args.orchestrator.settings,
+      args.orchestrator.registry,
+    );
+    return {
+      scriptPath: r.scriptPath,
+      tmuxSession: r.tmuxSession,
+      tmuxWindow: r.tmuxWindow,
+    };
+  }
 
   if (args.terminalApp === "iTerm") {
     // Run session/window prep synchronously so the shared session and the

@@ -69,6 +69,16 @@ export async function openAgent(
     tmuxBinary: settings.tmuxBinary,
     issueId: args.entry.id,
     agentId,
+    orchestrator: {
+      settings: settings.orchestrator,
+      registry: {
+        get: () => settings.orchestratorState,
+        save: async (reg) => {
+          settings.orchestratorState = reg;
+          await saveSettings();
+        },
+      },
+    },
   });
 
   await recordAgentOnIssue(app, args.entry.path, agentId);
