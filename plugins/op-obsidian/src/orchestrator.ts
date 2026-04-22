@@ -257,11 +257,22 @@ async function writeViewScript({ args, tmuxSession, tmuxWindow }: ViewArgs): Pro
   const sess = shSingleQuote(tmuxSession);
   const groupSess = shSingleQuote(`view-${args.issueId}`);
   const win = shSingleQuote(tmuxWindow);
+  // iTerm's tab/session title falls back to the running process name ("tmux")
+  // unless the terminal itself reports a title. Two-pronged fix:
+  // 1. Emit OSC 2 directly before exec so the title is set immediately,
+  //    even before tmux attaches.
+  // 2. Tell tmux to forward window titles to the outer terminal via
+  //    `set-titles on` + `set-titles-string '#W'`, so subsequent window
+  //    activity keeps the title in sync with the tmux window name (= issueId).
+  const issueIdShell = shSingleQuote(args.issueId);
   const lines = [
     "#!/bin/bash",
     "set -e",
     `export PATH="/opt/homebrew/bin:/usr/local/bin:$HOME/.local/bin:$HOME/bin:$PATH"`,
     `${tmux} new-session -d -s ${groupSess} -t ${sess} 2>/dev/null || true`,
+    `${tmux} set-option -t ${groupSess} set-titles on >/dev/null 2>&1 || true`,
+    `${tmux} set-option -t ${groupSess} set-titles-string '#W' >/dev/null 2>&1 || true`,
+    `printf '\\033]2;%s\\007' ${issueIdShell}`,
     `exec ${tmux} attach -t ${groupSess} \\; select-window -t ${groupSess}:${win}`,
     "",
   ];
