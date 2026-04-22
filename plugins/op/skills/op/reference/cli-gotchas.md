@@ -1,0 +1,42 @@
+# CLI gotchas
+
+Quirks of the raw `obsidian` CLI that matter when the `op-obsidian` plugin is unavailable and you have to fall back to primitives.
+
+## `obsidian search` can't query `prefix:`
+
+`obsidian search query="prefix: <PREFIX>"` fails with `Error: Operator "prefix" not recognized` — the CLI parses a leading `<word>:` as a search operator, colliding with frontmatter keys. For prefix → slug lookups, scan `Projects/*/STATUS.md` frontmatter directly.
+
+`obsidian search` can also fail wholesale with `ENOENT` when a single entry in the vault index points at a moved or deleted file. Recovery: restart Obsidian or force a reindex. Don't rely on `obsidian search` for correctness — use filesystem scans.
+
+## `obsidian create` forces `.md`
+
+For `.base` / `.canvas`, write to the vault path directly rather than via the CLI.
+
+## `obsidian move` uses `to=`, not `dest=`
+
+Full form: `obsidian move path=<src> to=<dst>`.
+
+## `--help` on a subcommand creates a note
+
+`obsidian <subcommand> --help` creates `Untitled N.md` — the CLI treats `--help` as content. Use `obsidian help` at the top level only.
+
+## There is no `property:add` / `property:append`
+
+The CLI exposes only `property:read`, `property:set`, and `property:remove`. To append to a list-valued property (e.g. `commits:`) without the plugin, you have to read → append-in-memory → rewrite:
+
+```bash
+ISSUE="Projects/<slug>/ISSUES/<PREFIX>-<N> <title>.md"
+sha=$(git -C <repo> rev-parse --short=7 HEAD)
+sub=$(git -C <repo> log -1 --pretty=%s)
+new="$sha $sub"
+
+# 1. Read the current list (YAML — one "- item" per line, or empty).
+current=$(obsidian property:read name=commits path="$ISSUE")
+
+# 2. Build the new list in memory, then rewrite it whole as a JSON array.
+obsidian property:set name=commits type=list \
+  value='["<sha1> <subj1>","<sha2> <subj2>","'"$new"'"]' \
+  path="$ISSUE"
+```
+
+This is the **fallback** for when `op-obsidian` is missing or disabled. In normal operation, `obsidian op-append-commit issue=<PREFIX>-<N> sha=<sha> subject=<subj>` is the right tool — it's idempotent, handles the read/rewrite internally, and keeps the JSON response trail.

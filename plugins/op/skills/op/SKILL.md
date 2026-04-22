@@ -13,7 +13,7 @@ All vault mutations go through the **`op-obsidian`** plugin. Probe once per sess
 obsidian eval code='({enabled: app.plugins.enabledPlugins.has("op-obsidian"), version: app.plugins.plugins["op-obsidian"]?.manifest?.version})'
 ```
 
-If the plugin is missing or disabled, **stop and ask the user to install/enable it** rather than improvising with raw `obsidian` CLI primitives — the plugin owns filename sanitization, ID numbering, frontmatter shape, atomic move-and-trash on resolve, and the JSON response payload.
+If the plugin is missing or disabled, **stop and ask the user to install/enable it** rather than improvising with raw `obsidian` CLI primitives — the plugin owns filename sanitization, ID numbering, frontmatter shape, atomic move-and-trash on resolve, and the JSON response payload. For emergencies where the user can't enable it, [`reference/cli-gotchas.md`](reference/cli-gotchas.md) documents the raw-CLI fallbacks (including the read-append-rewrite recipe for appending to `commits:` without `op-append-commit`).
 
 Run `obsidian vault` once to learn the active vault path; cache it.
 
@@ -25,7 +25,7 @@ All `op-*` commands take `key=value` arguments (not `--flag`). Each prints a one
 
 | Command | Required | Optional | Effect |
 | :--- | :--- | :--- | :--- |
-| `op-scaffold` | `slug`, `prefix` | `title`, `priority`, `scope` | creates `Projects/<slug>/<slug>.base` + `STATUS.md`; seeds `<PREFIX>-1` if `title` given |
+| `op-scaffold` | `slug`, `prefix` | `repo_path`, `title`, `priority`, `scope` | creates `Projects/<slug>/<slug>.base` + `STATUS.md`; writes `repo_path:` (absolute path only) if given; seeds `<PREFIX>-1` if `title` given |
 | `op-new` | `project`, `title` | `priority`, `scope` | creates next-N issue with sanitized filename and schema-conformant frontmatter |
 | `op-work` | `issue` | — | sets `status: in-progress`; creates the initial TASKS note |
 | `op-append-commit` | `issue`, `sha`, `subject` | — | idempotent append to issue's `commits:` list |
