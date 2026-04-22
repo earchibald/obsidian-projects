@@ -18,7 +18,7 @@ export const BASE_PROFILES: Readonly<Record<AgentId, AgentProfile>> = Object.fre
     id: "claude",
     label: "Claude Code",
     binary: "claude",
-    launchFlags: [],
+    launchFlags: ["--permission-mode", "auto"],
     promptPreamble: "",
     skillTrigger: "/op:issue {{id}}",
   },
