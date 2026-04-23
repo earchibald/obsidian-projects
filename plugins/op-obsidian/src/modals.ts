@@ -3,6 +3,14 @@ import type { ProjectInfo } from "./projects";
 import type { Priority, CreateIssueInput } from "./createIssue";
 import type { IssueEntry } from "./types";
 import type { AgentId } from "./agentProfiles";
+import {
+  validateNewIssueInput,
+  validateScaffoldInput,
+  validatePrUrl,
+  validateGithubIssueUrl,
+  validateSha,
+  validateSubject,
+} from "./modalValidation";
 
 export class AgentPickerModal extends FuzzySuggestModal<AgentId> {
   constructor(
@@ -124,27 +132,24 @@ export class NewIssueModal extends Modal {
       );
 
     const doSubmit = (andPlan: boolean): void => {
-      if (!this.title.trim()) {
-        new Notice("Title is required");
-        return;
-      }
-      const scope = this.scopeRaw
-        .split("\n")
-        .map((l) => l.replace(/^\s*[-*]\s*/, "").trim())
-        .filter((l) => l.length > 0);
-      const gh = this.githubIssue.trim();
-      if (gh && !/^https?:\/\//i.test(gh)) {
-        new Notice("GitHub URL must start with http(s)://");
+      const result = validateNewIssueInput({
+        title: this.title,
+        scopeRaw: this.scopeRaw,
+        githubIssue: this.githubIssue,
+        priority: this.priority,
+      });
+      if (!result.ok) {
+        new Notice(result.error);
         return;
       }
       this.close();
       this.onSubmit(
         {
           slug: this.project.slug,
-          title: this.title.trim(),
-          priority: this.priority,
-          scope,
-          githubIssue: gh || undefined,
+          title: result.value.title,
+          priority: result.value.priority,
+          scope: result.value.scope,
+          githubIssue: result.value.githubIssue,
         },
         andPlan,
       );
@@ -207,12 +212,14 @@ export class AppendCommitModal extends Modal {
           .setButtonText("Append commit")
           .setCta()
           .onClick(() => {
-            if (!this.sha.trim() || !this.subject.trim()) {
+            const sha = validateSha(this.sha);
+            const subject = validateSubject(this.subject);
+            if (!sha.ok || !subject.ok) {
               new Notice("Both SHA and subject are required");
               return;
             }
             this.close();
-            this.onSubmit(this.sha.trim(), this.subject.trim());
+            this.onSubmit(sha.value, subject.value);
           }),
       )
       .addButton((b) => b.setButtonText("Cancel").onClick(() => this.close()));
@@ -252,12 +259,13 @@ export class SetPrModal extends Modal {
           .setButtonText("Set PR URL")
           .setCta()
           .onClick(() => {
-            if (!/^https?:\/\//i.test(this.url.trim())) {
-              new Notice("URL must start with http(s)://");
+            const r = validatePrUrl(this.url);
+            if (!r.ok) {
+              new Notice(r.error);
               return;
             }
             this.close();
-            this.onSubmit(this.url.trim());
+            this.onSubmit(r.value);
           }),
       )
       .addButton((b) => b.setButtonText("Cancel").onClick(() => this.close()));
@@ -301,12 +309,13 @@ export class SetGithubIssueModal extends Modal {
           .setCta()
           .onClick(() => {
             const u = this.url.trim() || (this.issue.githubIssue ?? "");
-            if (!/^https?:\/\//i.test(u)) {
-              new Notice("URL must start with http(s)://");
+            const r = validateGithubIssueUrl(u);
+            if (!r.ok) {
+              new Notice(r.error);
               return;
             }
             this.close();
-            this.onSubmit(u);
+            this.onSubmit(r.value);
           }),
       )
       .addButton((b) => b.setButtonText("Cancel").onClick(() => this.close()));
@@ -387,26 +396,19 @@ export class ScaffoldProjectModal extends Modal {
           .setButtonText("Scaffold project")
           .setCta()
           .onClick(() => {
-            const slug = this.slug.trim();
-            const prefix = this.prefix.trim();
-            if (!slug || !prefix) {
-              new Notice("Slug and prefix are required");
-              return;
-            }
-            const seedTitle = this.seedTitle.trim() || undefined;
-            const repoPath = this.repoPath.trim() || undefined;
-            if (repoPath && !repoPath.startsWith("/")) {
-              new Notice("Repo path must be absolute (start with /)");
+            const r = validateScaffoldInput({
+              slug: this.slug,
+              prefix: this.prefix,
+              repoPath: this.repoPath,
+              seedTitle: this.seedTitle,
+              seedPriority: this.seedPriority,
+            });
+            if (!r.ok) {
+              new Notice(r.error);
               return;
             }
             this.close();
-            this.onSubmit({
-              slug,
-              prefix,
-              repoPath,
-              seedTitle,
-              seedPriority: seedTitle ? this.seedPriority : undefined,
-            });
+            this.onSubmit(r.value);
           }),
       )
       .addButton((b) => b.setButtonText("Cancel").onClick(() => this.close()));

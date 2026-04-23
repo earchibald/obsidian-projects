@@ -1,6 +1,7 @@
 import { App, Modal, Setting, TFile } from "obsidian";
 import type { OpSettings } from "./settings";
 import type { IssueEntry } from "./types";
+import { validateWorkingDirInput } from "./modalValidation";
 
 export interface ResolvedWorkingDir {
   path: string;
@@ -81,11 +82,11 @@ class WorkingDirModal extends Modal {
           .setButtonText("Use")
           .setCta()
           .onClick(() => {
-            const p = this.path.trim();
-            if (!p) return;
+            const r = validateWorkingDirInput(this.path);
+            if (!r.ok) return;
             this.settled = true;
             this.close();
-            this.onDone({ path: p, persist: this.persist });
+            this.onDone({ path: r.value, persist: this.persist });
           }),
       )
       .addButton((b) => b.setButtonText("Cancel").onClick(() => this.close()));
