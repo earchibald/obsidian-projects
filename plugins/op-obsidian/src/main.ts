@@ -228,13 +228,13 @@ export default class OpPlugin extends Plugin {
 
     this.addCommand({
       id: "op-debug-agent-launch",
-      name: "op: open agent to debug agent launch",
+      name: "op-dev: open agent to debug agent launch",
       callback: () => void this.runDebugAgentLaunch(),
     });
 
     this.addCommand({
       id: "op-dump-store",
-      name: "op: dev — dump IssueStore to console",
+      name: "op-dev: dump IssueStore to console",
       callback: () => {
         const issues = this.store.issues();
         const tasks = this.store.tasks();
@@ -249,7 +249,7 @@ export default class OpPlugin extends Plugin {
 
     this.addCommand({
       id: "op-rebuild-store",
-      name: "op: dev — rebuild IssueStore",
+      name: "op-dev: rebuild IssueStore",
       callback: () => {
         this.store.rebuild();
         new Notice("op: store rebuilt");
@@ -307,7 +307,7 @@ export default class OpPlugin extends Plugin {
 
     this.addCommand({
       id: "op-install-agent-hooks",
-      name: "op: install SessionEnd hooks for agents",
+      name: "op-dev: install SessionEnd hooks for agents",
       callback: () => {
         void this.runInstallAgentHooks(true);
       },
@@ -487,7 +487,9 @@ export default class OpPlugin extends Plugin {
       const projects = listProjects(this.app);
       const result = findIssue(this.store, { raw, projects });
       if (result.matches.length === 0) {
-        new Notice(`op: no match — ${result.interpretation}`);
+        new Notice(
+          `op: no match for ${result.interpretation}. Try an ID (e.g. OP-12) or a title fragment.`,
+        );
         return;
       }
       if (result.matches.length === 1) {
@@ -662,7 +664,9 @@ export default class OpPlugin extends Plugin {
       const projects = listProjects(this.app);
       const result = findIssue(this.store, { raw, projects });
       if (result.matches.length === 0) {
-        new Notice(`op: no match — ${result.interpretation}`);
+        new Notice(
+          `op: no match for ${result.interpretation}. Try an ID (e.g. OP-12) or a title fragment.`,
+        );
         return;
       }
       if (result.matches.length === 1) {
