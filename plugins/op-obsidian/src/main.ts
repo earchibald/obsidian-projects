@@ -52,6 +52,7 @@ import { AGENT_IDS, type AgentId, type AgentLaunchMode } from "./agentProfiles";
 import { openAgent, clearAgentOnIssue, resolveProfile } from "./openAgent";
 import { launchInTerminal } from "./terminalLaunch";
 import { installAgentHooks, type HookInstallResult } from "./agentHooks";
+import { userError } from "./userError";
 import { cleanupAgentSessions } from "./agentSessionCleanup";
 import { detectTmux } from "./tmuxDetect";
 import { existsSync } from "fs";
@@ -120,9 +121,15 @@ export default class OpPlugin extends Plugin {
       const overlay = this.settings.agentOverlays[id];
       return overlay?.binary ?? defaultBinaryFor(id);
     });
-    // Kick a probe in the background so the first launch is instant.
+    // Kick a probe in the background so the first launch is instant. If the
+    // probe itself throws (not just "binary not installed"), surface it — a
+    // silent failure here leaves the user staring at an empty picker later.
     void this.detector.refresh().catch((err) => {
       console.debug("[op-obsidian] agent detection probe failed", err);
+      userError(
+        `op: agent detection probe failed — ${err?.message ?? err}`,
+        "Settings → op → Agents will retry; if this persists, check the console for details.",
+      );
     });
 
     this.addSettingTab(new OpSettingsTab(this.app, this));
