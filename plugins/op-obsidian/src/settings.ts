@@ -33,6 +33,10 @@ export interface GithubSettings {
   closeGithubIssueOnResolve: boolean;
 }
 
+export interface AgentsSettings {
+  enforceWorktree: boolean;
+}
+
 export interface OpSettings {
   defaultAgent: AgentId;
   alwaysPick: boolean;
@@ -44,6 +48,7 @@ export interface OpSettings {
   tmuxBinary: string;
   view: ViewSettings;
   github: GithubSettings;
+  agents: AgentsSettings;
   orchestrator: OrchestratorSettings;
   orchestratorState: RegistryData;
 }
@@ -71,6 +76,9 @@ export const DEFAULT_SETTINGS: OpSettings = {
   github: {
     autoCreateGithubIssue: false,
     closeGithubIssueOnResolve: true,
+  },
+  agents: {
+    enforceWorktree: false,
   },
   orchestrator: {
     enabled: false,
@@ -136,6 +144,12 @@ export function mergeSettings(loaded: unknown): OpSettings {
     }
     if (typeof g.closeGithubIssueOnResolve === "boolean") {
       base.github.closeGithubIssueOnResolve = g.closeGithubIssueOnResolve;
+    }
+  }
+  if (l.agents && typeof l.agents === "object") {
+    const a = l.agents as Partial<AgentsSettings>;
+    if (typeof a.enforceWorktree === "boolean") {
+      base.agents.enforceWorktree = a.enforceWorktree;
     }
   }
   return base;
@@ -587,6 +601,23 @@ export class OpSettingsTab extends PluginSettingTab {
         t.setValue(s.github.closeGithubIssueOnResolve).onChange(async (v) => {
           s.github.closeGithubIssueOnResolve = v;
           await this.plugin.saveSettings();
+        }),
+      );
+
+    containerEl.createEl("h2", { text: "Agent worktree enforcement" });
+    containerEl.createEl("p", {
+      text: "When enabled, installs a PreToolUse hook (Claude Code + Gemini CLI) that blocks Edit/Write/MultiEdit/NotebookEdit on the main checkout for op-launched agent sessions. The agent must either `git worktree add` or export OP_ALLOW_MAIN_EDIT=1 for the edit. Copilot CLI has no pre-tool gate — the guard is skipped there. Changes take effect on the next agent session.",
+      cls: "setting-item-description",
+    });
+
+    new Setting(containerEl)
+      .setName("Enforce worktree for delegated agents")
+      .setDesc("Block edits on the main checkout for op-launched sessions. Opt-in until observed clean.")
+      .addToggle((t) =>
+        t.setValue(s.agents.enforceWorktree).onChange(async (v) => {
+          s.agents.enforceWorktree = v;
+          await this.plugin.saveSettings();
+          await this.plugin.reinstallAgentHooks();
         }),
       );
   }

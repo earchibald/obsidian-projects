@@ -1215,18 +1215,28 @@ export default class OpPlugin extends Plugin {
 
   private async runInstallAgentHooks(announce: boolean): Promise<void> {
     try {
-      const res: HookInstallResult = await installAgentHooks();
+      const res: HookInstallResult = await installAgentHooks({
+        enforceWorktree: this.settings.agents.enforceWorktree,
+      });
       if (announce) {
         const summary = res.installed.length
           ? `installed: ${res.installed.join(", ")}`
           : "no changes";
         const skipped = res.skipped.length ? ` · skipped: ${res.skipped.join(", ")}` : "";
-        new Notice(`op: agent hooks ${summary}${skipped}`);
+        const guardParts: string[] = [];
+        if (res.guardInstalled.length) guardParts.push(`guard on: ${res.guardInstalled.join(", ")}`);
+        if (res.guardUninstalled.length) guardParts.push(`guard off: ${res.guardUninstalled.join(", ")}`);
+        const guard = guardParts.length ? ` · ${guardParts.join(" · ")}` : "";
+        new Notice(`op: agent hooks ${summary}${skipped}${guard}`);
       }
     } catch (err: any) {
       console.error("[op-obsidian] agent hook install failed", err);
       if (announce) new Notice(`op: agent hook install failed — ${err?.message ?? err}`);
     }
+  }
+
+  async reinstallAgentHooks(): Promise<void> {
+    await this.runInstallAgentHooks(true);
   }
 
   private async handleOpNewUri(params: Record<string, string>): Promise<void> {

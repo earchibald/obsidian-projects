@@ -3,7 +3,7 @@ export type AgentId = "claude" | "gemini" | "copilot";
 export const AGENT_IDS: AgentId[] = ["claude", "gemini", "copilot"];
 
 const DEFAULT_PREAMBLE =
-  "You were launched to work on an Obsidian Projects issue that was delegated to you. If the work touches more than a single file or involves more than one trivial edit, create an isolated git worktree before making changes — the agent that delegated this issue may still hold the main checkout open, and a worktree keeps your branch, builds, and vault sync from colliding with theirs. Skip the worktree only for one-line doc tweaks, single-field schema comments, or typo fixes.";
+  "You were launched to work on an Obsidian Projects issue that was delegated to you. Create an isolated git worktree before making any changes. Never edit the main checkout — the agent that delegated this issue may still hold it open, and any edit there risks branch, build, or vault-sync conflicts. If a PreToolUse guard blocks an edit, create the worktree. Do not bypass the gate with `OP_ALLOW_MAIN_EDIT=1`.";
 
 const DEFAULT_PLAN_PREAMBLE =
   "You were launched in PLAN MODE to produce an implementation plan for an Obsidian Projects issue — not to implement it. Investigate the codebase and the issue note, think through the approach and its trade-offs, then present a concrete plan for the user to review before any code is written. Do not modify files, run mutating commands, or create a worktree yet. The plan should cover: what will change, where, in what order, and what could go wrong. Once the user approves the plan, a separate session will carry out the implementation.";
