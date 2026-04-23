@@ -73,7 +73,7 @@ export class NewIssueModal extends Modal {
   constructor(
     app: App,
     private project: ProjectInfo,
-    private onSubmit: (input: CreateIssueInput) => void,
+    private onSubmit: (input: CreateIssueInput, andPlan: boolean) => void,
     private opts: { autoCreateGithubIssue?: boolean } = {},
   ) {
     super(app);
@@ -123,34 +123,45 @@ export class NewIssueModal extends Modal {
           .onChange((v) => (this.githubIssue = v)),
       );
 
+    const doSubmit = (andPlan: boolean): void => {
+      if (!this.title.trim()) {
+        new Notice("Title is required");
+        return;
+      }
+      const scope = this.scopeRaw
+        .split("\n")
+        .map((l) => l.replace(/^\s*[-*]\s*/, "").trim())
+        .filter((l) => l.length > 0);
+      const gh = this.githubIssue.trim();
+      if (gh && !/^https?:\/\//i.test(gh)) {
+        new Notice("GitHub URL must start with http(s)://");
+        return;
+      }
+      this.close();
+      this.onSubmit(
+        {
+          slug: this.project.slug,
+          title: this.title.trim(),
+          priority: this.priority,
+          scope,
+          githubIssue: gh || undefined,
+        },
+        andPlan,
+      );
+    };
+
     new Setting(contentEl)
       .addButton((b) =>
         b
           .setButtonText("Create issue")
           .setCta()
-          .onClick(() => {
-            if (!this.title.trim()) {
-              new Notice("Title is required");
-              return;
-            }
-            const scope = this.scopeRaw
-              .split("\n")
-              .map((l) => l.replace(/^\s*[-*]\s*/, "").trim())
-              .filter((l) => l.length > 0);
-            const gh = this.githubIssue.trim();
-            if (gh && !/^https?:\/\//i.test(gh)) {
-              new Notice("GitHub URL must start with http(s)://");
-              return;
-            }
-            this.close();
-            this.onSubmit({
-              slug: this.project.slug,
-              title: this.title.trim(),
-              priority: this.priority,
-              scope,
-              githubIssue: gh || undefined,
-            });
-          }),
+          .onClick(() => doSubmit(false)),
+      )
+      .addButton((b) =>
+        b
+          .setButtonText("Create and plan")
+          .setTooltip("Create the issue and launch an agent for it in PLAN MODE")
+          .onClick(() => doSubmit(true)),
       )
       .addButton((b) => b.setButtonText("Cancel").onClick(() => this.close()));
   }

@@ -1,8 +1,8 @@
 import { App, TFile } from "obsidian";
 import type { IssueStore } from "./issueStore";
 import type { IssueEntry } from "./types";
-import type { AgentProfile } from "./agentProfiles";
-import { renderSkillTrigger } from "./agentProfiles";
+import type { AgentLaunchMode, AgentProfile } from "./agentProfiles";
+import { promptPreambleFor, renderSkillTrigger } from "./agentProfiles";
 import type { InjectionSettings } from "./settings";
 
 export interface BuildPromptArgs {
@@ -10,6 +10,7 @@ export interface BuildPromptArgs {
   profile: AgentProfile;
   injection: InjectionSettings;
   vaultBasePath?: string;
+  mode?: AgentLaunchMode;
 }
 
 export async function buildPrompt(
@@ -18,10 +19,12 @@ export async function buildPrompt(
   args: BuildPromptArgs,
 ): Promise<string> {
   const { entry, profile, injection, vaultBasePath } = args;
+  const mode: AgentLaunchMode = args.mode ?? "work";
   const parts: string[] = [];
 
   if (injection.extraPreamble.trim()) parts.push(injection.extraPreamble.trim());
-  if (profile.promptPreamble.trim()) parts.push(profile.promptPreamble.trim());
+  const preamble = promptPreambleFor(profile, mode);
+  if (preamble.trim()) parts.push(preamble.trim());
 
   parts.push(renderSkillTrigger(profile, entry.id));
 
