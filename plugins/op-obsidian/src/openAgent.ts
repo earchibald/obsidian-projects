@@ -2,7 +2,14 @@ import { App, Notice, TFile } from "obsidian";
 import type { IssueStore } from "./issueStore";
 import type { IssueEntry } from "./types";
 import type { OpSettings } from "./settings";
-import { AGENT_IDS, type AgentId, type AgentProfile, mergeProfile } from "./agentProfiles";
+import {
+  AGENT_IDS,
+  type AgentId,
+  type AgentLaunchMode,
+  type AgentProfile,
+  launchFlagsFor,
+  mergeProfile,
+} from "./agentProfiles";
 import { buildPrompt } from "./promptBuild";
 import { resolveWorkingDir } from "./workingDir";
 import { launchInTerminal } from "./terminalLaunch";
@@ -13,11 +20,13 @@ export interface OpenAgentArgs {
   entry: IssueEntry;
   agentOverride?: AgentId;
   forcePick?: boolean;
+  mode?: AgentLaunchMode;
 }
 
 export interface OpenAgentResult {
   issueId: string;
   agent: AgentId;
+  mode: AgentLaunchMode;
   workingDir: string;
   scriptPath: string;
   tmuxSession: string;
@@ -33,6 +42,7 @@ export async function openAgent(
   args: OpenAgentArgs,
 ): Promise<OpenAgentResult | undefined> {
   const detection = detector.get() ?? (await detector.refresh());
+  const mode: AgentLaunchMode = args.mode ?? "work";
 
   const agentId = await pickAgent(app, settings, detection, args);
   if (!agentId) return undefined;
@@ -63,12 +73,13 @@ export async function openAgent(
     profile,
     injection: settings.injection,
     vaultBasePath,
+    mode,
   });
 
   const { scriptPath, tmuxSession, tmuxWindow } = await launchInTerminal({
     cwd: wd.path,
     binary: det.path ?? profile.binary,
-    launchFlags: profile.launchFlags,
+    launchFlags: launchFlagsFor(profile, mode),
     prompt,
     terminalApp: settings.terminal,
     iTermPlacement: settings.iTermPlacement,
@@ -90,6 +101,7 @@ export async function openAgent(
   return {
     issueId: args.entry.id,
     agent: agentId,
+    mode,
     workingDir: wd.path,
     scriptPath,
     tmuxSession,

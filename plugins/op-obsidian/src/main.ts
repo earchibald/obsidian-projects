@@ -31,7 +31,7 @@ import { runResolve, type ResolveArgs, type ResolveStatus } from "./resolve";
 import type { IssueEntry, LifecycleEvent } from "./types";
 import { DEFAULT_SETTINGS, mergeSettings, OpSettingsTab, type OpSettings } from "./settings";
 import { AgentDetector } from "./agentDetect";
-import { AGENT_IDS, type AgentId } from "./agentProfiles";
+import { AGENT_IDS, type AgentId, type AgentLaunchMode } from "./agentProfiles";
 import { openAgent, clearAgentOnIssue, resolveProfile } from "./openAgent";
 import { launchInTerminal } from "./terminalLaunch";
 import { installAgentHooks, type HookInstallResult } from "./agentHooks";
@@ -241,6 +241,18 @@ export default class OpPlugin extends Plugin {
       id: "op-open-agent-pick",
       name: "op: open agent (pick at runtime)",
       callback: () => this.runOpenAgentCommand(true),
+    });
+
+    this.addCommand({
+      id: "op-open-agent-plan",
+      name: "op: open agent for issue in PLAN MODE",
+      callback: () => this.runOpenAgentCommand(false, "plan"),
+    });
+
+    this.addCommand({
+      id: "op-open-agent-plan-pick",
+      name: "op: open agent in PLAN MODE (pick at runtime)",
+      callback: () => this.runOpenAgentCommand(true, "plan"),
     });
 
     this.addCommand({
@@ -491,8 +503,8 @@ export default class OpPlugin extends Plugin {
       new NewIssueModal(
         this.app,
         project,
-        (input) => {
-          this.submitCreateIssue(input);
+        (input, andPlan) => {
+          this.submitCreateIssue(input, { launchPlan: andPlan });
         },
         { autoCreateGithubIssue: this.settings.github.autoCreateGithubIssue },
       ).open();
@@ -530,7 +542,10 @@ export default class OpPlugin extends Plugin {
     }
   }
 
-  private async submitCreateIssue(input: CreateIssueInput): Promise<void> {
+  private async submitCreateIssue(
+    input: CreateIssueInput,
+    opts: { launchPlan?: boolean } = {},
+  ): Promise<void> {
     try {
       const res = await createIssue(this.app, this.store, input);
       new Notice(`Created ${res.id}`);
@@ -543,6 +558,14 @@ export default class OpPlugin extends Plugin {
           console.error("[op-obsidian] auto-create github issue failed", err);
           new Notice(`op: gh create failed — ${err?.message ?? err}`);
         });
+      }
+      if (opts.launchPlan) {
+        const entry = this.store.byPath(res.path);
+        if (entry && entry.type === "issue") {
+          void this.doOpenAgent(entry, { mode: "plan" });
+        } else {
+          new Notice(`op: could not resolve ${res.id} to launch plan-mode agent`);
+        }
       }
     } catch (err: any) {
       console.error("[op-obsidian] createIssue failed", err);
@@ -1065,17 +1088,17 @@ export default class OpPlugin extends Plugin {
     };
   }
 
-  private runOpenAgentCommand(forcePick: boolean): void {
+  private runOpenAgentCommand(forcePick: boolean, mode: AgentLaunchMode = "work"): void {
     const activePath = this.activeIssuePath();
     if (activePath) {
       const entry = this.store.byPath(activePath);
       if (entry && entry.type === "issue") {
-        void this.doOpenAgent(entry, { forcePick });
+        void this.doOpenAgent(entry, { forcePick, mode });
         return;
       }
     }
     this.pickIssueInteractive((entry) => {
-      void this.doOpenAgent(entry, { forcePick });
+      void this.doOpenAgent(entry, { forcePick, mode });
     });
   }
 
@@ -1114,7 +1137,7 @@ export default class OpPlugin extends Plugin {
 
   private async doOpenAgent(
     entry: IssueEntry,
-    opts: { forcePick?: boolean; agentOverride?: AgentId } = {},
+    opts: { forcePick?: boolean; agentOverride?: AgentId; mode?: AgentLaunchMode } = {},
   ): Promise<void> {
     try {
       const res = await openAgent(
@@ -1123,11 +1146,17 @@ export default class OpPlugin extends Plugin {
         this.settings,
         this.detector,
         () => this.saveSettings(),
-        { entry, forcePick: opts.forcePick, agentOverride: opts.agentOverride },
+        {
+          entry,
+          forcePick: opts.forcePick,
+          agentOverride: opts.agentOverride,
+          mode: opts.mode,
+        },
       );
       if (res) {
+        const modeLabel = res.mode === "plan" ? " [PLAN MODE]" : "";
         new Notice(
-          `op-open-agent: ${res.issueId} → ${res.agent} in ${res.workingDir} (tmux: ${res.tmuxSession}:${res.tmuxWindow})`,
+          `op-open-agent: ${res.issueId} → ${res.agent}${modeLabel} in ${res.workingDir} (tmux: ${res.tmuxSession}:${res.tmuxWindow})`,
         );
       }
     } catch (err: any) {
@@ -1147,13 +1176,14 @@ export default class OpPlugin extends Plugin {
         ? (params.agent as AgentId)
         : undefined;
     const forcePick = params.pick === "1" || params.pick === "true";
+    const mode: AgentLaunchMode = params.mode === "plan" ? "plan" : "work";
     const res = await openAgent(
       this.app,
       this.store,
       this.settings,
       this.detector,
       () => this.saveSettings(),
-      { entry, agentOverride, forcePick },
+      { entry, agentOverride, forcePick, mode },
     );
     if (!res) throw new Error("op-open-agent was cancelled or no agent available");
     return {
@@ -1161,6 +1191,7 @@ export default class OpPlugin extends Plugin {
       command: "op-open-agent",
       issueId: res.issueId,
       agent: res.agent,
+      mode: res.mode,
       workingDir: res.workingDir,
       scriptPath: res.scriptPath,
       tmuxSession: res.tmuxSession,
