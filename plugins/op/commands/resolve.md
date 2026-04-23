@@ -11,3 +11,5 @@ When no `N-or-ID` is supplied, apply the skill's auto-pick rule for `in-progress
 - **More than one `in-progress` issue** → stop and ask the user to pick one; do not default to the lowest-numbered.
 
 The skill will pause for explicit user approval before moving the file to `RESOLVED ISSUES/`. Output the three-section completion report (external changes, vault changes, manual follow-ups).
+
+Per the skill, write `## Summary` before the confirmation pause.
