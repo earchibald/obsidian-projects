@@ -136,7 +136,7 @@ export async function openAgent(
     issueId: args.entry.id,
     agentId,
     orchestrator: {
-      settings: settings.orchestrator,
+      settings,
       registry: {
         get: () => settings.orchestratorState,
         save: async (reg) => {

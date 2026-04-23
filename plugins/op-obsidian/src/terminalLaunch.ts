@@ -37,7 +37,7 @@ export interface LaunchArgs {
   // layout orchestrator (one iTerm pane per agent) instead of the legacy
   // tmux -CC single-window attach.
   orchestrator?: {
-    settings: import("./orchestrator").OrchestratorSettings;
+    settings: import("./settingsPure").OpSettings;
     registry: import("./orchestrator").RegistryIO;
   };
 }
@@ -58,7 +58,7 @@ export async function launchInTerminal(args: LaunchArgs): Promise<LaunchResult> 
   const windowName = tmuxWindowName(args.issueId);
   const { innerPath, outerPath } = await writeLaunchScripts({ args, session, windowName });
 
-  if (args.terminalApp === "iTerm" && args.orchestrator?.settings.enabled) {
+  if (args.terminalApp === "iTerm" && args.orchestrator?.settings.orchestrator.enabled) {
     // Layout orchestrator takes over: it manages tmux session naming per
     // iTerm window and drives AppleScript splits itself.
     const { orchestrateLaunch } = await import("./orchestrator");

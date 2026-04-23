@@ -1,18 +1,18 @@
-import type { LayoutId, SplitOp } from "../layout/layouts";
+import { LAYOUTS, type LayoutId, type SplitOp } from "../layout/layouts";
 import { iterm2 } from "./proto/api.generated";
 import { getTransport, type ConnectionOptions } from "./connection";
 
 // Native TS WebSocket client for iTerm2's API, replacement for applescript.ts.
 //
-// OP-101 Step 2: sessionExists is wired through the WebSocket transport. The
-// remaining write ops still throw notImplemented; they land in Step 3.
+// OP-101 Step 3: all write ops + composites ported. The driver still
+// dispatches on `useWebSocketClient`; AppleScript remains as the default until
+// Step 4 flips it.
 
 export interface CreateWindowResult {
   windowId: string;
   sessionId: string;
 }
 
-// Caller wires the version (and optional ws factory for tests) at startup.
 let connectionOpts: ConnectionOptions | null = null;
 
 export function configureClient(opts: ConnectionOptions): void {
@@ -28,39 +28,147 @@ function ensureConfigured(): ConnectionOptions {
   return connectionOpts;
 }
 
-function notImplemented(fn: string): never {
-  throw new Error(
-    `op: ITerm WebSocket client.${fn} is not wired yet (OP-101 Step 2 ports sessionExists only). Flip useWebSocketClient=false or wait for Step 3.`,
-  );
+async function call(
+  msg: iterm2.IClientOriginatedMessage,
+): Promise<iterm2.ServerOriginatedMessage> {
+  const transport = await getTransport(ensureConfigured());
+  const reply = await transport.request(msg);
+  if (reply.submessage === "error") {
+    throw new Error(`op: iTerm API error: ${reply.error ?? "<unset>"}`);
+  }
+  return reply;
 }
 
-export async function createWindow(_command: string): Promise<CreateWindowResult> {
-  notImplemented("createWindow");
+// iTerm accepts a JSON string literal inside invocation expressions, so
+// JSON.stringify is the right escape for a single string argument.
+function invocation(method: string, argName: string, value: string): string {
+  return `${method}(${argName}: ${JSON.stringify(value)})`;
+}
+
+export async function createWindow(command: string): Promise<CreateWindowResult> {
+  // Raise iTerm first so the new window is visible when it appears. The
+  // legacy AppleScript did `activate` before `create window`.
+  await call({
+    activateRequest: iterm2.ActivateRequest.create({
+      activateApp: iterm2.ActivateRequest.App.create({
+        raiseAllWindows: true,
+        ignoringOtherApps: true,
+      }),
+    }),
+  });
+
+  const reply = await call({
+    createTabRequest: iterm2.CreateTabRequest.create({
+      customProfileProperties: [
+        iterm2.ProfileProperty.create({
+          key: "Command",
+          jsonValue: JSON.stringify(command),
+        }),
+      ],
+    }),
+  });
+  const sub = reply.createTabResponse;
+  if (!sub) throw new Error("op: iTerm createWindow: missing createTabResponse");
+  if (sub.status !== undefined && sub.status !== iterm2.CreateTabResponse.Status.OK) {
+    throw new Error(`op: iTerm createWindow failed with status=${sub.status}`);
+  }
+  if (!sub.windowId || !sub.sessionId) {
+    throw new Error("op: iTerm createWindow reply missing window_id or session_id");
+  }
+  return { windowId: sub.windowId, sessionId: sub.sessionId };
 }
 
 export async function splitSession(
-  _sessionId: string,
-  _dir: "vertical" | "horizontal",
-  _command: string,
+  sessionId: string,
+  dir: "vertical" | "horizontal",
+  command: string,
 ): Promise<string> {
-  notImplemented("splitSession");
+  const reply = await call({
+    splitPaneRequest: iterm2.SplitPaneRequest.create({
+      session: sessionId,
+      splitDirection:
+        dir === "vertical"
+          ? iterm2.SplitPaneRequest.SplitDirection.VERTICAL
+          : iterm2.SplitPaneRequest.SplitDirection.HORIZONTAL,
+      customProfileProperties: [
+        iterm2.ProfileProperty.create({
+          key: "Command",
+          jsonValue: JSON.stringify(command),
+        }),
+      ],
+    }),
+  });
+  const sub = reply.splitPaneResponse;
+  if (!sub) throw new Error("op: iTerm splitSession: missing splitPaneResponse");
+  if (sub.status !== undefined && sub.status !== iterm2.SplitPaneResponse.Status.OK) {
+    throw new Error(
+      `op: iTerm splitSession failed (session=${sessionId}) with status=${sub.status}`,
+    );
+  }
+  const newId = sub.sessionId?.[0];
+  if (!newId) {
+    throw new Error(`op: iTerm splitSession reply had no session_id (session=${sessionId})`);
+  }
+  return newId;
 }
 
-export async function setSessionName(_sessionId: string, _name: string): Promise<void> {
-  notImplemented("setSessionName");
+// iTerm's session name drives the tab/pane title. We drive it via
+// InvokeFunctionRequest{context=Session, invocation=`set_name(name: "...")`}
+// — the same RPC the Python `session.async_set_name` uses.
+export async function setSessionName(sessionId: string, name: string): Promise<void> {
+  const reply = await call({
+    invokeFunctionRequest: iterm2.InvokeFunctionRequest.create({
+      session: iterm2.InvokeFunctionRequest.Session.create({ sessionId }),
+      invocation: invocation("iterm2.set_name", "name", name),
+    }),
+  });
+  throwInvokeError(reply.invokeFunctionResponse, `setSessionName(${sessionId})`);
 }
 
-export async function setWindowName(_windowId: string, _name: string): Promise<void> {
-  notImplemented("setWindowName");
+// Best-effort — iTerm's window title has historically been read-only under
+// some builds. Mirror the AppleScript behaviour: attempt, swallow on error.
+export async function setWindowName(windowId: string, name: string): Promise<void> {
+  try {
+    const reply = await call({
+      invokeFunctionRequest: iterm2.InvokeFunctionRequest.create({
+        window: iterm2.InvokeFunctionRequest.Window.create({ windowId }),
+        invocation: invocation("iterm2.set_title", "title", name),
+      }),
+    });
+    throwInvokeError(reply.invokeFunctionResponse, `setWindowName(${windowId})`);
+  } catch (err) {
+    console.warn(
+      `[op-obsidian] setWindowName best-effort failed (window=${windowId} name=${JSON.stringify(name)}): ${
+        err instanceof Error ? err.message.split("\n")[0] : String(err)
+      }`,
+    );
+  }
 }
 
-export async function selectSession(_sessionId: string): Promise<void> {
-  notImplemented("selectSession");
+export async function selectSession(sessionId: string): Promise<void> {
+  const reply = await call({
+    activateRequest: iterm2.ActivateRequest.create({
+      sessionId,
+      selectSession: true,
+      selectTab: true,
+      orderWindowFront: true,
+      activateApp: iterm2.ActivateRequest.App.create({
+        raiseAllWindows: true,
+        ignoringOtherApps: true,
+      }),
+    }),
+  });
+  const sub = reply.activateResponse;
+  if (!sub) throw new Error("op: iTerm selectSession: missing activateResponse");
+  if (sub.status !== undefined && sub.status !== iterm2.ActivateResponse.Status.OK) {
+    throw new Error(
+      `op: iTerm selectSession failed (session=${sessionId}) with status=${sub.status}`,
+    );
+  }
 }
 
 export async function sessionExists(sessionId: string): Promise<boolean> {
-  const transport = await getTransport(ensureConfigured());
-  const reply = await transport.request({
+  const reply = await call({
     listSessionsRequest: iterm2.ListSessionsRequest.create({}),
   });
   const list = reply.listSessionsResponse;
@@ -71,18 +179,48 @@ export async function sessionExists(sessionId: string): Promise<boolean> {
 }
 
 export async function buildLayoutWindow(
-  _layoutId: LayoutId,
-  _commands: string[],
+  layoutId: LayoutId,
+  commands: string[],
 ): Promise<{ windowId: string; sessionIds: string[] }> {
-  notImplemented("buildLayoutWindow");
+  const spec = LAYOUTS[layoutId];
+  if (commands.length !== spec.cells) {
+    throw new Error(
+      `op: buildLayoutWindow expects ${spec.cells} commands for layout ${layoutId}, got ${commands.length}`,
+    );
+  }
+  const { windowId, sessionId } = await createWindow(commands[0]);
+  const sessionIds: string[] = [sessionId];
+  for (const op of spec.splits) {
+    const parent = sessionIds[op.from];
+    if (!parent) {
+      throw new Error(`op: layout ${layoutId} references cell ${op.from} before it exists`);
+    }
+    const newId = await splitSession(parent, op.dir, commands[sessionIds.length]);
+    sessionIds.push(newId);
+  }
+  return { windowId, sessionIds };
 }
 
 export async function applySplit(
-  _existingCells: string[],
-  _op: SplitOp,
-  _command: string,
+  existingCells: string[],
+  op: SplitOp,
+  command: string,
 ): Promise<string> {
-  notImplemented("applySplit");
+  const parent = existingCells[op.from];
+  if (!parent) throw new Error(`op: applySplit references missing cell ${op.from}`);
+  return splitSession(parent, op.dir, command);
+}
+
+function throwInvokeError(
+  resp: iterm2.IInvokeFunctionResponse | null | undefined,
+  context: string,
+): void {
+  if (!resp) throw new Error(`op: iTerm ${context}: missing invokeFunctionResponse`);
+  if (resp.error) {
+    throw new Error(
+      `op: iTerm ${context} failed: ${resp.error.errorReason ?? "<no reason>"} (status=${resp.error.status ?? "?"})`,
+    );
+  }
 }
 
 // Exported for unit tests.
