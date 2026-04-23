@@ -17,7 +17,11 @@ export interface UriHandlerDeps {
   workIssue: (entry: IssueEntry) => Promise<WorkIssueResult>;
   appendCommit: (entry: IssueEntry, input: { sha: string; subject: string }) => Promise<AppendCommitResult>;
   setPr: (entry: IssueEntry, url: string) => Promise<SetPrResult>;
-  setScope: (entry: IssueEntry, scope: string) => Promise<SetScopeResult>;
+  setScope: (
+    entry: IssueEntry,
+    scope: string,
+    options?: { mode?: "scope" | "body" },
+  ) => Promise<SetScopeResult>;
 }
 
 export function findIssueById(store: { issues(): IssueEntry[] }, id: string): IssueEntry {
@@ -109,13 +113,22 @@ export async function handleOpSetScopeUri(
   if (!id || typeof scope !== "string") {
     throw new Error("op-set-scope URI requires id and scope");
   }
+  const rawMode = params.mode;
+  let mode: "scope" | "body" | undefined;
+  if (rawMode !== undefined) {
+    if (rawMode !== "scope" && rawMode !== "body") {
+      throw new Error("op-set-scope URI mode must be 'scope' or 'body'");
+    }
+    mode = rawMode;
+  }
   const entry = findIssueById(deps.store, id);
-  const res = await deps.setScope(entry, scope);
+  const res = await deps.setScope(entry, scope, mode ? { mode } : undefined);
   return {
     ok: true,
     command: "op-set-scope",
     issueId: res.issueId,
     path: res.path,
     replaced: res.replaced,
+    mode: res.mode,
   };
 }

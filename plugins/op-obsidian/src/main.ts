@@ -818,7 +818,7 @@ export default class OpPlugin extends Plugin {
       workIssue: (entry) => workIssue(this.app, this.store, entry),
       appendCommit: (entry, input) => appendCommit(this.app, entry, input),
       setPr: (entry, url) => setPr(this.app, entry, url),
-      setScope: (entry, scope) => setScope(this.app, entry, scope),
+      setScope: (entry, scope, options) => setScope(this.app, entry, scope, options),
     };
   }
 
@@ -1084,17 +1084,19 @@ export default class OpPlugin extends Plugin {
     try {
       const parsed = parseSetScopeParams(params);
       if (!parsed.ok) return parsed.error;
-      const { id, scope } = parsed.value;
+      const { id, scope, mode } = parsed.value;
       const entry = this.resolveByIdOrThrow(id);
-      const res = await setScope(this.app, entry, scope);
+      const res = await setScope(this.app, entry, scope, { mode });
       await writeUriResponse(this.app, {
         ok: true,
         command,
         issueId: res.issueId,
         path: res.path,
         replaced: res.replaced,
+        mode: res.mode,
       });
-      return `${command}: ${res.issueId} scope ${res.replaced ? "replaced" : "appended"}`;
+      const target = res.mode === "body" ? "body" : "scope";
+      return `${command}: ${res.issueId} ${target} ${res.replaced ? "replaced" : "appended"}`;
     } catch (err: any) {
       const msg = err?.message ?? String(err);
       console.error("[op-obsidian]", command, err);

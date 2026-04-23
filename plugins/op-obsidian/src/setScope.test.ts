@@ -1,5 +1,10 @@
 import { describe, it, expect } from "vitest";
-import { rewriteScopeSection, normalizeScopePayload } from "./setScopePure";
+import {
+  rewriteScopeSection,
+  normalizeScopePayload,
+  rewriteFullBody,
+  normalizeBodyPayload,
+} from "./setScopePure";
 
 const FM = `---
 id: OP-1
@@ -54,6 +59,45 @@ old
 
   it("rejects empty payload", () => {
     expect(() => normalizeScopePayload("   \n\n")).toThrow(/empty/);
+  });
+
+  it("body mode replaces everything after the H1 title", () => {
+    const text = `${FM}
+# Title
+
+## Scope
+- [ ] old
+
+## Plan
+old plan
+`;
+    const { next, replaced } = rewriteFullBody(
+      text,
+      "## Plan\n\nrewritten plan\n\n## Tasks\n- [ ] do thing",
+    );
+    expect(replaced).toBe(true);
+    expect(next.startsWith(FM)).toBe(true);
+    expect(next).toContain("# Title\n\n## Plan\n\nrewritten plan");
+    expect(next).toContain("## Tasks\n- [ ] do thing");
+    expect(next).not.toContain("old plan");
+    expect(next).not.toContain("## Scope");
+  });
+
+  it("body mode preserves H1 when body has only a title", () => {
+    const text = `${FM}
+# Title
+`;
+    const { next, replaced } = rewriteFullBody(text, "fresh body");
+    expect(replaced).toBe(false);
+    expect(next).toBe(`${FM}# Title\n\nfresh body\n`);
+  });
+
+  it("body mode allows H2 headings in payload", () => {
+    expect(() => normalizeBodyPayload("## allowed\nbody")).not.toThrow();
+  });
+
+  it("body mode rejects empty payload", () => {
+    expect(() => normalizeBodyPayload("   \n")).toThrow(/empty/);
   });
 
   it("handles ## Scope at end of file (no trailing section)", () => {

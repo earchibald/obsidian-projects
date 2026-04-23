@@ -41,7 +41,13 @@ function makeDeps(overrides: Partial<UriHandlerDeps> = {}): UriHandlerDeps {
       commits: [`${input.sha} ${input.subject}`],
     }),
     setPr: async (e, url) => ({ issueId: e.id, path: e.path, pr: url }),
-    setScope: async (e, _scope) => ({ issueId: e.id, path: e.path, replaced: true }),
+    setScope: async (e, _scope, options) => ({
+      issueId: e.id,
+      path: e.path,
+      scope: _scope,
+      replaced: true,
+      mode: options?.mode ?? "scope",
+    }),
     ...overrides,
   };
 }
@@ -141,6 +147,15 @@ describe("handleOpSetScopeUri", () => {
   });
   it("accepts empty scope string (replace-all semantics)", async () => {
     const r = await handleOpSetScopeUri(makeDeps(), { id: "OP-1", scope: "" });
-    expect(r).toMatchObject({ ok: true, command: "op-set-scope", replaced: true });
+    expect(r).toMatchObject({ ok: true, command: "op-set-scope", replaced: true, mode: "scope" });
+  });
+  it("accepts mode=body and forwards it", async () => {
+    const r = await handleOpSetScopeUri(makeDeps(), { id: "OP-1", scope: "x", mode: "body" });
+    expect(r).toMatchObject({ ok: true, mode: "body" });
+  });
+  it("rejects invalid mode", async () => {
+    await expect(
+      handleOpSetScopeUri(makeDeps(), { id: "OP-1", scope: "x", mode: "wat" }),
+    ).rejects.toThrow(/mode must be/);
   });
 });

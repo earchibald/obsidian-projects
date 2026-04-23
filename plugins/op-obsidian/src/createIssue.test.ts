@@ -19,8 +19,9 @@ function render(overrides: Partial<Parameters<typeof renderIssueNote>[0]> = {}) 
 }
 
 describe("renderIssueNote", () => {
-  it("emits all four agent sections with placeholders (no scope)", () => {
+  it("emits all sections with placeholders (no scope bullets — Scope header still present)", () => {
     const out = render();
+    expect(out).toContain("\n## Scope\n");
     expect(out).toContain("\n## Plan\n");
     expect(out).toContain("\n## Tasks\n");
     expect(out).toContain("\n## Notes\n");
@@ -28,7 +29,7 @@ describe("renderIssueNote", () => {
     expect(out).toContain(PLAN_PLACEHOLDER);
     expect(out).toContain(NOTES_PLACEHOLDER);
     expect(out).toContain(SUMMARY_PLACEHOLDER);
-    expect(out).not.toContain("\n## Scope\n");
+    expect(out).not.toContain("- [ ]");
   });
 
   it("includes Scope when bullets supplied", () => {

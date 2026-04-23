@@ -10,6 +10,32 @@ export function normalizeScopePayload(raw: string): string {
   return trimmed;
 }
 
+export function normalizeBodyPayload(raw: string): string {
+  if (typeof raw !== "string") throw new Error("scope payload must be a string");
+  const trimmed = raw.replace(/\r\n/g, "\n").replace(/\s+$/g, "");
+  if (!trimmed) throw new Error("scope payload is empty");
+  return trimmed;
+}
+
+export function rewriteFullBody(
+  text: string,
+  payload: string,
+): { next: string; replaced: boolean } {
+  const { frontmatter, body } = splitFrontmatter(text);
+  const lines = body.split("\n");
+  let i = 0;
+  while (i < lines.length && lines[i].trim() === "") i++;
+  let titlePrefix = "";
+  if (i < lines.length && /^#\s+/.test(lines[i])) {
+    titlePrefix = `${lines[i]}\n\n`;
+    i++;
+  }
+  const remainder = lines.slice(i).join("\n").trim();
+  const replaced = remainder.length > 0;
+  const newBody = `${titlePrefix}${payload}\n`;
+  return { next: frontmatter + newBody, replaced };
+}
+
 export function rewriteScopeSection(
   text: string,
   payload: string,
