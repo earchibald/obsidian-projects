@@ -125,7 +125,7 @@ export default class OpPlugin extends Plugin {
     // to the stale agent (OP-52).
     this.bus.on("issue:deleted", (ev) => {
       if (ev.kind !== "issue:deleted") return;
-      void this.cleanupAgentStateFor([ev.prev.id]);
+      return this.cleanupAgentStateFor([ev.prev.id]);
     });
 
     // Close the linked GitHub issue whenever an op issue transitions to a
@@ -148,7 +148,7 @@ export default class OpPlugin extends Plugin {
         new Notice(`op: no repo_path for ${entry.project} — skipping gh issue close`);
         return;
       }
-      void closeGithubIssue(repoPath, entry.githubIssue).catch((err: any) => {
+      return closeGithubIssue(repoPath, entry.githubIssue).catch((err: any) => {
         const msg = err?.message ?? String(err);
         console.error("[op-obsidian] gh issue close failed", msg);
         new Notice(`op: gh issue close failed — ${msg}`);
@@ -482,10 +482,13 @@ export default class OpPlugin extends Plugin {
 
   /**
    * Tear down the event bus. The {@link IssueStore} unregisters itself via
-   * `addChild`, so it is not unloaded here explicitly.
+   * `addChild`, so it is not unloaded here explicitly. Obsidian does not
+   * await `onunload`, but calling `close` still seals the bus so no new
+   * events are dispatched during teardown and in-flight handler promises
+   * get a chance to settle before we drop registrations.
    */
   onunload(): void {
-    this.bus?.clear();
+    void this.bus?.close();
   }
 
   private async cleanupAgentStateFor(issueIds: string[]): Promise<void> {
