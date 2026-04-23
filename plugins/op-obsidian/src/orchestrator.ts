@@ -320,27 +320,39 @@ async function writeAgentInnerScript(args: OrchestrateArgs): Promise<string> {
 
 // Probe each tracked session in a window. Clear slots whose iTerm session
 // is gone (and drop any surface ref that pointed at it) so the freed cell
-// can host a new agent. Returns whether the window still has at least one
-// live cell.
+// can host a new agent. Alive sessions are compacted to the front of the
+// slot array so that sessionIds[0..k-1] is the live prefix — this keeps
+// the layout's split spec addressable (splits[i] describes how cell i+1
+// derives from an earlier cell, so gaps at the root break the next split
+// lookup). Surface refs are rewritten to match the new cellIndex since
+// the mapping is identified by sessionId, not physical position. Returns
+// whether the window still has at least one live cell.
 export async function pruneDeadSessionSlots(
   reg: RegistryData,
   win: WindowState,
   exists: (sessionId: string) => Promise<boolean> = sessionExists,
 ): Promise<boolean> {
-  let anyAlive = false;
+  const alive: string[] = [];
   for (let i = 0; i < win.sessionIds.length; i++) {
     const sid = win.sessionIds[i];
     if (!sid) continue;
     if (await exists(sid)) {
-      anyAlive = true;
+      alive.push(sid);
     } else {
-      win.sessionIds[i] = undefined;
       for (const [issueId, ref] of Object.entries(reg.surfaces)) {
         if (ref.sessionId === sid) delete reg.surfaces[issueId];
       }
     }
   }
-  return anyAlive;
+  for (let i = 0; i < win.sessionIds.length; i++) {
+    win.sessionIds[i] = i < alive.length ? alive[i] : undefined;
+  }
+  for (const ref of Object.values(reg.surfaces)) {
+    if (ref.windowId !== win.windowId) continue;
+    const idx = alive.indexOf(ref.sessionId);
+    if (idx !== -1) ref.cellIndex = idx;
+  }
+  return alive.length > 0;
 }
 
 export function firstEmptyCell(
