@@ -196,7 +196,7 @@ export class AppendCommitModal extends Modal {
       );
     new Setting(contentEl)
       .setName("Subject")
-      .setDesc("Commit message subject line")
+      .setDesc("Commit message subject line — the first line of `git log --pretty=%s`, e.g. “fix modal copy”.")
       .addText((t) =>
         t.setPlaceholder("e.g. fix modal copy").onChange((v) => (this.subject = v)),
       );
@@ -241,7 +241,7 @@ export class SetPrModal extends Modal {
 
     new Setting(contentEl)
       .setName("PR URL")
-      .setDesc("Full GitHub pull request URL")
+      .setDesc("Full GitHub pull request URL, e.g. https://github.com/owner/repo/pull/123")
       .addText((t) =>
         t.setPlaceholder("https://github.com/.../pull/123").onChange((v) => (this.url = v)),
       );
@@ -343,14 +343,14 @@ export class ScaffoldProjectModal extends Modal {
 
     new Setting(contentEl)
       .setName("Slug")
-      .setDesc("Lowercase, hyphen-separated — becomes the folder under Projects/")
+      .setDesc("Lowercase, hyphen-separated — becomes the folder under Projects/. e.g. “jira-bases”, “my-project”.")
       .addText((t) =>
         t.setPlaceholder("my-project").onChange((v) => (this.slug = v)),
       );
 
     new Setting(contentEl)
       .setName("Prefix")
-      .setDesc("Uppercase issue-ID prefix, e.g. MP")
+      .setDesc("Uppercase issue-ID prefix (2–4 letters, A–Z only). Issues will be named <PREFIX>-1, <PREFIX>-2, … — e.g. MP, JB, OP.")
       .addText((t) => t.setPlaceholder("MP").onChange((v) => (this.prefix = v)));
 
     new Setting(contentEl)

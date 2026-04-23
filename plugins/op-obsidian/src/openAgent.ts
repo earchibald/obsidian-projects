@@ -17,23 +17,53 @@ import { launchInTerminal } from "./terminalLaunch";
 import type { AgentDetector } from "./agentDetect";
 import { AgentPickerModal } from "./modals";
 
+/** Arguments accepted by {@link openAgent}. */
 export interface OpenAgentArgs {
+  /** The issue the agent will work on. `entry.path` must point at a real note. */
   entry: IssueEntry;
+  /** Skip detection / defaults and force this agent. */
   agentOverride?: AgentId;
+  /** Always show the picker modal even when a default would satisfy the pick. */
   forcePick?: boolean;
+  /** `"work"` (default) flips the issue to `in-progress`; `"plan"` is read-only. */
   mode?: AgentLaunchMode;
 }
 
+/** Result payload returned when a launch succeeds. */
 export interface OpenAgentResult {
   issueId: string;
   agent: AgentId;
   mode: AgentLaunchMode;
+  /** Absolute path that the agent's shell was cd'd into. */
   workingDir: string;
+  /** Path to the generated launch script (useful for debugging failures). */
   scriptPath: string;
+  /** Shared tmux session name (always `op-agents`). */
   tmuxSession: string;
+  /** tmux window name — equals the issue id. */
   tmuxWindow: string;
 }
 
+/**
+ * Launch an agent session for `args.entry`.
+ *
+ * High-level flow:
+ *  1. Resolve an agent id (arg override → default → picker modal).
+ *  2. Verify the agent binary is on PATH via the cached {@link AgentDetector}.
+ *  3. Resolve the working directory; abort with a `Notice` if none configured.
+ *  4. Write `fm.agent` up front so the sidebar badge reflects intent even if
+ *     the terminal launch later throws (OP-71).
+ *  5. In `"work"` mode, call `workIssue` to flip status → `in-progress` and
+ *     create the first TASKS note (OP-93).
+ *  6. Build the prompt and shell out via {@link launchInTerminal}.
+ *
+ * @returns The {@link OpenAgentResult}, or `undefined` if the launch was
+ *   cancelled (no agent installed, user dismissed the picker, working dir
+ *   missing). Any cancellation path also surfaces an Obsidian `Notice`.
+ * @throws Propagates errors from `launchInTerminal` (tmux failure, iTerm
+ *   AppleScript failure). The issue's `fm.agent` is left set so the sidebar
+ *   reflects the attempted launch.
+ */
 export async function openAgent(
   app: App,
   store: IssueStore,
@@ -149,10 +179,20 @@ async function pickAgent(
   });
 }
 
+/**
+ * Merge the user's overlay (from settings) on top of the built-in profile for
+ * `id`. The result is the fully-resolved profile used at launch time —
+ * `binary`, `launchFlags`, `promptPreamble`, etc.
+ */
 export function resolveProfile(settings: OpSettings, id: AgentId): AgentProfile {
   return mergeProfile(id, settings.agentOverlays[id]);
 }
 
+/**
+ * Write `agent: <id>` into the issue note's frontmatter. Used by the sidebar
+ * badge and by the SessionEnd hook to reconcile stale state. No-op if the
+ * path does not resolve to a {@link TFile}.
+ */
 export async function recordAgentOnIssue(app: App, path: string, agentId: AgentId): Promise<void> {
   const file = app.vault.getAbstractFileByPath(path);
   if (!(file instanceof TFile)) return;
@@ -161,6 +201,11 @@ export async function recordAgentOnIssue(app: App, path: string, agentId: AgentI
   });
 }
 
+/**
+ * Remove `agent:` from the issue note's frontmatter. Called by `op-resolve`
+ * and the SessionEnd hook when an agent session genuinely ends. No-op if the
+ * path does not resolve to a {@link TFile}.
+ */
 export async function clearAgentOnIssue(app: App, path: string): Promise<void> {
   const file = app.vault.getAbstractFileByPath(path);
   if (!(file instanceof TFile)) return;
