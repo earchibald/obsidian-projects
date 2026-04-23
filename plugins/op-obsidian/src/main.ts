@@ -36,6 +36,8 @@ import { openAgent, clearAgentOnIssue, resolveProfile } from "./openAgent";
 import { launchInTerminal } from "./terminalLaunch";
 import { installAgentHooks, type HookInstallResult } from "./agentHooks";
 import { cleanupAgentSessions } from "./agentSessionCleanup";
+import { detectTmux } from "./tmuxDetect";
+import { existsSync } from "fs";
 
 export default class OpPlugin extends Plugin {
   bus!: EventBus;
@@ -49,6 +51,21 @@ export default class OpPlugin extends Plugin {
 
   async onload(): Promise<void> {
     this.settings = mergeSettings(await this.loadData());
+    // Auto-detect tmux if the configured path doesn't exist (stale default after
+    // a fresh install on a non-Apple-Silicon machine, or brew relocated).
+    if (!existsSync(this.settings.tmuxBinary)) {
+      const found = detectTmux();
+      if (found.path) {
+        const prev = this.settings.tmuxBinary;
+        this.settings.tmuxBinary = found.path;
+        await this.saveSettings();
+        console.debug(`[op-obsidian] tmux auto-detected: ${prev} → ${found.path}`);
+      } else {
+        new Notice(
+          `op: tmux not found at ${this.settings.tmuxBinary} or common paths — agent launches will fail until you install tmux or set the path in Settings → op.`,
+        );
+      }
+    }
     this.detector = new AgentDetector((id) => {
       const overlay = this.settings.agentOverlays[id];
       return overlay?.binary ?? defaultBinaryFor(id);

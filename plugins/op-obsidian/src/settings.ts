@@ -1,10 +1,16 @@
 import { App, PluginSettingTab, Setting, Notice } from "obsidian";
+import { existsSync } from "fs";
+import * as path from "path";
 import type OpPlugin from "./main";
 import { AGENT_IDS, type AgentId, type ProfileOverlay } from "./agentProfiles";
 import type { ITermPlacement } from "./terminalLaunch";
 import { LAYOUT_IDS, type LayoutId } from "./layout/layouts";
 import { type RegistryData, emptyRegistry, mergeRegistry } from "./layout/registry";
 import type { OrchestratorSettings } from "./orchestrator";
+import { validateOverlay } from "./overlayValidate";
+import { detectTmux } from "./tmuxDetect";
+
+export const EXTRA_PREAMBLE_MAX = 4000;
 
 export interface InjectionSettings {
   injectBody: boolean;
@@ -200,13 +206,23 @@ export class OpSettingsTab extends PluginSettingTab {
               await this.plugin.saveSettings();
               return;
             }
+            let parsed: unknown;
             try {
-              const parsed = JSON.parse(raw) as ProfileOverlay;
-              s.agentOverlays[id] = parsed;
-              await this.plugin.saveSettings();
+              parsed = JSON.parse(raw);
             } catch (err: any) {
               new Notice(`${id} overlay: invalid JSON — ${err?.message ?? err}`);
+              return;
             }
+            const result = validateOverlay(parsed);
+            if (!result.ok || !result.overlay) {
+              new Notice(`${id} overlay: ${result.errors.join("; ")}`);
+              return;
+            }
+            if (result.warnings.length) {
+              new Notice(`${id} overlay saved with warnings: ${result.warnings.join("; ")}`);
+            }
+            s.agentOverlays[id] = result.overlay;
+            await this.plugin.saveSettings();
           });
         });
     }
@@ -257,18 +273,30 @@ export class OpSettingsTab extends PluginSettingTab {
         }),
       );
 
-    new Setting(containerEl)
+    const preambleSetting = new Setting(containerEl)
       .setName("Extra preamble")
-      .setDesc("Prepended verbatim to every launched prompt.")
-      .addTextArea((t) => {
-        t.setValue(s.injection.extraPreamble);
-        t.inputEl.rows = 3;
-        t.inputEl.style.width = "100%";
-        t.inputEl.addEventListener("blur", async () => {
-          s.injection.extraPreamble = t.getValue();
-          await this.plugin.saveSettings();
-        });
+      .setDesc(
+        `Prepended verbatim to every launched prompt. ${s.injection.extraPreamble.length}/${EXTRA_PREAMBLE_MAX} chars.`,
+      );
+    preambleSetting.addTextArea((t) => {
+      t.setValue(s.injection.extraPreamble);
+      t.inputEl.rows = 3;
+      t.inputEl.style.width = "100%";
+      t.inputEl.maxLength = EXTRA_PREAMBLE_MAX;
+      const updateCount = () => {
+        preambleSetting.setDesc(
+          `Prepended verbatim to every launched prompt. ${t.getValue().length}/${EXTRA_PREAMBLE_MAX} chars.`,
+        );
+      };
+      t.inputEl.addEventListener("input", updateCount);
+      t.inputEl.addEventListener("blur", async () => {
+        const v = t.getValue().slice(0, EXTRA_PREAMBLE_MAX);
+        if (v !== t.getValue()) t.setValue(v);
+        s.injection.extraPreamble = v;
+        await this.plugin.saveSettings();
+        updateCount();
       });
+    });
 
     containerEl.createEl("h2", { text: "Working directories" });
     containerEl.createEl("p", {
@@ -278,22 +306,24 @@ export class OpSettingsTab extends PluginSettingTab {
 
     const slugs = Object.keys(s.workingDirs).sort();
     for (const slug of slugs) {
-      new Setting(containerEl)
-        .setName(slug)
-        .addText((t) =>
-          t.setValue(s.workingDirs[slug]).onChange(async (v) => {
-            if (v.trim()) s.workingDirs[slug] = v.trim();
-            else delete s.workingDirs[slug];
-            await this.plugin.saveSettings();
-          }),
-        )
-        .addButton((b) =>
-          b.setButtonText("Remove").onClick(async () => {
-            delete s.workingDirs[slug];
-            await this.plugin.saveSettings();
-            this.display();
-          }),
-        );
+      const p = s.workingDirs[slug];
+      const row = new Setting(containerEl).setName(slug).setDesc(describeWorkingDir(p));
+      row.addText((t) =>
+        t.setValue(p).onChange(async (v) => {
+          const trimmed = v.trim();
+          if (trimmed) s.workingDirs[slug] = trimmed;
+          else delete s.workingDirs[slug];
+          await this.plugin.saveSettings();
+          row.setDesc(describeWorkingDir(trimmed));
+        }),
+      );
+      row.addButton((b) =>
+        b.setButtonText("Remove").onClick(async () => {
+          delete s.workingDirs[slug];
+          await this.plugin.saveSettings();
+          this.display();
+        }),
+      );
     }
 
     let newSlug = "";
@@ -301,18 +331,70 @@ export class OpSettingsTab extends PluginSettingTab {
     new Setting(containerEl)
       .setName("Add mapping")
       .addText((t) => t.setPlaceholder("project-slug").onChange((v) => (newSlug = v)))
-      .addText((t) => t.setPlaceholder("/path/to/repo").onChange((v) => (newPath = v)))
+      .addText((t) => t.setPlaceholder("/absolute/path/to/repo").onChange((v) => (newPath = v)))
       .addButton((b) =>
         b.setButtonText("Add").onClick(async () => {
-          if (!newSlug.trim() || !newPath.trim()) {
+          const slug = newSlug.trim();
+          const p = newPath.trim();
+          if (!slug || !p) {
             new Notice("Both slug and path are required");
             return;
           }
-          s.workingDirs[newSlug.trim()] = newPath.trim();
+          if (!path.isAbsolute(p)) {
+            new Notice(`Path must be absolute: ${p}`);
+            return;
+          }
+          if (!existsSync(p)) {
+            new Notice(`Path does not exist (saved anyway): ${p}`);
+          }
+          s.workingDirs[slug] = p;
           await this.plugin.saveSettings();
           this.display();
         }),
       );
+
+    new Setting(containerEl)
+      .setName("Bulk edit (JSON)")
+      .setDesc("Paste a JSON object of { slug: absolutePath } pairs to replace all mappings.")
+      .addTextArea((t) => {
+        t.setValue(JSON.stringify(s.workingDirs, null, 2));
+        t.inputEl.rows = 6;
+        t.inputEl.style.width = "100%";
+        t.inputEl.addEventListener("blur", async () => {
+          const raw = t.getValue().trim();
+          if (!raw) return;
+          let parsed: unknown;
+          try {
+            parsed = JSON.parse(raw);
+          } catch (err: any) {
+            new Notice(`workingDirs: invalid JSON — ${err?.message ?? err}`);
+            return;
+          }
+          if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+            new Notice(`workingDirs: must be a JSON object of slug → absolute path`);
+            return;
+          }
+          const next: Record<string, string> = {};
+          const warnings: string[] = [];
+          for (const [slug, v] of Object.entries(parsed as Record<string, unknown>)) {
+            if (typeof v !== "string" || !v.trim()) {
+              new Notice(`workingDirs[${slug}]: value must be a non-empty string`);
+              return;
+            }
+            const p = v.trim();
+            if (!path.isAbsolute(p)) {
+              new Notice(`workingDirs[${slug}]: path must be absolute — ${p}`);
+              return;
+            }
+            if (!existsSync(p)) warnings.push(`${slug}: missing ${p}`);
+            next[slug] = p;
+          }
+          s.workingDirs = next;
+          await this.plugin.saveSettings();
+          if (warnings.length) new Notice(`workingDirs saved. Warnings: ${warnings.join("; ")}`);
+          this.display();
+        });
+      });
 
     containerEl.createEl("h2", { text: "Terminal" });
     new Setting(containerEl)
@@ -331,20 +413,38 @@ export class OpSettingsTab extends PluginSettingTab {
           }),
       );
 
-    new Setting(containerEl)
+    const tmuxStatus = (p: string) =>
+      existsSync(p) ? `✓ exists: ${p}` : `⚠ not found: ${p}`;
+    const tmuxSetting = new Setting(containerEl)
       .setName("tmux binary")
       .setDesc(
-        "Absolute path to the tmux executable. Obsidian's PATH omits /opt/homebrew/bin, so bare `tmux` fails on Apple Silicon brew installs — prefer /opt/homebrew/bin/tmux or /usr/local/bin/tmux.",
-      )
-      .addText((t) =>
-        t.setValue(s.tmuxBinary).onChange(async (v) => {
-          const trimmed = v.trim();
-          if (trimmed) {
-            s.tmuxBinary = trimmed;
-            await this.plugin.saveSettings();
-          }
-        }),
+        `Absolute path to the tmux executable. Obsidian's PATH omits /opt/homebrew/bin, so bare \`tmux\` fails on Apple Silicon brew installs. ${tmuxStatus(s.tmuxBinary)}`,
       );
+    tmuxSetting.addText((t) =>
+      t.setValue(s.tmuxBinary).onChange(async (v) => {
+        const trimmed = v.trim();
+        if (trimmed) {
+          s.tmuxBinary = trimmed;
+          await this.plugin.saveSettings();
+          tmuxSetting.setDesc(
+            `Absolute path to the tmux executable. Obsidian's PATH omits /opt/homebrew/bin, so bare \`tmux\` fails on Apple Silicon brew installs. ${tmuxStatus(trimmed)}`,
+          );
+        }
+      }),
+    );
+    tmuxSetting.addButton((b) =>
+      b.setButtonText("Auto-detect").onClick(async () => {
+        const found = detectTmux();
+        if (found.path) {
+          s.tmuxBinary = found.path;
+          await this.plugin.saveSettings();
+          new Notice(`op: tmux found at ${found.path}`);
+          this.display();
+        } else {
+          new Notice(`op: tmux not found in any of: ${found.tried.join(", ")}`);
+        }
+      }),
+    );
 
     new Setting(containerEl)
       .setName("iTerm window placement")
@@ -490,6 +590,13 @@ export class OpSettingsTab extends PluginSettingTab {
         }),
       );
   }
+}
+
+function describeWorkingDir(p: string): string {
+  if (!p) return "(empty)";
+  if (!path.isAbsolute(p)) return `⚠ not an absolute path`;
+  if (!existsSync(p)) return `⚠ path does not exist`;
+  return `✓ ${p}`;
 }
 
 function detectionSummary(plugin: OpPlugin): string {
