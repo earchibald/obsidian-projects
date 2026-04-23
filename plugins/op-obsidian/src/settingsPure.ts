@@ -83,7 +83,7 @@ export const DEFAULT_SETTINGS: OpSettings = {
     enforceWorktree: false,
   },
   iterm: {
-    useWebSocketClient: false,
+    useWebSocketClient: true,
   },
   orchestrator: {
     enabled: false,
