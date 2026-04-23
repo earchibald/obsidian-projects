@@ -19,6 +19,23 @@ If the plugin is missing or disabled, **stop and ask the user to install/enable 
 
 Run `obsidian vault` once to learn the active vault path; cache it.
 
+## Link back to the issue note
+
+Whenever you surface a vault path to the user — post-action summaries, the "may I resolve?" confirmation pause, any step that mentions an issue or seed note — pair the path with a clickable `obsidian://` URI so the user can jump straight to the note without copy-pasting.
+
+- Cache the vault **name** (not just the path) from the first `obsidian vault` call — it's the first tab-separated column on the `path\t…` line (e.g. `Agent-Vault`).
+- Canonical URI: `obsidian://open?vault=<vault-name>&file=<vault-relative-path-without-.md>`.
+- Source of truth for the vault-relative path: the plugin's JSON payload at `Projects/_scratch/op-last-response.md`. Prefer it over reconstructing paths by hand.
+- Encoding: URI-encode the vault name if it contains spaces; for the file component, `encodeURIComponent` is safest but you may leave `/` unescaped for readability — Obsidian accepts either. Strip the trailing `.md`. `#` and `?` in filenames **must** be percent-encoded (`%23`, `%3F`) or the URI parses wrong.
+- Render alongside the path so terminal users still see something useful:
+
+  ```
+  path: Projects/obsidian-projects/ISSUES/OP-102 ….md
+  [Open in Obsidian](obsidian://open?vault=Agent-Vault&file=Projects%2Fobsidian-projects%2FISSUES%2FOP-102%20…)
+  ```
+
+Example: `obsidian://open?vault=Agent-Vault&file=Projects%2Fobsidian-projects%2FISSUES%2FOP-102%20Update%20agent%20guidance%20…`
+
 ## Work in a git worktree for non-trivial issues
 
 Default to an isolated git worktree (`EnterWorktree`, or the `superpowers:using-git-worktrees` skill) for any issue that touches more than a single file or spans more than one trivial edit. Keeping the main checkout clean lets parallel work, PR review, and vault sync coexist without branch-swap churn — and it matters more when you were **delegated** the issue by another agent, because the delegating agent may still be holding the main checkout open.
@@ -56,7 +73,7 @@ Prefix → slug is **not** a plugin command — scan `Projects/*/STATUS.md` dire
 1. Validate `slug` (lowercase + hyphens, `Projects/<slug>/` doesn't already exist).
 2. If the project has a code repo, ask the user for its absolute path (e.g. `/Users/you/Projects/<slug>`) and pass it as `repo_path=`. The plugin writes it to `STATUS.md` frontmatter, where `op:open-agent` reads it to set the agent's working directory and skip the working-dir modal. Must be absolute — no `~`, no vault-relative. Skip this prompt for meta-only projects with no repo.
 3. Run `obsidian op-scaffold slug=<slug> prefix=<PREFIX> [repo_path=/abs/path] [title="…"] [priority=med] [scope="bullet 1\nbullet 2"]`.
-4. Report `projectFolder`, `basePath`, `statusPath`, and `seedPath` (if any) from the JSON response. Suggest `/op:new <slug>` next.
+4. Report `projectFolder`, `basePath`, `statusPath`, and `seedPath` (if any) from the JSON response — and include the `obsidian://` link for `seedPath` if it was created. Suggest `/op:new <slug>` next.
 
 ---
 
@@ -72,7 +89,7 @@ Prefix → slug is **not** a plugin command — scan `Projects/*/STATUS.md` dire
    - **If unsure** (borderline length, ambiguous structure) → treat as detailed and surface the ambiguity in the confirm step rather than guessing silently.
 3. **Always pause for explicit user confirmation before mutating vault or repo** — even in auto mode. Issue creation is a commitment artifact.
 4. Run `obsidian op-new project=<slug> title="<title>" priority=<low|med|high> [scope="bullet 1\nbullet 2"]`.
-5. Report the new id and path; suggest `/op:issue <PREFIX>-<N>`.
+5. Report the new id and path, and include the `obsidian://` link for the new issue note so the user can open it in one click; suggest `/op:issue <PREFIX>-<N>`.
 
 ---
 
@@ -86,7 +103,7 @@ Accepts `slug N`, `slug PREFIX-N`, `PREFIX N`, `PREFIX-N`, or just `slug`/`PREFI
 
 ### Start
 
-1. `obsidian op-work issue=<PREFIX>-<N>`.
+1. `obsidian op-work issue=<PREFIX>-<N>`. Emit a one-line ack with the issue's `obsidian://` link so the user can open the note while you write `## Plan`.
 2. If the body is empty or one line, scope is ambiguous — state your interpretation and confirm before implementing, even in auto mode.
 3. Reconcile scope vs. current repo/vault state — skip items already done; flag drift between the schema and observed reality.
 4. **Write the `## Plan` section now** (approach, key decisions, files to touch, risks). Reconcile, don't overwrite: if the section already has user or prior-agent content, extend/refine rather than replace. Replace the italic placeholder if still present.
@@ -154,7 +171,8 @@ Pre-`1.0.0` projects MAY treat breakage as minor; prefer explicit major once the
 
 1. **Write the `## Summary` section** in the issue body (shipped behavior, PR link, `<sha7> <subject>` commits, follow-ups) before the confirmation pause. Show its diff in the resolution preview. Replace the italic placeholder if still present; reconcile with any existing prose rather than overwriting.
 2. **Always pause for explicit user confirmation before mutating vault or repo** — even in auto mode. Show the planned transition:
-   - Source → target: `Projects/<slug>/ISSUES/<filename>` → `…/RESOLVED ISSUES/<filename>`
+   - Source → target: `Projects/<slug>/ISSUES/<filename>` → `…/RESOLVED ISSUES/<filename>` — include the issue's current `obsidian://` link so the user can click through and verify before approving
+
    - Frontmatter: `status` → `resolved` (or `wontfix`), `resolved` → `<today>`
    - TASKS to trash (list each path)
    - `commits:` status: "set" / "empty — will back-fill from git log" / "empty — skipping (no repo)"
@@ -163,7 +181,7 @@ Pre-`1.0.0` projects MAY treat breakage as minor; prefer explicit major once the
 3. **Back-fill `commits:` if empty.** Scan `git log` for commits referencing the issue id since the last resolved-issue date; append each via `obsidian op-append-commit`.
 4. **Bump the version file**, commit it (with the issue id in the subject), append that commit via `op-append-commit`, then `obsidian property:set name=version value=<new> path="<issue-path>"`. Skip for meta-only projects.
 5. `obsidian op-resolve issue=<PREFIX>-<N>` (or `status=wontfix`). The plugin moves the file, sets `status` and `resolved:`, and trashes linked TASKS atomically. If the issue has a `github_issue:` URL and `closeGithubIssueOnResolve` is on, the plugin also runs `gh issue close` on it — check `githubClosed` / `githubCloseError` in the JSON response. **DOCS are never touched.**
-6. Report: external changes (URLs, commands run, including the linked GH issue if it was auto-closed), vault changes (paths from the JSON response), and any manual follow-ups (e.g. retrying `gh issue close` manually if `githubCloseError` is set).
+6. Report: external changes (URLs, commands run, including the linked GH issue if it was auto-closed), vault changes (paths from the JSON response — include the `obsidian://` link for the **post-move** `RESOLVED ISSUES/…` path so the user can open the resolved note directly), and any manual follow-ups (e.g. retrying `gh issue close` manually if `githubCloseError` is set).
 
 ---
 
