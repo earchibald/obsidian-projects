@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { extractIssueUrl } from "./githubPure";
+import { extractIssueUrl, isAlreadyClosedError } from "./githubPure";
 
 describe("extractIssueUrl", () => {
   it("extracts issue URL from gh output", () => {
@@ -13,5 +13,22 @@ describe("extractIssueUrl", () => {
 
   it("ignores pull URLs", () => {
     expect(extractIssueUrl("https://github.com/o/r/pull/9")).toBeUndefined();
+  });
+});
+
+describe("isAlreadyClosedError", () => {
+  it("matches gh's closeIssue already-closed error", () => {
+    expect(
+      isAlreadyClosedError("GraphQL: Could not close the issue. (closeIssue)"),
+    ).toBe(true);
+  });
+
+  it("is case-insensitive", () => {
+    expect(isAlreadyClosedError("could not close the issue")).toBe(true);
+  });
+
+  it("does not match unrelated errors", () => {
+    expect(isAlreadyClosedError("HTTP 401: Bad credentials")).toBe(false);
+    expect(isAlreadyClosedError("")).toBe(false);
   });
 });

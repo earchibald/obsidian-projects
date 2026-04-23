@@ -99,8 +99,9 @@ export default class OpPlugin extends Plugin {
     // `op-resolve` command, a raw CLI `property:set status=resolved`, or a
     // manual frontmatter edit in Obsidian. `withGhCloseHook` in `runResolve`
     // only covers paths that flow through the plugin's resolve logic; this
-    // listener covers everything else. `gh issue close` is idempotent on an
-    // already-closed issue, so a double-fire with the hook is harmless.
+    // listener covers everything else. A double-fire with the hook is
+    // harmless: `closeGithubIssue` is idempotent (pre-checks live state and
+    // tolerates gh's "Could not close the issue" error on already-closed).
     this.bus.on("issue:status-changed", (ev) => {
       if (ev.kind !== "issue:status-changed") return;
       const { entry, prev } = ev;
