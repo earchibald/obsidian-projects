@@ -165,11 +165,48 @@ export class OpSettingsTab extends PluginSettingTab {
     containerEl.empty();
     const s = this.plugin.settings;
 
+    // Glossary — one place to define the jargon the individual settings
+    // descriptions refer to (tmux, iTerm control mode, orchestrator, overlay,
+    // worktree). Individual descriptions stay short and link back here in
+    // spirit; this block is the source of truth for the terminology.
+    const glossary = containerEl.createEl("details");
+    glossary.createEl("summary", { text: "Glossary — tmux, orchestrator, overlay, worktree" });
+    const gl = glossary.createEl("div", { cls: "setting-item-description" });
+    const addTerm = (term: string, body: string): void => {
+      const p = gl.createEl("p");
+      p.createEl("strong", { text: `${term} — ` });
+      p.appendText(body);
+    };
+    addTerm(
+      "tmux",
+      "Terminal multiplexer. op runs every agent inside a single shared tmux session (`op-agents`), with one window per issue id. Agents survive closing the terminal; reattach with `tmux attach -t op-agents`.",
+    );
+    addTerm(
+      "iTerm control mode (`tmux -CC`)",
+      "iTerm-specific integration where tmux drives native iTerm tabs/panes instead of rendering its own UI. op uses this when the terminal is set to iTerm.",
+    );
+    addTerm(
+      "Orchestrator",
+      "Optional layout engine that tiles agent panes into a grid inside the current iTerm window (macOS + iTerm only). Overflow spills to a new iTerm window. Off by default.",
+    );
+    addTerm(
+      "Profile overlay",
+      "Per-agent JSON patch merged on top of the built-in agent profile. Keys: `binary`, `launchFlags` (string[]), `promptPreamble`, `skillTrigger`, `label`. Unknown keys are flagged but saved.",
+    );
+    addTerm(
+      "Working directory",
+      "Absolute path to the code repo an agent is launched into. Resolved in order: the issue's project `repo_path:` frontmatter, then the slug → path map below, then an interactive modal prompt.",
+    );
+    addTerm(
+      "Worktree enforcement",
+      "An opt-in PreToolUse hook (Claude Code + Gemini only) that blocks Edit/Write on the main checkout for op-launched agents. Agents must `git worktree add` or export `OP_ALLOW_MAIN_EDIT=1` to override.",
+    );
+
     containerEl.createEl("h2", { text: "Agents" });
 
     new Setting(containerEl)
       .setName("Default agent")
-      .setDesc("Agent launched by op: open agent for issue unless overridden at runtime.")
+      .setDesc("Agent launched by “op: open agent for issue” when no override is given — e.g. claude, gemini, codex. The picker only appears when this agent isn't detected on PATH, or “Always prompt for agent” is on.")
       .addDropdown((d) => {
         for (const id of AGENT_IDS) d.addOption(id, id);
         d.setValue(s.defaultAgent).onChange(async (v) => {
@@ -202,7 +239,7 @@ export class OpSettingsTab extends PluginSettingTab {
 
     containerEl.createEl("h3", { text: "Profile overlays (JSON per agent)" });
     containerEl.createEl("p", {
-      text: "Overlays merge on top of the built-in profile. Keys: binary, launchFlags (string[]), promptPreamble, skillTrigger, label.",
+      text: "Overlays are a JSON patch merged on top of the built-in profile for each agent. See Glossary → Profile overlay. Allowed keys: `binary` (string — absolute path or PATH lookup), `launchFlags` (string[] appended to the command line), `promptPreamble` (string prepended to every prompt), `skillTrigger` (string — first line of the prompt), `label` (string for the sidebar badge). Example: `{ \"binary\": \"/opt/homebrew/bin/claude\", \"launchFlags\": [\"--dangerously-skip-permissions\"] }`.",
       cls: "setting-item-description",
     });
     for (const id of AGENT_IDS) {
@@ -245,6 +282,7 @@ export class OpSettingsTab extends PluginSettingTab {
 
     new Setting(containerEl)
       .setName("Inject issue body")
+      .setDesc("Append the issue note's body (after frontmatter) to the launched prompt so the agent sees the scope without having to read the note.")
       .addToggle((t) =>
         t.setValue(s.injection.injectBody).onChange(async (v) => {
           s.injection.injectBody = v;
@@ -254,6 +292,7 @@ export class OpSettingsTab extends PluginSettingTab {
 
     new Setting(containerEl)
       .setName("Max body characters")
+      .setDesc("Truncate the injected body to this many characters. Default 8000 ≈ ~2000 tokens.")
       .addText((t) =>
         t
           .setValue(String(s.injection.maxBodyChars))
@@ -268,6 +307,7 @@ export class OpSettingsTab extends PluginSettingTab {
 
     new Setting(containerEl)
       .setName("Include linked TASKS")
+      .setDesc("Include the titles of the issue's linked TASKS notes (auxiliary subtasks) in the prompt.")
       .addToggle((t) =>
         t.setValue(s.injection.includeTasksList).onChange(async (v) => {
           s.injection.includeTasksList = v;
@@ -277,6 +317,7 @@ export class OpSettingsTab extends PluginSettingTab {
 
     new Setting(containerEl)
       .setName("Recent commits to include")
+      .setDesc("Number of recent entries from the issue's `commits:` frontmatter list to append to the prompt. 0 disables.")
       .addText((t) =>
         t.setValue(String(s.injection.includeRecentCommits)).onChange(async (v) => {
           const n = parseInt(v, 10);

@@ -40,16 +40,49 @@ import { cleanupAgentSessions } from "./agentSessionCleanup";
 import { detectTmux } from "./tmuxDetect";
 import { existsSync } from "fs";
 
+/**
+ * The Obsidian plugin half of the Obsidian Projects workflow.
+ *
+ * Responsibilities:
+ *  - Owns the {@link EventBus} and {@link IssueStore} for the vault's
+ *    Projects tree, and re-emits lifecycle events (`issue:*`) as the user
+ *    edits notes.
+ *  - Registers every `op: …` command that shows up in the Obsidian command
+ *    palette (scaffold, new issue, work, append commit, set PR, resolve,
+ *    open agent, …).
+ *  - Implements the `obsidian://op-*` URI surface used by the `op`
+ *    Claude Code skill and its slash commands — each URI handler writes a
+ *    structured JSON response to `Projects/_scratch/op-last-response.md`
+ *    via {@link writeUriResponse}.
+ *  - Orchestrates agent launches via {@link openAgent}, including the
+ *    PreToolUse worktree guard (see `agentHooks.ts`).
+ *
+ * Lifecycle:
+ *  - `onload` loads settings, auto-detects tmux, spins up the detector and
+ *    store, registers commands + URI handlers, and reconciles stale agent
+ *    registrations once the workspace is ready.
+ *  - `onunload` tears down the store (via `addChild`) and clears the bus.
+ */
 export default class OpPlugin extends Plugin {
+  /** In-process pub/sub for issue lifecycle events. */
   bus!: EventBus;
+  /** Live index of every issue/task note in the vault's `Projects/` tree. */
   store!: IssueStore;
+  /** Merged user settings (loaded from `data.json`, defaults applied). */
   settings: OpSettings = { ...DEFAULT_SETTINGS };
+  /** Lazy `which` probe for agent binaries. */
   detector!: AgentDetector;
 
+  /** Persist the current {@link settings} object to `data.json`. */
   async saveSettings(): Promise<void> {
     await this.saveData(this.settings);
   }
 
+  /**
+   * Plugin bootstrap. Order matters — see inline comments for the reasons
+   * behind the sequence (tmux auto-detect before detector, detector before
+   * command registration, reconciler after `onLayoutReady`).
+   */
   async onload(): Promise<void> {
     this.settings = mergeSettings(await this.loadData());
     // Auto-detect tmux if the configured path doesn't exist (stale default after
@@ -447,6 +480,10 @@ export default class OpPlugin extends Plugin {
     );
   }
 
+  /**
+   * Tear down the event bus. The {@link IssueStore} unregisters itself via
+   * `addChild`, so it is not unloaded here explicitly.
+   */
   onunload(): void {
     this.bus?.clear();
   }
@@ -1298,6 +1335,11 @@ export default class OpPlugin extends Plugin {
     }
   }
 
+  /**
+   * Re-run {@link installAgentHooks} and show a `Notice` summarizing the
+   * result. Called from the settings tab after the user toggles
+   * “Enforce worktree for delegated agents”.
+   */
   async reinstallAgentHooks(): Promise<void> {
     await this.runInstallAgentHooks(true);
   }
