@@ -907,6 +907,11 @@ export default class OpPlugin extends Plugin {
       const priority = (params.priority as Priority | undefined) ?? "med";
       const scope = collectRepeated(params, "scope");
       const res = await createIssue(this.app, this.store, { slug, title, priority, scope });
+      if (this.settings.github.autoCreateGithubIssue) {
+        await this.autoCreateGithubIssueFor(res.path, res.id, { slug, title, priority, scope }).catch(
+          (err) => console.error("[op-obsidian] cli auto-create github issue failed", err),
+        );
+      }
       await writeUriResponse(this.app, {
         ok: true,
         command,
