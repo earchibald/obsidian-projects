@@ -3,8 +3,15 @@ import type { IssueStore } from "./issueStore";
 import { findProjectBySlug, type ProjectInfo } from "./projects";
 import { nextIssueNumberFromVault } from "./findIssue";
 import { issueFilename } from "./sanitize";
+import { renderIssueNote, type Priority } from "./issueTemplate";
 
-export type Priority = "low" | "med" | "high";
+export type { Priority };
+export {
+  PLAN_PLACEHOLDER,
+  NOTES_PLACEHOLDER,
+  SUMMARY_PLACEHOLDER,
+  renderIssueNote,
+} from "./issueTemplate";
 
 export interface CreateIssueInput {
   slug: string;
@@ -44,9 +51,6 @@ export async function createIssue(
   let filename = issueFilename(id, input.title);
   let path = normalizePath(`${folder}/${filename}`);
 
-  // Belt-and-suspenders: if any file already claims this ID in either folder,
-  // walk forward until free. Guards against races with scaffolding and any
-  // future drift between the filesystem scan and the actual vault state.
   const MAX_ATTEMPTS = 1000;
   let attempts = 0;
   while (
@@ -77,43 +81,6 @@ export async function createIssue(
   return { file, id, path, project };
 }
 
-interface RenderInput {
-  id: string;
-  project: string;
-  title: string;
-  priority: Priority;
-  scope: string[];
-  assignee: string;
-  githubIssue?: string;
-}
-
-function renderIssueNote(i: RenderInput): string {
-  const today = new Date().toISOString().slice(0, 10);
-  const fmLines = [
-    "---",
-    `id: ${i.id}`,
-    `project: ${i.project}`,
-    "type: issue",
-    "status: open",
-    `priority: ${i.priority}`,
-    `created: ${today}`,
-    `assignee: ${i.assignee}`,
-  ];
-  if (i.githubIssue) fmLines.push(`github_issue: ${i.githubIssue}`);
-  fmLines.push("tags:", `  - project/${i.project}`, "  - issue", "---", "");
-  const fm = fmLines.join("\n");
-
-  const body = [`# ${i.title}`, ""];
-  if (i.scope.length > 0) {
-    body.push("## Scope");
-    for (const bullet of i.scope) {
-      body.push(`- [ ] ${bullet.trim()}`);
-    }
-    body.push("");
-  }
-  return fm + body.join("\n");
-}
-
 async function ensureFolder(app: App, folder: string): Promise<void> {
   if (!app.vault.getAbstractFileByPath(folder)) {
     await app.vault.createFolder(folder);
@@ -126,8 +93,6 @@ function idExistsInFolder(app: App, folderPath: string, prefix: string, n: numbe
     | null;
   if (!folder || !folder.children) return false;
   const needle = `${prefix}-${n}`;
-  // Match the id as a standalone token at the start: "<PREFIX>-<N>" followed by
-  // end-of-name, space, or a file extension dot.
   const re = new RegExp(`^${needle.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?:\\b|[ .])`);
   return folder.children.some((c) => re.test(c.name));
 }

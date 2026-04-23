@@ -89,8 +89,9 @@ Accepts `slug N`, `slug PREFIX-N`, `PREFIX N`, `PREFIX-N`, or just `slug`/`PREFI
 1. `obsidian op-work issue=<PREFIX>-<N>`.
 2. If the body is empty or one line, scope is ambiguous — state your interpretation and confirm before implementing, even in auto mode.
 3. Reconcile scope vs. current repo/vault state — skip items already done; flag drift between the schema and observed reality.
-4. The plugin creates the first TASKS note for you. For additional logical subtasks, create more TASKS notes (`obsidian create` is fine for these auxiliary notes — they're trashed at resolve).
-5. **Mirror every TASK note into a `## Tasks` checklist in the issue body.** After creating the TASK notes (planned upfront, or fix-up tasks discovered mid-session), append a line to the issue body's `## Tasks` section for each one:
+4. **Write the `## Plan` section now** (approach, key decisions, files to touch, risks). Reconcile, don't overwrite: if the section already has user or prior-agent content, extend/refine rather than replace. Replace the italic placeholder if still present.
+5. The plugin creates the first TASKS note for you. For additional logical subtasks, create more TASKS notes (`obsidian create` is fine for these auxiliary notes — they're trashed at resolve).
+6. **Mirror every TASK note into a `## Tasks` checklist in the issue body.** After creating the TASK notes (planned upfront, or fix-up tasks discovered mid-session), append a line to the issue body's `## Tasks` section for each one:
 
    ```markdown
    ## Tasks
@@ -99,7 +100,11 @@ Accepts `slug N`, `slug PREFIX-N`, `PREFIX N`, `PREFIX-N`, or just `slug`/`PREFI
    ```
 
    Reconcile rather than overwrite: if the section already exists (prior session, completed task, user-authored entry), preserve existing entries (`- [completed]` / `- [x]`) and append any new tasks not already listed. Mark entries `- [completed]` when the corresponding TASK note flips to `status: completed`. The body checklist is the durable record — TASK notes are trashed at resolve, the issue body isn't.
-6. Confirm before any action affecting shared systems (push, release, deploy, external API).
+
+   When a TASK note flips to `status: completed`, also **append a `### <ISSUE-ID>.<N> — <title>` block under `## Notes`** recording what was done and any deviations from the plan. Idempotent: if that block already exists, update it in place rather than duplicating.
+7. Confirm before any action affecting shared systems (push, release, deploy, external API).
+
+**Reconcile rule for legacy issues.** If the issue body is missing any of `## Plan`, `## Notes`, or `## Summary`, insert the missing sections in canonical order (`Scope → Plan → Tasks → Notes → Summary`) before writing. Never modify user-authored prose in other sections.
 
 ### Track refs as work lands
 
@@ -147,17 +152,18 @@ Pre-`1.0.0` projects MAY treat breakage as minor; prefer explicit major once the
 
 `/op:resolve` (or run at the tail of `work`).
 
-1. **Always pause for explicit user confirmation before mutating vault or repo** — even in auto mode. Show the planned transition:
+1. **Write the `## Summary` section** in the issue body (shipped behavior, PR link, `<sha7> <subject>` commits, follow-ups) before the confirmation pause. Show its diff in the resolution preview. Replace the italic placeholder if still present; reconcile with any existing prose rather than overwriting.
+2. **Always pause for explicit user confirmation before mutating vault or repo** — even in auto mode. Show the planned transition:
    - Source → target: `Projects/<slug>/ISSUES/<filename>` → `…/RESOLVED ISSUES/<filename>`
    - Frontmatter: `status` → `resolved` (or `wontfix`), `resolved` → `<today>`
    - TASKS to trash (list each path)
    - `commits:` status: "set" / "empty — will back-fill from git log" / "empty — skipping (no repo)"
    - Version bump: "`<file>`: `<old>` → `<new>` (`patch`/`minor`/`major`)" — or "skipping (no version file)"
    - GitHub issue: if `github_issue:` is set and `closeGithubIssueOnResolve` is on, note that the plugin will run `gh issue close` on the URL as part of `op-resolve` — do **not** close it yourself beforehand
-2. **Back-fill `commits:` if empty.** Scan `git log` for commits referencing the issue id since the last resolved-issue date; append each via `obsidian op-append-commit`.
-3. **Bump the version file**, commit it (with the issue id in the subject), append that commit via `op-append-commit`, then `obsidian property:set name=version value=<new> path="<issue-path>"`. Skip for meta-only projects.
-4. `obsidian op-resolve issue=<PREFIX>-<N>` (or `status=wontfix`). The plugin moves the file, sets `status` and `resolved:`, and trashes linked TASKS atomically. If the issue has a `github_issue:` URL and `closeGithubIssueOnResolve` is on, the plugin also runs `gh issue close` on it — check `githubClosed` / `githubCloseError` in the JSON response. **DOCS are never touched.**
-5. Report: external changes (URLs, commands run, including the linked GH issue if it was auto-closed), vault changes (paths from the JSON response), and any manual follow-ups (e.g. retrying `gh issue close` manually if `githubCloseError` is set).
+3. **Back-fill `commits:` if empty.** Scan `git log` for commits referencing the issue id since the last resolved-issue date; append each via `obsidian op-append-commit`.
+4. **Bump the version file**, commit it (with the issue id in the subject), append that commit via `op-append-commit`, then `obsidian property:set name=version value=<new> path="<issue-path>"`. Skip for meta-only projects.
+5. `obsidian op-resolve issue=<PREFIX>-<N>` (or `status=wontfix`). The plugin moves the file, sets `status` and `resolved:`, and trashes linked TASKS atomically. If the issue has a `github_issue:` URL and `closeGithubIssueOnResolve` is on, the plugin also runs `gh issue close` on it — check `githubClosed` / `githubCloseError` in the JSON response. **DOCS are never touched.**
+6. Report: external changes (URLs, commands run, including the linked GH issue if it was auto-closed), vault changes (paths from the JSON response), and any manual follow-ups (e.g. retrying `gh issue close` manually if `githubCloseError` is set).
 
 ---
 

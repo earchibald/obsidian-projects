@@ -4,6 +4,9 @@ import type { IssueEntry } from "./types";
 import type { AgentLaunchMode, AgentProfile } from "./agentProfiles";
 import { promptPreambleFor, renderSkillTrigger } from "./agentProfiles";
 import type { InjectionSettings } from "./settings";
+import { agentizeBody } from "./agentizeBody";
+
+export { agentizeBody } from "./agentizeBody";
 
 export interface BuildPromptArgs {
   entry: IssueEntry;
@@ -70,7 +73,7 @@ async function readBodyOnly(app: App, entry: IssueEntry): Promise<string> {
   const f = app.vault.getAbstractFileByPath(entry.path);
   if (!(f instanceof TFile)) return "";
   const raw = await app.vault.read(f);
-  return stripFrontmatter(raw).trim();
+  return agentizeBody(stripFrontmatter(raw).trim());
 }
 
 function stripFrontmatter(raw: string): string {
