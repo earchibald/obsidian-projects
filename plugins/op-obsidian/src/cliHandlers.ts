@@ -34,13 +34,21 @@ export function parseSetPrParams(
 
 export function parseSetScopeParams(
   params: Record<string, string>,
-): ParamsResult<{ id: string; scope: string }> {
+): ParamsResult<{ id: string; scope: string; mode: "scope" | "body" }> {
   const id = params.issue ?? params.id;
   const scope = params.scope;
   if (!id || typeof scope !== "string") {
     return { ok: false, error: "op-set-scope failed: --issue and --scope required" };
   }
-  return { ok: true, value: { id, scope } };
+  const rawMode = params.mode;
+  let mode: "scope" | "body" = "scope";
+  if (rawMode !== undefined) {
+    if (rawMode !== "scope" && rawMode !== "body") {
+      return { ok: false, error: "op-set-scope failed: mode must be 'scope' or 'body'" };
+    }
+    mode = rawMode;
+  }
+  return { ok: true, value: { id, scope, mode } };
 }
 
 export function parseNewParams(

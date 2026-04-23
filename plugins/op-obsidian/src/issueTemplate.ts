@@ -34,13 +34,13 @@ export function renderIssueNote(i: RenderInput): string {
   const fm = fmLines.join("\n");
 
   const body: string[] = [`# ${i.title}`, ""];
+  body.push("## Scope", "");
   if (i.scope.length > 0) {
-    body.push("## Scope", "");
     for (const bullet of i.scope) {
       body.push(`- [ ] ${bullet.trim()}`);
     }
-    body.push("");
   }
+  body.push("");
   body.push("## Plan", "", PLAN_PLACEHOLDER, "");
   body.push("## Tasks", "");
   body.push("## Notes", "", NOTES_PLACEHOLDER, "");

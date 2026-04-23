@@ -51,6 +51,15 @@ describe("parseSetScopeParams", () => {
     expect(parseSetScopeParams({ id: "OP-1" }).ok).toBe(false);
     const r = parseSetScopeParams({ id: "OP-1", scope: "" });
     expect(r.ok && r.value.scope).toBe("");
+    expect(r.ok && r.value.mode).toBe("scope");
+  });
+  it("accepts mode=body", () => {
+    const r = parseSetScopeParams({ id: "OP-1", scope: "x", mode: "body" });
+    expect(r.ok && r.value.mode).toBe("body");
+  });
+  it("rejects unknown mode", () => {
+    const r = parseSetScopeParams({ id: "OP-1", scope: "x", mode: "wat" });
+    expect(r.ok).toBe(false);
   });
 });
 
