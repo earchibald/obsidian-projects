@@ -2,6 +2,9 @@ export type AgentId = "claude" | "gemini" | "copilot";
 
 export const AGENT_IDS: AgentId[] = ["claude", "gemini", "copilot"];
 
+const DEFAULT_PREAMBLE =
+  "You were launched to work on an Obsidian Projects issue that was delegated to you. If the work touches more than a single file or involves more than one trivial edit, create an isolated git worktree before making changes — the agent that delegated this issue may still hold the main checkout open, and a worktree keeps your branch, builds, and vault sync from colliding with theirs. Skip the worktree only for one-line doc tweaks, single-field schema comments, or typo fixes.";
+
 export interface AgentProfile {
   id: AgentId;
   label: string;
@@ -19,7 +22,7 @@ export const BASE_PROFILES: Readonly<Record<AgentId, AgentProfile>> = Object.fre
     label: "Claude Code",
     binary: "claude",
     launchFlags: ["--permission-mode", "auto"],
-    promptPreamble: "",
+    promptPreamble: DEFAULT_PREAMBLE,
     skillTrigger: "/op:issue {{id}}",
   },
   gemini: {
@@ -27,7 +30,7 @@ export const BASE_PROFILES: Readonly<Record<AgentId, AgentProfile>> = Object.fre
     label: "Gemini CLI",
     binary: "gemini",
     launchFlags: [],
-    promptPreamble: "",
+    promptPreamble: DEFAULT_PREAMBLE,
     skillTrigger: "Please call activate_skill for the \"op\" skill, then resume work on {{id}}.",
   },
   copilot: {
@@ -35,7 +38,7 @@ export const BASE_PROFILES: Readonly<Record<AgentId, AgentProfile>> = Object.fre
     label: "Copilot CLI",
     binary: "copilot",
     launchFlags: [],
-    promptPreamble: "",
+    promptPreamble: DEFAULT_PREAMBLE,
     skillTrigger: "Use the `op` skill to resume work on {{id}}.",
   },
 });

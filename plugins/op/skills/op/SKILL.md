@@ -19,6 +19,12 @@ If the plugin is missing or disabled, **stop and ask the user to install/enable 
 
 Run `obsidian vault` once to learn the active vault path; cache it.
 
+## Work in a git worktree for non-trivial issues
+
+Default to an isolated git worktree (`EnterWorktree`, or the `superpowers:using-git-worktrees` skill) for any issue that touches more than a single file or spans more than one trivial edit. Keeping the main checkout clean lets parallel work, PR review, and vault sync coexist without branch-swap churn — and it matters more when you were **delegated** the issue by another agent, because the delegating agent may still be holding the main checkout open.
+
+Skip the worktree only for the simplest issues: a one-line doc tweak, a single-field schema comment, or a typo fix. If in doubt, create the worktree — the cost is low and it's easy to exit cleanly at the end.
+
 ---
 
 ## Plugin commands
