@@ -28,7 +28,23 @@ import {
 import { resolveRepoPath } from "./repoPath";
 import { writeUriResponse, type UriResponsePayload } from "./uriResponse";
 import { normalizeUriParams, collectRepeated } from "./uriParams";
-import { runResolve, type ResolveArgs, type ResolveStatus } from "./resolve";
+import { runResolve, type ResolveArgs } from "./resolve";
+import {
+  findIssueById as findIssueByIdPure,
+  resolveUriArgs as resolveUriArgsPure,
+  handleOpWorkUri as handleOpWorkUriPure,
+  handleOpAppendCommitUri as handleOpAppendCommitUriPure,
+  handleOpSetPrUri as handleOpSetPrUriPure,
+  handleOpSetScopeUri as handleOpSetScopeUriPure,
+  type UriHandlerDeps,
+} from "./uriHandlers";
+import {
+  parseWorkParams,
+  parseAppendCommitParams,
+  parseSetPrParams,
+  parseSetScopeParams,
+  parseNewParams,
+} from "./cliHandlers";
 import type { IssueEntry, LifecycleEvent } from "./types";
 import { DEFAULT_SETTINGS, mergeSettings, OpSettingsTab, type OpSettings } from "./settings";
 import { AgentDetector } from "./agentDetect";
@@ -777,11 +793,17 @@ export default class OpPlugin extends Plugin {
   }
 
   private resolveByIdOrThrow(id: string): IssueEntry {
-    const entry = this.store
-      .issues()
-      .find((e) => e.id === id);
-    if (!entry) throw new Error(`Issue not found: ${id}`);
-    return entry;
+    return findIssueByIdPure(this.store, id);
+  }
+
+  private uriDeps(): UriHandlerDeps {
+    return {
+      store: this.store,
+      workIssue: (entry) => workIssue(this.app, this.store, entry),
+      appendCommit: (entry, input) => appendCommit(this.app, entry, input),
+      setPr: (entry, url) => setPr(this.app, entry, url),
+      setScope: (entry, scope) => setScope(this.app, entry, scope),
+    };
   }
 
   private runUri(
@@ -804,75 +826,24 @@ export default class OpPlugin extends Plugin {
       });
   }
 
-  private async handleOpWorkUri(params: Record<string, string>): Promise<UriResponsePayload> {
-    const id = params.id ?? params.issue;
-    if (!id) throw new Error("op-work URI requires id");
-    const entry = this.resolveByIdOrThrow(id);
-    const res = await workIssue(this.app, this.store, entry);
-    return {
-      ok: true,
-      command: "op-work",
-      issueId: res.issueId,
-      path: res.path,
-      previousStatus: res.previousStatus,
-      createdTaskPath: res.createdTaskPath,
-    };
+  private handleOpWorkUri(params: Record<string, string>): Promise<UriResponsePayload> {
+    return handleOpWorkUriPure(this.uriDeps(), params);
   }
 
-  private async handleOpAppendCommitUri(
+  private handleOpAppendCommitUri(
     params: Record<string, string>,
   ): Promise<UriResponsePayload> {
-    const id = params.id ?? params.issue;
-    const sha = params.sha;
-    const subject = params.subject;
-    if (!id || !sha || !subject) {
-      throw new Error("op-append-commit URI requires id, sha, subject");
-    }
-    const entry = this.resolveByIdOrThrow(id);
-    const res = await appendCommit(this.app, entry, { sha, subject });
-    return {
-      ok: true,
-      command: "op-append-commit",
-      issueId: res.issueId,
-      path: res.path,
-      entry: res.entry,
-      added: res.added,
-      commits: res.commits,
-    };
+    return handleOpAppendCommitUriPure(this.uriDeps(), params);
   }
 
-  private async handleOpSetPrUri(params: Record<string, string>): Promise<UriResponsePayload> {
-    const id = params.id ?? params.issue;
-    const url = params.url ?? params.pr;
-    if (!id || !url) throw new Error("op-set-pr URI requires id and url");
-    const entry = this.resolveByIdOrThrow(id);
-    const res = await setPr(this.app, entry, url);
-    return {
-      ok: true,
-      command: "op-set-pr",
-      issueId: res.issueId,
-      path: res.path,
-      pr: res.pr,
-    };
+  private handleOpSetPrUri(params: Record<string, string>): Promise<UriResponsePayload> {
+    return handleOpSetPrUriPure(this.uriDeps(), params);
   }
 
-  private async handleOpSetScopeUri(
+  private handleOpSetScopeUri(
     params: Record<string, string>,
   ): Promise<UriResponsePayload> {
-    const id = params.id ?? params.issue;
-    const scope = params.scope;
-    if (!id || typeof scope !== "string") {
-      throw new Error("op-set-scope URI requires id and scope");
-    }
-    const entry = this.resolveByIdOrThrow(id);
-    const res = await setScope(this.app, entry, scope);
-    return {
-      ok: true,
-      command: "op-set-scope",
-      issueId: res.issueId,
-      path: res.path,
-      replaced: res.replaced,
-    };
+    return handleOpSetScopeUriPure(this.uriDeps(), params);
   }
 
   private activeIssuePath(): string | undefined {
@@ -899,18 +870,7 @@ export default class OpPlugin extends Plugin {
   }
 
   private resolveUriArgs(params: Record<string, string>): ResolveArgs {
-    const status =
-      params.status === "wontfix"
-        ? ("wontfix" as ResolveStatus)
-        : params.status === "resolved"
-          ? ("resolved" as ResolveStatus)
-          : undefined;
-    return {
-      issue: params.issue || params.id || undefined,
-      path: params.path || undefined,
-      status,
-      confirmed: params.confirmed === "1" || params.confirmed === "true",
-    };
+    return resolveUriArgsPure(params);
   }
 
   private async runResolveCommand(args: ResolveArgs): Promise<void> {
@@ -1001,11 +961,9 @@ export default class OpPlugin extends Plugin {
   private async handleOpNewCli(params: Record<string, string>): Promise<string> {
     const command = "op-new";
     try {
-      const slug = params.project ?? params.slug;
-      const title = params.title;
-      if (!slug) return `${command} failed: --project is required`;
-      if (!title) return `${command} failed: --title is required`;
-      const priority = (params.priority as Priority | undefined) ?? "med";
+      const parsed = parseNewParams(params);
+      if (!parsed.ok) return parsed.error;
+      const { slug, title, priority } = parsed.value;
       const scope = collectRepeated(params, "scope");
       const res = await createIssue(this.app, this.store, { slug, title, priority, scope });
       if (this.settings.github.autoCreateGithubIssue) {
@@ -1031,9 +989,9 @@ export default class OpPlugin extends Plugin {
   private async handleOpWorkCli(params: Record<string, string>): Promise<string> {
     const command = "op-work";
     try {
-      const id = params.issue ?? params.id;
-      if (!id) return `${command} failed: --issue is required`;
-      const entry = this.resolveByIdOrThrow(id);
+      const parsed = parseWorkParams(params);
+      if (!parsed.ok) return parsed.error;
+      const entry = this.resolveByIdOrThrow(parsed.value.id);
       const res = await workIssue(this.app, this.store, entry);
       await writeUriResponse(this.app, {
         ok: true,
@@ -1056,12 +1014,9 @@ export default class OpPlugin extends Plugin {
   private async handleOpAppendCommitCli(params: Record<string, string>): Promise<string> {
     const command = "op-append-commit";
     try {
-      const id = params.issue ?? params.id;
-      const sha = params.sha;
-      const subject = params.subject;
-      if (!id || !sha || !subject) {
-        return `${command} failed: --issue, --sha, --subject all required`;
-      }
+      const parsed = parseAppendCommitParams(params);
+      if (!parsed.ok) return parsed.error;
+      const { id, sha, subject } = parsed.value;
       const entry = this.resolveByIdOrThrow(id);
       const res = await appendCommit(this.app, entry, { sha, subject });
       await writeUriResponse(this.app, {
@@ -1087,9 +1042,9 @@ export default class OpPlugin extends Plugin {
   private async handleOpSetPrCli(params: Record<string, string>): Promise<string> {
     const command = "op-set-pr";
     try {
-      const id = params.issue ?? params.id;
-      const url = params.url ?? params.pr;
-      if (!id || !url) return `${command} failed: --issue and --url required`;
+      const parsed = parseSetPrParams(params);
+      if (!parsed.ok) return parsed.error;
+      const { id, url } = parsed.value;
       const entry = this.resolveByIdOrThrow(id);
       const res = await setPr(this.app, entry, url);
       await writeUriResponse(this.app, {
@@ -1111,11 +1066,9 @@ export default class OpPlugin extends Plugin {
   private async handleOpSetScopeCli(params: Record<string, string>): Promise<string> {
     const command = "op-set-scope";
     try {
-      const id = params.issue ?? params.id;
-      const scope = params.scope;
-      if (!id || typeof scope !== "string") {
-        return `${command} failed: --issue and --scope required`;
-      }
+      const parsed = parseSetScopeParams(params);
+      if (!parsed.ok) return parsed.error;
+      const { id, scope } = parsed.value;
       const entry = this.resolveByIdOrThrow(id);
       const res = await setScope(this.app, entry, scope);
       await writeUriResponse(this.app, {
