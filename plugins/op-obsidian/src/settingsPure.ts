@@ -31,6 +31,13 @@ export interface AgentsSettings {
   enforceWorktree: boolean;
 }
 
+// OP-101: flips the iTerm driver between the legacy AppleScript implementation
+// (default) and the new WebSocket+protobuf client. Default-off through Step 3;
+// flipped default-on in Step 4 after a soak.
+export interface ITermSettings {
+  useWebSocketClient: boolean;
+}
+
 export interface OpSettings {
   defaultAgent: AgentId;
   alwaysPick: boolean;
@@ -43,6 +50,7 @@ export interface OpSettings {
   view: ViewSettings;
   github: GithubSettings;
   agents: AgentsSettings;
+  iterm: ITermSettings;
   orchestrator: OrchestratorSettings;
   orchestratorState: RegistryData;
 }
@@ -73,6 +81,9 @@ export const DEFAULT_SETTINGS: OpSettings = {
   },
   agents: {
     enforceWorktree: false,
+  },
+  iterm: {
+    useWebSocketClient: false,
   },
   orchestrator: {
     enabled: false,
@@ -144,6 +155,12 @@ export function mergeSettings(loaded: unknown): OpSettings {
     const a = l.agents as Partial<AgentsSettings>;
     if (typeof a.enforceWorktree === "boolean") {
       base.agents.enforceWorktree = a.enforceWorktree;
+    }
+  }
+  if (l.iterm && typeof l.iterm === "object") {
+    const i = l.iterm as Partial<ITermSettings>;
+    if (typeof i.useWebSocketClient === "boolean") {
+      base.iterm.useWebSocketClient = i.useWebSocketClient;
     }
   }
   return base;

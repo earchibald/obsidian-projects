@@ -7,6 +7,7 @@ import { promisify } from "util";
 import { LAYOUTS, type LayoutId } from "./layout/layouts";
 import type { RegistryData, SurfaceRef, WindowState } from "./layout/registry";
 import { activeWindow, addWindow, assignSurface } from "./layout/registry";
+import type { OpSettings } from "./settingsPure";
 import {
   createWindow,
   selectSession,
@@ -14,7 +15,7 @@ import {
   setSessionName,
   setWindowName,
   splitSession,
-} from "./iterm/applescript";
+} from "./iterm/driver";
 import { buildPrepScript, tmuxWindowName } from "./terminalLaunch";
 
 const pExecFile = promisify(execFile);
@@ -64,18 +65,19 @@ export interface RegistryIO {
 
 export async function orchestrateLaunch(
   args: OrchestrateArgs,
-  settings: OrchestratorSettings,
+  opSettings: OpSettings,
   registry: RegistryIO,
 ): Promise<OrchestrateResult> {
+  const settings = opSettings.orchestrator;
   const reg = registry.get();
 
   // Re-launching an existing issue: if the session still exists in iTerm,
   // just select it. Otherwise fall through to fresh assignment — the user
   // likely closed the pane, and the issueId → session mapping is stale.
   const existing = reg.surfaces[args.issueId];
-  if (existing && (await sessionExists(existing.sessionId))) {
-    await selectSession(existing.sessionId);
-    await setSessionName(existing.sessionId, args.issueId);
+  if (existing && (await sessionExists(opSettings, existing.sessionId))) {
+    await selectSession(opSettings, existing.sessionId);
+    await setSessionName(opSettings, existing.sessionId, args.issueId);
     // tmux window still owns the agent process; the pane just reattaches.
     const scriptPath = await writeViewScript({
       args,
@@ -104,7 +106,9 @@ export async function orchestrateLaunch(
   // discard the whole window when every cell is gone.
   let win = activeWindow(reg);
   while (win) {
-    const anyAlive = await pruneDeadSessionSlots(reg, win);
+    const anyAlive = await pruneDeadSessionSlots(reg, win, (sid) =>
+      sessionExists(opSettings, sid),
+    );
     if (!anyAlive) {
       pruneWindow(reg, win.windowId);
       win = activeWindow(reg);
@@ -156,8 +160,8 @@ export async function orchestrateLaunch(
       tmuxWindow: windowName,
     });
 
-    const sessionId = await splitSession(parentId, op.dir, quoteForBash(viewScript));
-    await setSessionName(sessionId, args.issueId);
+    const sessionId = await splitSession(opSettings, parentId, op.dir, quoteForBash(viewScript));
+    await setSessionName(opSettings, sessionId, args.issueId);
     win.sessionIds[nextCellIndex] = sessionId;
 
     const ref: SurfaceRef = {
@@ -187,9 +191,9 @@ export async function orchestrateLaunch(
 
   await ensureAgentWindow({ args, tmuxSession, windowName });
   const viewScript = await writeViewScript({ args, tmuxSession, tmuxWindow: windowName });
-  const { windowId, sessionId } = await createWindow(quoteForBash(viewScript));
-  await setWindowName(windowId, tmuxSession);
-  await setSessionName(sessionId, args.issueId);
+  const { windowId, sessionId } = await createWindow(opSettings, quoteForBash(viewScript));
+  await setWindowName(opSettings, windowId, tmuxSession);
+  await setSessionName(opSettings, sessionId, args.issueId);
 
   const newWin: WindowState = {
     windowId,
@@ -330,7 +334,7 @@ async function writeAgentInnerScript(args: OrchestrateArgs): Promise<string> {
 export async function pruneDeadSessionSlots(
   reg: RegistryData,
   win: WindowState,
-  exists: (sessionId: string) => Promise<boolean> = sessionExists,
+  exists: (sessionId: string) => Promise<boolean>,
 ): Promise<boolean> {
   const alive: string[] = [];
   for (let i = 0; i < win.sessionIds.length; i++) {

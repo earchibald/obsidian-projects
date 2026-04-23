@@ -4,7 +4,7 @@ import { Notice } from "obsidian";
 
 import type { OpSettings } from "./settings";
 import { SHARED_TMUX_SESSION, tmuxWindowName } from "./terminalLaunch";
-import { selectSession, sessionExists } from "./iterm/applescript";
+import { selectSession, sessionExists } from "./iterm/driver";
 
 const pExecFile = promisify(execFile);
 
@@ -16,8 +16,8 @@ export async function revealAgentSession(
   // pane still exists, just select it.
   const surface = settings.orchestratorState?.surfaces?.[issueId];
   if (surface) {
-    if (await sessionExists(surface.sessionId)) {
-      await selectSession(surface.sessionId);
+    if (await sessionExists(settings, surface.sessionId)) {
+      await selectSession(settings, surface.sessionId);
       return;
     }
   }
