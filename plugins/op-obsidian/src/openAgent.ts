@@ -11,6 +11,7 @@ import {
   mergeProfile,
 } from "./agentProfiles";
 import { buildPrompt } from "./promptBuild";
+import { workIssue } from "./workIssue";
 import { resolveWorkingDir } from "./workingDir";
 import { launchInTerminal } from "./terminalLaunch";
 import type { AgentDetector } from "./agentDetect";
@@ -66,6 +67,20 @@ export async function openAgent(
   // flow clears it on issue close, and the SessionEnd hook clears it on
   // genuine session exit — both still apply.
   await recordAgentOnIssue(app, args.entry.path, agentId);
+
+  // OP-93: flip status to in-progress and seed the TASKS note here, so the
+  // agent inherits a started issue. Auto-mode agents otherwise often skipped
+  // op-work and jumped open → resolved, leaving no in-progress trail. Plan
+  // mode is read-only by contract — leave the issue untouched.
+  if (mode === "work" && args.entry.status !== "resolved" && args.entry.status !== "wontfix") {
+    try {
+      await workIssue(app, store, args.entry);
+      args.entry.status = "in-progress";
+    } catch (err) {
+      console.error("[op-obsidian] op-open-agent: pre-launch op-work failed", err);
+      new Notice(`op: failed to mark ${args.entry.id} in-progress before launch — agent should run op-work itself`);
+    }
+  }
 
   const vaultBasePath = getVaultBasePath(app);
   const prompt = await buildPrompt(app, store, {
