@@ -94,6 +94,13 @@ export async function setSessionName(sessionId: string, name: string): Promise<v
 // Set the iTerm window's display name. Shown in the window title bar above
 // the tab strip; useful for distinguishing the orchestrator's per-tmux-session
 // windows (op-agents-1, op-agents-2, ...).
+//
+// iTerm2's AppleScript dictionary treats `name of window` as read-only in
+// recent builds — attempting to set it raises error -10006 ("Can't set name
+// of window"). We still issue the command (older/alternate builds accept it),
+// but swallow the failure: the window titlebar falls back to the current
+// session's name, which the orchestrator sets via setSessionName right after
+// this call, so the UX degrades gracefully.
 export async function setWindowName(windowId: string, name: string): Promise<void> {
   const script = [
     'tell application "iTerm2"',
@@ -105,7 +112,14 @@ export async function setWindowName(windowId: string, name: string): Promise<voi
     "  end repeat",
     "end tell",
   ].join("\n");
-  await runOsa(script);
+  try {
+    await runOsa(script);
+  } catch (err) {
+    // Best-effort — decorative only. Don't fail op-open-agent over a titlebar.
+    console.warn(
+      `[op-obsidian] setWindowName best-effort failed (window=${windowId} name=${JSON.stringify(name)}): ${err instanceof Error ? err.message.split("\n")[0] : String(err)}`,
+    );
+  }
 }
 
 export async function selectSession(sessionId: string): Promise<void> {
