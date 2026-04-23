@@ -51,6 +51,12 @@ export async function openAgent(
     return undefined;
   }
 
+  // Write fm.agent up front so the sidebar badge reflects the user's intent
+  // even if the terminal/orchestrator launch later throws (OP-71). The resolve
+  // flow clears it on issue close, and the SessionEnd hook clears it on
+  // genuine session exit — both still apply.
+  await recordAgentOnIssue(app, args.entry.path, agentId);
+
   const vaultBasePath = getVaultBasePath(app);
   const prompt = await buildPrompt(app, store, {
     entry: args.entry,
@@ -80,8 +86,6 @@ export async function openAgent(
       },
     },
   });
-
-  await recordAgentOnIssue(app, args.entry.path, agentId);
 
   return {
     issueId: args.entry.id,
