@@ -38,6 +38,7 @@ All `op-*` commands take `key=value` arguments (not `--flag`). Each prints a one
 | `op-work` | `issue` | — | sets `status: in-progress`; creates the initial TASKS note |
 | `op-append-commit` | `issue`, `sha`, `subject` | — | idempotent append to issue's `commits:` list |
 | `op-set-pr` | `issue`, `url` | — | sets scalar `pr:` |
+| `op-set-scope` | `issue`, `scope` | — | replaces the issue body's `## Scope` section (appends it if missing). Payload is markdown; must not contain H2 (`## …`) headings. This is the one mutation the plan-mode agent is allowed, so it can persist a refined plan back to the issue note. |
 | `op-resolve` (or `op-close-current-issue`) | `issue` (or `path`) | `status=wontfix` | sets `status: resolved`, writes `resolved: <today>`, moves into `RESOLVED ISSUES/`, trashes linked TASKS — atomically. When `closeGithubIssueOnResolve` is on and the issue has a `github_issue:` URL, also runs `gh issue close` on it; the JSON response reports `githubClosed` / `githubCloseError` |
 
 `scope` is a single value containing newline-separated bullets.
