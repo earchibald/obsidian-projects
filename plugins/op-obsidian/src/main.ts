@@ -19,6 +19,7 @@ import {
 import { scaffoldProject, type ScaffoldProjectResult } from "./scaffoldProject";
 import { workIssue } from "./workIssue";
 import { appendCommit, setPr } from "./commits";
+import { setScope } from "./setScope";
 import {
   closeGithubIssue,
   createGithubIssue,
@@ -311,6 +312,10 @@ export default class OpPlugin extends Plugin {
       this.runUri("op-set-pr", normalizeUriParams(params), (p) => this.handleOpSetPrUri(p));
     });
 
+    this.registerObsidianProtocolHandler("op-set-scope", (params) => {
+      this.runUri("op-set-scope", normalizeUriParams(params), (p) => this.handleOpSetScopeUri(p));
+    });
+
     this.registerObsidianProtocolHandler("op-resolve", (params) => {
       this.runUri("op-resolve", normalizeUriParams(params), (p) =>
         this.handleOpResolveUri(p, "op-resolve"),
@@ -426,6 +431,19 @@ export default class OpPlugin extends Plugin {
         url: { value: "<url>", description: "PR URL" },
       },
       (params) => this.handleOpSetPrCli(params),
+    );
+
+    this.registerCliHandler(
+      "op-set-scope",
+      "Replace the body's `## Scope` section on an issue (or append if missing).",
+      {
+        issue: { value: "<id>", description: "Issue id (e.g. OP-34)" },
+        scope: {
+          value: "<markdown>",
+          description: "New Scope body. Must not contain H2 headings (`## ...`).",
+        },
+      },
+      (params) => this.handleOpSetScopeCli(params),
     );
   }
 
@@ -798,6 +816,25 @@ export default class OpPlugin extends Plugin {
     };
   }
 
+  private async handleOpSetScopeUri(
+    params: Record<string, string>,
+  ): Promise<UriResponsePayload> {
+    const id = params.id ?? params.issue;
+    const scope = params.scope;
+    if (!id || typeof scope !== "string") {
+      throw new Error("op-set-scope URI requires id and scope");
+    }
+    const entry = this.resolveByIdOrThrow(id);
+    const res = await setScope(this.app, entry, scope);
+    return {
+      ok: true,
+      command: "op-set-scope",
+      issueId: res.issueId,
+      path: res.path,
+      replaced: res.replaced,
+    };
+  }
+
   private activeIssuePath(): string | undefined {
     const f = this.app.workspace.getActiveFile();
     if (!f) return undefined;
@@ -1023,6 +1060,32 @@ export default class OpPlugin extends Plugin {
         pr: res.pr,
       });
       return `${command}: ${res.issueId} pr=${res.pr}`;
+    } catch (err: any) {
+      const msg = err?.message ?? String(err);
+      console.error("[op-obsidian]", command, err);
+      await writeUriResponse(this.app, { ok: false, command, error: msg });
+      return `${command} failed: ${msg}`;
+    }
+  }
+
+  private async handleOpSetScopeCli(params: Record<string, string>): Promise<string> {
+    const command = "op-set-scope";
+    try {
+      const id = params.issue ?? params.id;
+      const scope = params.scope;
+      if (!id || typeof scope !== "string") {
+        return `${command} failed: --issue and --scope required`;
+      }
+      const entry = this.resolveByIdOrThrow(id);
+      const res = await setScope(this.app, entry, scope);
+      await writeUriResponse(this.app, {
+        ok: true,
+        command,
+        issueId: res.issueId,
+        path: res.path,
+        replaced: res.replaced,
+      });
+      return `${command}: ${res.issueId} scope ${res.replaced ? "replaced" : "appended"}`;
     } catch (err: any) {
       const msg = err?.message ?? String(err);
       console.error("[op-obsidian]", command, err);
