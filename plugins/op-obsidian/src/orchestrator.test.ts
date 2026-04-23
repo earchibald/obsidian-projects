@@ -44,6 +44,26 @@ describe("pruneDeadSessionSlots", () => {
     });
   });
 
+  it("compacts alive sessions to the front when cell 0 is dead", async () => {
+    const win: WindowState = {
+      windowId: "w1",
+      layoutId: "2x2",
+      sessionIds: ["dead", undefined, "alive", undefined],
+      tmuxSession: "op-agents-1",
+    };
+    const reg = makeReg(win, {
+      "OP-A": { sessionId: "dead", windowId: "w1", cellIndex: 0, layoutId: "2x2", tmuxWindow: "OP-A" },
+      "OP-B": { sessionId: "alive", windowId: "w1", cellIndex: 2, layoutId: "2x2", tmuxWindow: "OP-B" },
+    });
+
+    const anyAlive = await pruneDeadSessionSlots(reg, win, async (id) => id === "alive");
+
+    expect(anyAlive).toBe(true);
+    expect(win.sessionIds).toEqual(["alive", undefined, undefined, undefined]);
+    expect(reg.surfaces["OP-B"].cellIndex).toBe(0);
+    expect(reg.surfaces["OP-A"]).toBeUndefined();
+  });
+
   it("reports no-alive when every slot is dead", async () => {
     const win: WindowState = {
       windowId: "w1",
