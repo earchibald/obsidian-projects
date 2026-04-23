@@ -15,6 +15,8 @@ obsidian eval code='({enabled: app.plugins.enabledPlugins.has("op-obsidian"), ve
 
 If the plugin is missing or disabled, **stop and ask the user to install/enable it** rather than improvising with raw `obsidian` CLI primitives — the plugin owns filename sanitization, ID numbering, frontmatter shape, atomic move-and-trash on resolve, and the JSON response payload. For emergencies where the user can't enable it, [`reference/cli-gotchas.md`](reference/cli-gotchas.md) documents the raw-CLI fallbacks (including the read-append-rewrite recipe for appending to `commits:` without `op-append-commit`).
 
+**Delegating vault/CLI work.** This plugin ships an `obsidian-ops-specialist` subagent. When you're a coding agent working an issue and the next step is a raw Obsidian CLI call, a vault introspection, or a mutation the plugin owns, prefer delegating it via the Agent tool (`subagent_type: obsidian-ops-specialist`) over running the CLI yourself. The specialist knows the CLI gotchas, the op-obsidian dispatch surface, and keeps vault-side behavior consistent with this skill's lifecycle rules. You still own the skill's invariants — the specialist executes, you orchestrate.
+
 Run `obsidian vault` once to learn the active vault path; cache it.
 
 ---
