@@ -4,9 +4,9 @@ import { getTransport, type ConnectionOptions } from "./connection";
 
 // Native TS WebSocket client for iTerm2's API, replacement for applescript.ts.
 //
-// OP-101 Step 3: all write ops + composites ported. The driver still
-// dispatches on `useWebSocketClient`; AppleScript remains as the default until
-// Step 4 flips it.
+// OP-101 Step 4: WebSocket is now the default; AppleScript remains as a
+// fallback while `useWebSocketClient` is still wired so users can opt out
+// during the soak. Step 5 deletes the AppleScript path.
 
 export interface CreateWindowResult {
   windowId: string;
