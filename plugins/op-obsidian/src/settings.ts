@@ -8,6 +8,8 @@ import { LAYOUT_IDS, type LayoutId } from "./layout/layouts";
 import { emptyRegistry } from "./layout/registry";
 import { validateOverlay } from "./overlayValidate";
 import { detectTmux } from "./tmuxDetect";
+import { userError } from "./userError";
+import { execFileSync } from "child_process";
 import {
   EXTRA_PREAMBLE_MAX,
   type SidebarTab,
@@ -136,16 +138,25 @@ export class OpSettingsTab extends PluginSettingTab {
             try {
               parsed = JSON.parse(raw);
             } catch (err: any) {
-              new Notice(`${id} overlay: invalid JSON — ${err?.message ?? err}`);
+              userError(
+                `${id} overlay: invalid JSON — ${err?.message ?? err}`,
+                "Fix the JSON in the textarea and click away to retry; the overlay was not saved.",
+              );
               return;
             }
             const result = validateOverlay(parsed);
             if (!result.ok || !result.overlay) {
-              new Notice(`${id} overlay: ${result.errors.join("; ")}`);
+              userError(
+                `${id} overlay: ${result.errors.join("; ")}`,
+                "Allowed keys: binary, launchFlags (string[]), promptPreamble, skillTrigger, label.",
+              );
               return;
             }
             if (result.warnings.length) {
-              new Notice(`${id} overlay saved with warnings: ${result.warnings.join("; ")}`);
+              userError(
+                `${id} overlay saved with warnings: ${result.warnings.join("; ")}`,
+                "Unknown keys were dropped. Double-check the key names in the description above.",
+              );
             }
             s.agentOverlays[id] = result.overlay;
             await this.plugin.saveSettings();
@@ -358,6 +369,31 @@ export class OpSettingsTab extends PluginSettingTab {
           await this.plugin.saveSettings();
           tmuxSetting.setDesc(
             `Absolute path to the tmux executable. Obsidian's PATH omits /opt/homebrew/bin, so bare \`tmux\` fails on Apple Silicon brew installs. ${tmuxStatus(trimmed)}`,
+          );
+        }
+      }),
+    );
+    tmuxSetting.addButton((b) =>
+      b.setButtonText("Test").onClick(() => {
+        const p = s.tmuxBinary;
+        if (!p) {
+          userError("op: no tmux binary configured", "Enter an absolute path, or click Auto-detect.");
+          return;
+        }
+        if (!existsSync(p)) {
+          userError(
+            `op: tmux binary not found at ${p}`,
+            "Check the path, install tmux (e.g. `brew install tmux`), or click Auto-detect.",
+          );
+          return;
+        }
+        try {
+          const out = execFileSync(p, ["-V"], { encoding: "utf8", timeout: 3000 }).trim();
+          new Notice(`op: tmux OK — ${out}`, 6000);
+        } catch (err: any) {
+          userError(
+            `op: tmux at ${p} failed to run — ${err?.message ?? err}`,
+            "The file exists but doesn't execute. Verify permissions or re-install tmux.",
           );
         }
       }),

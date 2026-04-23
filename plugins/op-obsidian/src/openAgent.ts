@@ -16,6 +16,7 @@ import { resolveWorkingDir } from "./workingDir";
 import { launchInTerminal } from "./terminalLaunch";
 import type { AgentDetector } from "./agentDetect";
 import { AgentPickerModal } from "./modals";
+import { userError } from "./userError";
 
 /** Arguments accepted by {@link openAgent}. */
 export interface OpenAgentArgs {
@@ -88,7 +89,10 @@ export async function openAgent(
 
   const wd = await resolveWorkingDir(app, settings, args.entry, saveSettings);
   if (!wd) {
-    new Notice("op: working directory required — launch cancelled");
+    userError(
+      `op: working directory required for ${args.entry.project} — launch cancelled`,
+      `Set \`repo_path:\` in Projects/${args.entry.project}/STATUS.md, or re-open the agent and fill in the working-dir prompt.`,
+    );
     return undefined;
   }
 
