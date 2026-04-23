@@ -2,7 +2,7 @@ import { App, TFile } from "obsidian";
 import { execFile } from "child_process";
 import { promisify } from "util";
 import type { IssueEntry } from "./types";
-import { extractIssueUrl } from "./githubPure";
+import { extractIssueUrl, isAlreadyClosedError } from "./githubPure";
 
 const pExecFile = promisify(execFile);
 
@@ -27,12 +27,42 @@ export async function createGithubIssue(input: CreateGithubIssueInput): Promise<
   }
 }
 
+export type GithubIssueState = "OPEN" | "CLOSED" | "UNKNOWN";
+
+export async function getIssueState(repoPath: string, url: string): Promise<GithubIssueState> {
+  const env = augmentedPathEnv();
+  try {
+    const { stdout } = await pExecFile(
+      "gh",
+      ["issue", "view", url, "--json", "state"],
+      { cwd: repoPath, env },
+    );
+    const parsed = JSON.parse(stdout) as { state?: string };
+    const state = (parsed?.state ?? "").toUpperCase();
+    if (state === "OPEN" || state === "CLOSED") return state;
+    return "UNKNOWN";
+  } catch {
+    return "UNKNOWN";
+  }
+}
+
+// Idempotent: safe to call repeatedly. Two layered defenses against gh's
+// GraphQL `closeIssue` mutation rejecting already-closed issues with
+// "Could not close the issue. (closeIssue)":
+//   1. pre-check live state and short-circuit if already CLOSED;
+//   2. tolerate that specific error as a no-op race — re-query state and
+//      swallow if CLOSED, else re-throw.
+// Real failures (auth, network, repo not found) still throw.
 export async function closeGithubIssue(repoPath: string, url: string): Promise<void> {
+  if ((await getIssueState(repoPath, url)) === "CLOSED") return;
   const env = augmentedPathEnv();
   try {
     await pExecFile("gh", ["issue", "close", url], { cwd: repoPath, env });
   } catch (err: any) {
     const stderr = typeof err?.stderr === "string" ? err.stderr.trim() : "";
+    if (isAlreadyClosedError(stderr)) {
+      if ((await getIssueState(repoPath, url)) === "CLOSED") return;
+    }
     const msg = stderr || err?.message || String(err);
     throw new Error(`gh issue close failed: ${msg}`);
   }
