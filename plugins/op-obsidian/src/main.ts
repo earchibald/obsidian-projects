@@ -55,6 +55,8 @@ import { installAgentHooks, type HookInstallResult } from "./agentHooks";
 import { userError } from "./userError";
 import { cleanupAgentSessions } from "./agentSessionCleanup";
 import { detectTmux } from "./tmuxDetect";
+import { configureClient } from "./iterm/client";
+import { closeTransport } from "./iterm/connection";
 import { existsSync } from "fs";
 
 /**
@@ -102,6 +104,10 @@ export default class OpPlugin extends Plugin {
    */
   async onload(): Promise<void> {
     this.settings = mergeSettings(await this.loadData());
+    // OP-101: configure the iTerm WebSocket client with the plugin version so
+    // its handshake includes a usable library-version header. The client only
+    // opens the socket lazily on first call; no connection is made here.
+    configureClient({ version: this.manifest.version });
     // Auto-detect tmux if the configured path doesn't exist (stale default after
     // a fresh install on a non-Apple-Silicon machine, or brew relocated).
     if (!existsSync(this.settings.tmuxBinary)) {
@@ -512,6 +518,9 @@ export default class OpPlugin extends Plugin {
    */
   onunload(): void {
     void this.bus?.close();
+    // OP-101: drop any open iTerm WebSocket so plugin reload doesn't leak the
+    // socket. Safe no-op when the WS path was never used in this session.
+    closeTransport();
   }
 
   private async cleanupAgentStateFor(issueIds: string[]): Promise<void> {
