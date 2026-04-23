@@ -102,7 +102,8 @@ export class NewIssueModal extends Modal {
     );
 
     new Setting(contentEl)
-      .setName("Scope (one bullet per line, optional)")
+      .setName("Scope (optional)")
+      .setDesc("One bullet per line. e.g. Wire the command / Write unit tests.")
       .addTextArea((t) => {
         t.setPlaceholder("e.g.\nWire the command\nWrite unit tests");
         t.onChange((v) => (this.scopeRaw = v));
@@ -112,7 +113,7 @@ export class NewIssueModal extends Modal {
 
     const ghDesc = this.opts.autoCreateGithubIssue
       ? "Leave blank to auto-create a GitHub issue via `gh`."
-      : "Optional — paste an existing GitHub issue URL to link.";
+      : "Paste an existing GitHub issue URL to link.";
     new Setting(contentEl)
       .setName("GitHub issue URL (optional)")
       .setDesc(ghDesc)
@@ -125,7 +126,7 @@ export class NewIssueModal extends Modal {
     new Setting(contentEl)
       .addButton((b) =>
         b
-          .setButtonText("Create")
+          .setButtonText("Create issue")
           .setCta()
           .onClick(() => {
             if (!this.title.trim()) {
@@ -176,17 +177,23 @@ export class AppendCommitModal extends Modal {
     contentEl.empty();
     contentEl.createEl("h2", { text: `Append commit to ${this.issue.id}` });
 
-    new Setting(contentEl).setName("SHA (7–40 hex)").addText((t) =>
-      t.setPlaceholder("abc1234").onChange((v) => (this.sha = v)),
-    );
-    new Setting(contentEl).setName("Subject").addText((t) =>
-      t.setPlaceholder("commit message subject").onChange((v) => (this.subject = v)),
-    );
+    new Setting(contentEl)
+      .setName("SHA")
+      .setDesc("7–40 hex characters, e.g. abc1234")
+      .addText((t) =>
+        t.setPlaceholder("abc1234").onChange((v) => (this.sha = v)),
+      );
+    new Setting(contentEl)
+      .setName("Subject")
+      .setDesc("Commit message subject line")
+      .addText((t) =>
+        t.setPlaceholder("e.g. fix modal copy").onChange((v) => (this.subject = v)),
+      );
 
     new Setting(contentEl)
       .addButton((b) =>
         b
-          .setButtonText("Append")
+          .setButtonText("Append commit")
           .setCta()
           .onClick(() => {
             if (!this.sha.trim() || !this.subject.trim()) {
@@ -221,14 +228,17 @@ export class SetPrModal extends Modal {
     contentEl.empty();
     contentEl.createEl("h2", { text: `Set PR URL on ${this.issue.id}` });
 
-    new Setting(contentEl).setName("PR URL").addText((t) =>
-      t.setPlaceholder("https://github.com/.../pull/123").onChange((v) => (this.url = v)),
-    );
+    new Setting(contentEl)
+      .setName("PR URL")
+      .setDesc("Full GitHub pull request URL")
+      .addText((t) =>
+        t.setPlaceholder("https://github.com/.../pull/123").onChange((v) => (this.url = v)),
+      );
 
     new Setting(contentEl)
       .addButton((b) =>
         b
-          .setButtonText("Set")
+          .setButtonText("Set PR URL")
           .setCta()
           .onClick(() => {
             if (!/^https?:\/\//i.test(this.url.trim())) {
@@ -263,17 +273,20 @@ export class SetGithubIssueModal extends Modal {
     contentEl.empty();
     contentEl.createEl("h2", { text: `Set GitHub issue URL on ${this.issue.id}` });
 
-    new Setting(contentEl).setName("GitHub issue URL").addText((t) =>
-      t
-        .setPlaceholder("https://github.com/owner/repo/issues/123")
-        .setValue(this.issue.githubIssue ?? "")
-        .onChange((v) => (this.url = v)),
-    );
+    new Setting(contentEl)
+      .setName("GitHub issue URL")
+      .setDesc("Full GitHub issue URL — the plugin mirrors this issue's status to it.")
+      .addText((t) =>
+        t
+          .setPlaceholder("https://github.com/owner/repo/issues/123")
+          .setValue(this.issue.githubIssue ?? "")
+          .onChange((v) => (this.url = v)),
+      );
 
     new Setting(contentEl)
       .addButton((b) =>
         b
-          .setButtonText("Set")
+          .setButtonText("Set GitHub URL")
           .setCta()
           .onClick(() => {
             const u = this.url.trim() || (this.issue.githubIssue ?? "");
@@ -340,11 +353,15 @@ export class ScaffoldProjectModal extends Modal {
 
     new Setting(contentEl)
       .setName("Seed issue title (optional)")
+      .setDesc("If set, creates the first issue (PREFIX-1) with this title.")
       .addText((t) =>
         t.setPlaceholder("Leave blank to skip").onChange((v) => (this.seedTitle = v)),
       );
 
-    new Setting(contentEl).setName("Seed priority").addDropdown((d) =>
+    new Setting(contentEl)
+      .setName("Seed priority")
+      .setDesc("Only used when a seed title is set.")
+      .addDropdown((d) =>
       d
         .addOption("low", "low")
         .addOption("med", "med")
@@ -356,7 +373,7 @@ export class ScaffoldProjectModal extends Modal {
     new Setting(contentEl)
       .addButton((b) =>
         b
-          .setButtonText("Scaffold")
+          .setButtonText("Scaffold project")
           .setCta()
           .onClick(() => {
             const slug = this.slug.trim();
@@ -416,7 +433,7 @@ export class FindIssueModal extends Modal {
     });
 
     new Setting(contentEl)
-      .addButton((b) => b.setButtonText("Find").setCta().onClick(() => this.submit()))
+      .addButton((b) => b.setButtonText("Find issue").setCta().onClick(() => this.submit()))
       .addButton((b) => b.setButtonText("Cancel").onClick(() => this.close()));
   }
 
