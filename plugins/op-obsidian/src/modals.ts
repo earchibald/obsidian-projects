@@ -72,16 +72,22 @@ export class ProjectSuggestModal extends FuzzySuggestModal<ProjectInfo> {
   }
 }
 
+export interface NewIssueSubmitOptions {
+  launchPlan: boolean;
+  startFlow: boolean;
+}
+
 export class NewIssueModal extends Modal {
   private title = "";
   private priority: Priority = "med";
   private scopeRaw = "";
   private githubIssue = "";
+  private evaluateComplexity = false;
 
   constructor(
     app: App,
     private project: ProjectInfo,
-    private onSubmit: (input: CreateIssueInput, andPlan: boolean) => void,
+    private onSubmit: (input: CreateIssueInput, opts: NewIssueSubmitOptions) => void,
     private opts: { autoCreateGithubIssue?: boolean } = {},
   ) {
     super(app);
@@ -131,7 +137,16 @@ export class NewIssueModal extends Modal {
           .onChange((v) => (this.githubIssue = v)),
       );
 
-    const doSubmit = (andPlan: boolean): void => {
+    new Setting(contentEl)
+      .setName("Evaluate complexity (multi-agent flow)")
+      .setDesc(
+        "After creating the issue, run the op-evaluate agent headlessly to produce an `## Initial Evaluation` and classify complexity (simple/complex). Equivalent to clicking \"Create and start flow\".",
+      )
+      .addToggle((t) =>
+        t.setValue(this.evaluateComplexity).onChange((v) => (this.evaluateComplexity = v)),
+      );
+
+    const doSubmit = (opts: { launchPlan: boolean; startFlow: boolean }): void => {
       const result = validateNewIssueInput({
         title: this.title,
         scopeRaw: this.scopeRaw,
@@ -151,7 +166,7 @@ export class NewIssueModal extends Modal {
           scope: result.value.scope,
           githubIssue: result.value.githubIssue,
         },
-        andPlan,
+        opts,
       );
     };
 
@@ -160,13 +175,23 @@ export class NewIssueModal extends Modal {
         b
           .setButtonText("Create issue")
           .setCta()
-          .onClick(() => doSubmit(false)),
+          .onClick(() =>
+            doSubmit({ launchPlan: false, startFlow: this.evaluateComplexity }),
+          ),
       )
       .addButton((b) =>
         b
           .setButtonText("Create and plan")
           .setTooltip("Create the issue and launch an agent for it in PLAN MODE")
-          .onClick(() => doSubmit(true)),
+          .onClick(() => doSubmit({ launchPlan: true, startFlow: false })),
+      )
+      .addButton((b) =>
+        b
+          .setButtonText("Create and start flow")
+          .setTooltip(
+            "Create the issue, then run the op-evaluate agent headlessly to classify complexity.",
+          )
+          .onClick(() => doSubmit({ launchPlan: false, startFlow: true })),
       )
       .addButton((b) => b.setButtonText("Cancel").onClick(() => this.close()));
   }
