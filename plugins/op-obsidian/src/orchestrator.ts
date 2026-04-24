@@ -81,9 +81,9 @@ export async function orchestrateLaunch(
   // likely closed the pane, and the issueId → session mapping is stale.
   const sessionTitle = args.issueTitle && args.issueTitle.length > 0 ? args.issueTitle : args.issueId;
   const existing = reg.surfaces[args.issueId];
-  if (existing && (await sessionExists(opSettings, existing.sessionId))) {
-    await selectSession(opSettings, existing.sessionId);
-    await setSessionName(opSettings, existing.sessionId, sessionTitle);
+  if (existing && (await sessionExists(existing.sessionId))) {
+    await selectSession(existing.sessionId);
+    await setSessionName(existing.sessionId, sessionTitle);
     // tmux window still owns the agent process; the pane just reattaches.
     const scriptPath = await writeViewScript({
       args,
@@ -113,7 +113,7 @@ export async function orchestrateLaunch(
   let win = activeWindow(reg);
   while (win) {
     const anyAlive = await pruneDeadSessionSlots(reg, win, (sid) =>
-      sessionExists(opSettings, sid),
+      sessionExists(sid),
     );
     if (!anyAlive) {
       pruneWindow(reg, win.windowId);
@@ -166,8 +166,8 @@ export async function orchestrateLaunch(
       tmuxWindow: windowName,
     });
 
-    const sessionId = await splitSession(opSettings, parentId, op.dir, quoteForBash(viewScript));
-    await setSessionName(opSettings, sessionId, sessionTitle);
+    const sessionId = await splitSession(parentId, op.dir, quoteForBash(viewScript));
+    await setSessionName(sessionId, sessionTitle);
     win.sessionIds[nextCellIndex] = sessionId;
 
     const ref: SurfaceRef = {
@@ -197,9 +197,9 @@ export async function orchestrateLaunch(
 
   await ensureAgentWindow({ args, tmuxSession, windowName });
   const viewScript = await writeViewScript({ args, tmuxSession, tmuxWindow: windowName });
-  const { windowId, sessionId } = await createWindow(opSettings, quoteForBash(viewScript));
-  await setWindowName(opSettings, windowId, tmuxSession);
-  await setSessionName(opSettings, sessionId, sessionTitle);
+  const { windowId, sessionId } = await createWindow(quoteForBash(viewScript));
+  await setWindowName(windowId, tmuxSession);
+  await setSessionName(sessionId, sessionTitle);
 
   const newWin: WindowState = {
     windowId,

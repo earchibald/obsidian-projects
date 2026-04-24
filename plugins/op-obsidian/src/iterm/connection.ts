@@ -1,11 +1,18 @@
 import { ITermTransport, type TransportOptions, type WebSocketFactory } from "./transport";
-import { CookieAndKey, readApiPort, requestCookieAndKey } from "./cookie";
+import {
+  CookieAndKey,
+  clearCachedCookie,
+  loadCachedCookie,
+  readApiPort,
+  requestCookieAndKey,
+  saveCachedCookie,
+  type SafeStorageLike,
+} from "./cookie";
 
-// Module-level singleton ITermTransport. The cookie/key pair is fetched lazily
-// from iTerm via AppleScript on first use; the result is cached in-memory for
-// the life of the renderer. A persistent safeStorage cache will land in a
-// later step (the prompt is mildly annoying on every plugin reload but
-// acceptable for the dev-toggle smoke test in OP-101 Step 2).
+// Module-level singleton ITermTransport. The cookie/key pair is loaded from a
+// `safeStorage`-encrypted cache on the filesystem when available; on cache
+// miss (or on a transport auth-reject) we fall back to the one-shot
+// AppleScript prompt and re-populate the cache.
 
 const APP_NAME = "op-obsidian";
 
@@ -21,7 +28,9 @@ let connectInflight: Promise<ConnectionState> | null = null;
 export interface ConnectionOptions {
   appName?: string;
   version: string;
+  cachePath?: string;
   wsFactory?: WebSocketFactory;
+  safeStorage?: SafeStorageLike | null;
 }
 
 export async function getTransport(opts: ConnectionOptions): Promise<ITermTransport> {
@@ -51,16 +60,55 @@ export function __setStateForTests(injected: ConnectionState | null): void {
 async function openConnection(opts: ConnectionOptions): Promise<ConnectionState> {
   const appName = opts.appName ?? APP_NAME;
   const port = await readApiPort();
-  const cookie = await requestCookieAndKey(appName);
+
+  let cookie: CookieAndKey | null = null;
+  let fromCache = false;
+  if (opts.cachePath) {
+    cookie = await loadCachedCookie(opts.cachePath, opts.safeStorage);
+    fromCache = cookie !== null;
+  }
+  if (!cookie) {
+    cookie = await requestCookieAndKey(appName);
+  }
+
+  try {
+    const transport = await buildTransport({ port, cookie, appName, opts });
+    if (opts.cachePath && !fromCache) {
+      await saveCachedCookie(opts.cachePath, cookie, opts.safeStorage);
+    }
+    return { transport, cookie, port };
+  } catch (err) {
+    // Cached cookie could be decrypt-valid but iTerm-invalid (Library wipe,
+    // iTerm reinstall, user cleared API authorization). Retry once with a
+    // fresh AppleScript prompt.
+    if (fromCache) {
+      if (opts.cachePath) await clearCachedCookie(opts.cachePath);
+      const fresh = await requestCookieAndKey(appName);
+      const transport = await buildTransport({ port, cookie: fresh, appName, opts });
+      if (opts.cachePath) {
+        await saveCachedCookie(opts.cachePath, fresh, opts.safeStorage);
+      }
+      return { transport, cookie: fresh, port };
+    }
+    throw err;
+  }
+}
+
+async function buildTransport(args: {
+  port: number;
+  cookie: CookieAndKey;
+  appName: string;
+  opts: ConnectionOptions;
+}): Promise<ITermTransport> {
   const transportOpts: TransportOptions = {
-    port,
-    cookie: cookie.cookie,
-    key: cookie.key,
-    appName,
-    version: opts.version,
-    wsFactory: opts.wsFactory,
+    port: args.port,
+    cookie: args.cookie.cookie,
+    key: args.cookie.key,
+    appName: args.appName,
+    version: args.opts.version,
+    wsFactory: args.opts.wsFactory,
   };
   const transport = new ITermTransport(transportOpts);
   await transport.connect();
-  return { transport, cookie, port };
+  return transport;
 }
