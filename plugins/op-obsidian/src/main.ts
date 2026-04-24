@@ -48,7 +48,7 @@ import {
 import type { IssueEntry, LifecycleEvent } from "./types";
 import { DEFAULT_SETTINGS, mergeSettings, OpSettingsTab, type OpSettings } from "./settings";
 import { AgentDetector } from "./agentDetect";
-import { AGENT_IDS, type AgentId, type AgentLaunchMode } from "./agentProfiles";
+import { AGENT_IDS, isAgentLaunchMode, type AgentId, type AgentLaunchMode } from "./agentProfiles";
 import { openAgent, clearAgentOnIssue, resolveProfile } from "./openAgent";
 import { launchInTerminal } from "./terminalLaunch";
 import { installAgentHooks, type HookInstallResult } from "./agentHooks";
@@ -1255,7 +1255,10 @@ export default class OpPlugin extends Plugin {
         },
       );
       if (res) {
-        const modeLabel = res.mode === "plan" ? " [PLAN MODE]" : "";
+        const modeLabel =
+          res.mode === "work" || res.mode === "implement"
+            ? ""
+            : ` [${res.mode.toUpperCase()} MODE]`;
         new Notice(
           `op-open-agent: ${res.issueId} → ${res.agent}${modeLabel} in ${res.workingDir} (tmux: ${res.tmuxSession}:${res.tmuxWindow})`,
         );
@@ -1277,7 +1280,7 @@ export default class OpPlugin extends Plugin {
         ? (params.agent as AgentId)
         : undefined;
     const forcePick = params.pick === "1" || params.pick === "true";
-    const mode: AgentLaunchMode = params.mode === "plan" ? "plan" : "work";
+    const mode: AgentLaunchMode = isAgentLaunchMode(params.mode) ? params.mode : "work";
     const res = await openAgent(
       this.app,
       this.store,

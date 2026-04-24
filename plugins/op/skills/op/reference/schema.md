@@ -42,6 +42,8 @@ commits:                 # optional; short-sha + subject, appended during work
 pr:                      # optional; PR or MR URL if one exists
 github_issue:            # optional; direct mapping to a GitHub issue URL
 version:                 # optional; semver string of the release that shipped this issue, set at resolve
+flow:                    # optional; current stage of the multi-mode workflow (evaluate → planning → implementation → review → finalization → done)
+complexity:              # optional; simple | complex — simple issues may skip evaluate/review modes
 tags:
   - project/<slug>
   - issue

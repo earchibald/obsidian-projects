@@ -1,17 +1,21 @@
 import {
   PLAN_PLACEHOLDER,
+  INITIAL_EVAL_PLACEHOLDER,
   NOTES_PLACEHOLDER,
   SUMMARY_PLACEHOLDER,
 } from "./issueTemplate";
 
 const PLACEHOLDERS = new Set<string>([
   PLAN_PLACEHOLDER,
+  INITIAL_EVAL_PLACEHOLDER,
   NOTES_PLACEHOLDER,
   SUMMARY_PLACEHOLDER,
 ]);
 
 const EMPTY_COMMENTS: Record<string, string> = {
   Plan: "<!-- empty — write this section now, before making changes -->",
+  "Initial Evaluation":
+    "<!-- empty — populated by the evaluator agent (op-evaluate) before planning -->",
   Notes: "<!-- empty — append a ### <ID>.<N> block per task as work completes -->",
   Summary: "<!-- empty — write this at /op:resolve time -->",
 };
