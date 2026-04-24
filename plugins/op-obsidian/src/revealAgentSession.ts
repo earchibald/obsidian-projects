@@ -16,8 +16,8 @@ export async function revealAgentSession(
   // pane still exists, just select it.
   const surface = settings.orchestratorState?.surfaces?.[issueId];
   if (surface) {
-    if (await sessionExists(settings, surface.sessionId)) {
-      await selectSession(settings, surface.sessionId);
+    if (await sessionExists(surface.sessionId)) {
+      await selectSession(surface.sessionId);
       return;
     }
   }

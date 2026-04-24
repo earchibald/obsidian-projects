@@ -1,5 +1,7 @@
 export const PLAN_PLACEHOLDER =
   "_To be written at /op:issue time — approach, key decisions, files to touch._";
+export const INITIAL_EVAL_PLACEHOLDER =
+  "_Filled by the evaluator agent — what's being asked, complexity, where it lands, open questions._";
 export const NOTES_PLACEHOLDER =
   "_Filled as work progresses; one ### <ID>.<N> block per task._";
 export const SUMMARY_PLACEHOLDER =
@@ -42,6 +44,7 @@ export function renderIssueNote(i: RenderInput): string {
   }
   body.push("");
   body.push("## Plan", "", PLAN_PLACEHOLDER, "");
+  body.push("## Initial Evaluation", "", INITIAL_EVAL_PLACEHOLDER, "");
   body.push("## Tasks", "");
   body.push("## Notes", "", NOTES_PLACEHOLDER, "");
   body.push("## Summary", "", SUMMARY_PLACEHOLDER, "");

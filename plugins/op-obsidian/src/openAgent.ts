@@ -104,9 +104,11 @@ export async function openAgent(
 
   // OP-93: flip status to in-progress and seed the TASKS note here, so the
   // agent inherits a started issue. Auto-mode agents otherwise often skipped
-  // op-work and jumped open → resolved, leaving no in-progress trail. Plan
-  // mode is read-only by contract — leave the issue untouched.
-  if (mode === "work" && args.entry.status !== "resolved" && args.entry.status !== "wontfix") {
+  // op-work and jumped open → resolved, leaving no in-progress trail. Read-only
+  // modes (evaluate / plan / review) leave the issue untouched; finalize also
+  // flips because it owns the resolve cycle and needs the in-progress trail.
+  const flipsToInProgress = mode === "work" || mode === "implement" || mode === "finalize";
+  if (flipsToInProgress && args.entry.status !== "resolved" && args.entry.status !== "wontfix") {
     try {
       await workIssue(app, store, args.entry);
       args.entry.status = "in-progress";

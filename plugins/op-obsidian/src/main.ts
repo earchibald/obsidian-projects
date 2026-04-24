@@ -49,7 +49,7 @@ import {
 import type { IssueEntry, LifecycleEvent } from "./types";
 import { DEFAULT_SETTINGS, mergeSettings, OpSettingsTab, type OpSettings } from "./settings";
 import { AgentDetector } from "./agentDetect";
-import { AGENT_IDS, type AgentId, type AgentLaunchMode } from "./agentProfiles";
+import { AGENT_IDS, isAgentLaunchMode, type AgentId, type AgentLaunchMode } from "./agentProfiles";
 import { openAgent, clearAgentOnIssue, resolveProfile } from "./openAgent";
 import { launchInTerminal } from "./terminalLaunch";
 import { installAgentHooks, type HookInstallResult } from "./agentHooks";
@@ -112,9 +112,14 @@ export default class OpPlugin extends Plugin {
   async onload(): Promise<void> {
     this.settings = mergeSettings(await this.loadData());
     // OP-101: configure the iTerm WebSocket client with the plugin version so
-    // its handshake includes a usable library-version header. The client only
-    // opens the socket lazily on first call; no connection is made here.
-    configureClient({ version: this.manifest.version });
+    // its handshake includes a usable library-version header, and with a
+    // per-plugin cache path so the `safeStorage`-encrypted cookie survives
+    // reloads. The client only opens the socket lazily on first call; no
+    // connection is made here.
+    configureClient({
+      version: this.manifest.version,
+      cachePath: this.resolveCookieCachePath(),
+    });
     // Auto-detect tmux if the configured path doesn't exist (stale default after
     // a fresh install on a non-Apple-Silicon machine, or brew relocated).
     if (!existsSync(this.settings.tmuxBinary)) {
@@ -565,6 +570,27 @@ export default class OpPlugin extends Plugin {
     // OP-101: drop any open iTerm WebSocket so plugin reload doesn't leak the
     // socket. Safe no-op when the WS path was never used in this session.
     closeTransport();
+  }
+
+  // Resolve the absolute filesystem path used for the `safeStorage`-encrypted
+  // iTerm cookie cache: `<vault>/.obsidian/plugins/op-obsidian/.iterm-cookie`.
+  // Returns `undefined` when neither the plugin's vault-relative dir nor the
+  // adapter's base path are reachable; in that case the cache is skipped and
+  // the AppleScript prompt fires each reload (survivable fallback).
+  private resolveCookieCachePath(): string | undefined {
+    const dir = this.manifest.dir;
+    const adapter = this.app.vault.adapter as unknown as {
+      basePath?: string;
+      getBasePath?: () => string;
+    };
+    const base =
+      typeof adapter.basePath === "string"
+        ? adapter.basePath
+        : typeof adapter.getBasePath === "function"
+        ? adapter.getBasePath()
+        : undefined;
+    if (!dir || !base) return undefined;
+    return `${base}/${dir}/.iterm-cookie`;
   }
 
   private async cleanupAgentStateFor(issueIds: string[]): Promise<void> {
@@ -1303,7 +1329,10 @@ export default class OpPlugin extends Plugin {
         },
       );
       if (res) {
-        const modeLabel = res.mode === "plan" ? " [PLAN MODE]" : "";
+        const modeLabel =
+          res.mode === "work" || res.mode === "implement"
+            ? ""
+            : ` [${res.mode.toUpperCase()} MODE]`;
         new Notice(
           `op-open-agent: ${res.issueId} → ${res.agent}${modeLabel} in ${res.workingDir} (tmux: ${res.tmuxSession}:${res.tmuxWindow})`,
         );
@@ -1325,7 +1354,7 @@ export default class OpPlugin extends Plugin {
         ? (params.agent as AgentId)
         : undefined;
     const forcePick = params.pick === "1" || params.pick === "true";
-    const mode: AgentLaunchMode = params.mode === "plan" ? "plan" : "work";
+    const mode: AgentLaunchMode = isAgentLaunchMode(params.mode) ? params.mode : "work";
     const res = await openAgent(
       this.app,
       this.store,

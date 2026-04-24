@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   renderIssueNote,
   PLAN_PLACEHOLDER,
+  INITIAL_EVAL_PLACEHOLDER,
   NOTES_PLACEHOLDER,
   SUMMARY_PLACEHOLDER,
 } from "./issueTemplate";
@@ -23,10 +24,12 @@ describe("renderIssueNote", () => {
     const out = render();
     expect(out).toContain("\n## Scope\n");
     expect(out).toContain("\n## Plan\n");
+    expect(out).toContain("\n## Initial Evaluation\n");
     expect(out).toContain("\n## Tasks\n");
     expect(out).toContain("\n## Notes\n");
     expect(out).toContain("\n## Summary\n");
     expect(out).toContain(PLAN_PLACEHOLDER);
+    expect(out).toContain(INITIAL_EVAL_PLACEHOLDER);
     expect(out).toContain(NOTES_PLACEHOLDER);
     expect(out).toContain(SUMMARY_PLACEHOLDER);
     expect(out).not.toContain("- [ ]");
@@ -39,12 +42,17 @@ describe("renderIssueNote", () => {
     expect(out).toContain("- [ ] two");
   });
 
-  it("heading order is Scope → Plan → Tasks → Notes → Summary", () => {
+  it("heading order is Scope → Plan → Initial Evaluation → Tasks → Notes → Summary", () => {
     const out = render({ scope: ["a"] });
     const body = out.slice(out.indexOf("# Test"));
-    const order = ["## Scope", "## Plan", "## Tasks", "## Notes", "## Summary"].map((h) =>
-      body.indexOf(h),
-    );
+    const order = [
+      "## Scope",
+      "## Plan",
+      "## Initial Evaluation",
+      "## Tasks",
+      "## Notes",
+      "## Summary",
+    ].map((h) => body.indexOf(h));
     expect(order.every((i) => i >= 0)).toBe(true);
     expect(order).toEqual([...order].sort((a, b) => a - b));
   });
@@ -52,6 +60,9 @@ describe("renderIssueNote", () => {
   it("exact placeholder strings match the module constants", () => {
     expect(PLAN_PLACEHOLDER).toBe(
       "_To be written at /op:issue time — approach, key decisions, files to touch._",
+    );
+    expect(INITIAL_EVAL_PLACEHOLDER).toBe(
+      "_Filled by the evaluator agent — what's being asked, complexity, where it lands, open questions._",
     );
     expect(NOTES_PLACEHOLDER).toBe(
       "_Filled as work progresses; one ### <ID>.<N> block per task._",
@@ -61,14 +72,16 @@ describe("renderIssueNote", () => {
     );
   });
 
-  it("Plan/Notes/Summary appear even when no scope is supplied", () => {
+  it("Plan/Initial Evaluation/Notes/Summary appear even when no scope is supplied", () => {
     const out = render({ scope: [] });
     const planIdx = out.indexOf("## Plan");
+    const evalIdx = out.indexOf("## Initial Evaluation");
     const tasksIdx = out.indexOf("## Tasks");
     const notesIdx = out.indexOf("## Notes");
     const summaryIdx = out.indexOf("## Summary");
     expect(planIdx).toBeGreaterThan(0);
-    expect(tasksIdx).toBeGreaterThan(planIdx);
+    expect(evalIdx).toBeGreaterThan(planIdx);
+    expect(tasksIdx).toBeGreaterThan(evalIdx);
     expect(notesIdx).toBeGreaterThan(tasksIdx);
     expect(summaryIdx).toBeGreaterThan(notesIdx);
   });

@@ -9,15 +9,25 @@ const pExecFile = promisify(execFile);
 // iTerm2's Python API is actually a local WebSocket on a port iTerm writes to
 // ~/Library/Application Support/iTerm2/private/.iterm2_api_port. Authentication
 // requires a (cookie, key) pair obtained via AppleScript the first time a given
-// app-name connects; after that the pair is cached (in practice via
-// safeStorage) and reused until iTerm invalidates it.
+// app-name connects.
 //
-// This module owns the one-shot AppleScript call and the read of the port
-// file. It is the *only* remaining osascript site once the migration is done.
+// This module owns the one-shot AppleScript call, the read of the port file,
+// and the persistent `safeStorage`-encrypted cache that keeps the prompt
+// one-shot across plugin reloads. It is the only remaining osascript site.
 
 export interface CookieAndKey {
   cookie: string;
   key: string;
+}
+
+// A narrow view of Electron's `safeStorage`. Declaring our own interface keeps
+// the module free of an Electron import (Obsidian bundles the renderer runtime
+// already, and a direct `require("electron")` is only reachable via feature
+// detection — see `getSafeStorage`).
+export interface SafeStorageLike {
+  isEncryptionAvailable(): boolean;
+  encryptString(plain: string): Buffer;
+  decryptString(ciphertext: Buffer): string;
 }
 
 export const API_PORT_PATH = path.join(
@@ -59,8 +69,8 @@ export function parseCookieAndKey(raw: string): CookieAndKey {
 
 // Request a (cookie, key) pair from iTerm2 via AppleScript. This prompts the
 // user the first time an `appName` is seen; subsequent calls within the same
-// iTerm run return the cached pair. Callers are expected to persist the result
-// through safeStorage so the prompt is truly one-shot across plugin reloads.
+// iTerm run return the cached pair. `connection.ts` persists the result via
+// safeStorage so the prompt is truly one-shot across plugin reloads.
 export async function requestCookieAndKey(appName: string): Promise<CookieAndKey> {
   const script = [
     'tell application "iTerm2"',
@@ -69,6 +79,66 @@ export async function requestCookieAndKey(appName: string): Promise<CookieAndKey
   ].join("\n");
   const { stdout } = await pExecFile("/usr/bin/osascript", ["-e", script]);
   return parseCookieAndKey(stdout);
+}
+
+// Resolve Electron's `safeStorage` from the Obsidian renderer. Obsidian
+// re-exports Electron via `window.require("electron")`; `safeStorage` lives at
+// the top level on modern builds. Feature-detect and return `null` if the API
+// isn't reachable — callers degrade to re-prompting each reload.
+export function getSafeStorage(): SafeStorageLike | null {
+  try {
+    const g = globalThis as { require?: (id: string) => unknown };
+    const req = g.require;
+    if (typeof req !== "function") return null;
+    const elec = req("electron") as {
+      safeStorage?: SafeStorageLike;
+      remote?: { safeStorage?: SafeStorageLike };
+    };
+    const ss = elec?.safeStorage ?? elec?.remote?.safeStorage;
+    if (ss && typeof ss.isEncryptionAvailable === "function") return ss;
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+export async function loadCachedCookie(
+  cachePath: string,
+  safeStorage: SafeStorageLike | null = getSafeStorage(),
+): Promise<CookieAndKey | null> {
+  if (!safeStorage || !safeStorage.isEncryptionAvailable()) return null;
+  try {
+    const buf = await fs.readFile(cachePath);
+    const raw = safeStorage.decryptString(buf);
+    return parseCookieAndKey(raw);
+  } catch {
+    return null;
+  }
+}
+
+export async function saveCachedCookie(
+  cachePath: string,
+  cookie: CookieAndKey,
+  safeStorage: SafeStorageLike | null = getSafeStorage(),
+): Promise<void> {
+  if (!safeStorage || !safeStorage.isEncryptionAvailable()) return;
+  try {
+    const encoded = `${cookie.cookie}\t${cookie.key}`;
+    const enc = safeStorage.encryptString(encoded);
+    await fs.mkdir(path.dirname(cachePath), { recursive: true });
+    await fs.writeFile(cachePath, enc);
+  } catch {
+    // best-effort — the cache is a latency optimisation, not a correctness
+    // requirement. Failure just means we re-prompt next reload.
+  }
+}
+
+export async function clearCachedCookie(cachePath: string): Promise<void> {
+  try {
+    await fs.unlink(cachePath);
+  } catch {
+    // ok if missing
+  }
 }
 
 function osaQuote(s: string): string {
