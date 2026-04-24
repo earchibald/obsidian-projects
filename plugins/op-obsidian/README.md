@@ -69,6 +69,12 @@ obsidian://op-open-agent?issue=OP-57&agent=claude
 obsidian://op-resolve?issue=OP-57
 ```
 
+### Auto-resolve on manual status change
+
+If you edit an issue's `status:` frontmatter to `resolved` or `wontfix` outside the `op-resolve` command — a manual edit in Obsidian's property pane, `obsidian property:set name=status …`, or any other external writer — the plugin finishes the resolve flow for you: writes `resolved: <today>`, moves the file to `Projects/<slug>/RESOLVED ISSUES/`, trashes linked TASKS, and (if enabled) closes the linked GitHub issue.
+
+Agent-owned issues (`agent:` non-empty) are skipped so the agent can run its own resolve lifecycle. Clear the `agent:` field first if you want to take the issue over and auto-resolve it manually.
+
 ## Settings reference
 
 Found at `Settings → Community plugins → Obsidian Projects (op)`.

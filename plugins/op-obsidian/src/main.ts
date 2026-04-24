@@ -29,6 +29,7 @@ import { resolveRepoPath } from "./repoPath";
 import { writeUriResponse, type UriResponsePayload } from "./uriResponse";
 import { normalizeUriParams, collectRepeated } from "./uriParams";
 import { runResolve, type ResolveArgs } from "./resolve";
+import { shouldAutoResolve } from "./autoResolveOnStatusChange";
 import {
   findIssueById as findIssueByIdPure,
   resolveUriArgs as resolveUriArgsPure,
@@ -91,6 +92,12 @@ export default class OpPlugin extends Plugin {
   settings: OpSettings = { ...DEFAULT_SETTINGS };
   /** Lazy `which` probe for agent binaries. */
   detector!: AgentDetector;
+  /**
+   * Vault paths currently inside a plugin-owned `runResolve` call. The
+   * `issue:status-changed` auto-mover consults this set to avoid re-entering
+   * resolve on the frontmatter write that `runResolve` itself performs.
+   */
+  private inFlightResolvePaths = new Set<string>();
 
   /** Persist the current {@link settings} object to `data.json`. */
   async saveSettings(): Promise<void> {
@@ -182,6 +189,43 @@ export default class OpPlugin extends Plugin {
         console.error("[op-obsidian] gh issue close failed", msg);
         new Notice(`op: gh issue close failed — ${msg}`);
       });
+    });
+
+    // Auto-resolve: when a user (or external writer) flips an issue's status
+    // to `resolved`/`wontfix` outside `op-resolve` — manual frontmatter edit,
+    // `obsidian property:set`, etc. — finish the resolve flow (move to
+    // RESOLVED ISSUES/, trash linked TASKS, close linked gh issue if
+    // configured). Agent-owned issues (`entry.agent` non-empty) are skipped
+    // so the agent's own lifecycle isn't preempted. Re-entrancy is blocked
+    // by `inFlightResolvePaths` (belt) and the prev-vs-next terminal guard
+    // inside `shouldAutoResolve` (suspenders) — `runResolve` writes
+    // frontmatter before renaming, which fires `issue:status-changed` again.
+    this.bus.on("issue:status-changed", (ev) => {
+      const args = shouldAutoResolve(ev, this.inFlightResolvePaths);
+      if (!args) {
+        if (ev.kind === "issue:status-changed") {
+          console.debug(
+            "[op-obsidian] auto-resolve skipped",
+            ev.entry.path,
+            ev.prev,
+            "→",
+            ev.entry.status,
+          );
+        }
+        return;
+      }
+      return this.runResolveTracked({ ...args, confirmed: true })
+        .then((result) => {
+          if (!result.ok) {
+            console.error("[op-obsidian] auto-resolve failed", args.path, result.error);
+            new Notice(`op: auto-resolve failed — ${result.error ?? "unknown error"}`);
+          }
+        })
+        .catch((err: any) => {
+          const msg = err?.message ?? String(err);
+          console.error("[op-obsidian] auto-resolve threw", args.path, msg);
+          new Notice(`op: auto-resolve threw — ${msg}`);
+        });
     });
 
     // Startup reconciliation: deletions that happened while the plugin
@@ -889,10 +933,40 @@ export default class OpPlugin extends Plugin {
     return resolveUriArgsPure(params);
   }
 
+  /**
+   * Call {@link runResolve} while tracking the issue's vault path in
+   * {@link inFlightResolvePaths}. The `issue:status-changed` auto-mover
+   * consults that set to skip the re-entrant event `runResolve` emits when it
+   * writes `status`/`resolved` frontmatter before renaming.
+   *
+   * Best-effort path resolution: we try to resolve args to a vault path up
+   * front so we can register it before any frontmatter write. If we can't
+   * (bad id, ambiguous match), we still dispatch to `runResolve` — which
+   * surfaces the same error — and the prev-vs-next guard alone is enough to
+   * prevent a runaway loop on that call.
+   */
+  private async runResolveTracked(args: ResolveArgs) {
+    const path = this.resolveArgsToPath(args);
+    if (path) this.inFlightResolvePaths.add(path);
+    try {
+      return await runResolve(this.app, this.store, this.withGhCloseHook(args));
+    } finally {
+      if (path) this.inFlightResolvePaths.delete(path);
+    }
+  }
+
+  private resolveArgsToPath(args: ResolveArgs): string | undefined {
+    if (args.path) return args.path;
+    if (!args.issue) return undefined;
+    const res = findIssue(this.store, { raw: args.issue, projects: listProjects(this.app) });
+    if (res.matches.length === 1) return res.matches[0].path;
+    return undefined;
+  }
+
   private async runResolveCommand(args: ResolveArgs): Promise<void> {
     const command = "op-resolve";
     try {
-      const result = await runResolve(this.app, this.store, this.withGhCloseHook(args));
+      const result = await this.runResolveTracked(args);
       await writeUriResponse(this.app, {
         ok: result.ok,
         command,
@@ -1118,7 +1192,7 @@ export default class OpPlugin extends Plugin {
         const p = this.activeIssuePath();
         if (p) args.path = p;
       }
-      const result = await runResolve(this.app, this.store, this.withGhCloseHook(args));
+      const result = await this.runResolveTracked(args);
       await writeUriResponse(this.app, {
         ok: result.ok,
         command,
@@ -1150,7 +1224,7 @@ export default class OpPlugin extends Plugin {
       const p = this.activeIssuePath();
       if (p) args.path = p;
     }
-    const result = await runResolve(this.app, this.store, this.withGhCloseHook(args));
+    const result = await this.runResolveTracked(args);
     if (!result.ok) throw new Error(result.error ?? "resolve failed");
     return {
       ok: true,
