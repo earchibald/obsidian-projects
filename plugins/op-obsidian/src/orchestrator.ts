@@ -36,6 +36,11 @@ export interface OrchestratorSettings {
 
 export interface OrchestrateArgs {
   issueId: string;
+  // Human-readable title used for the iTerm session/pane title (and the
+  // one-shot OSC 2 in the view script). Typically the issue note's file
+  // basename (e.g. "OP-94 iterm window title shows …"). Falls back to
+  // issueId when empty.
+  issueTitle?: string;
   agentId: string;
   cwd: string;
   binary: string;
@@ -74,10 +79,11 @@ export async function orchestrateLaunch(
   // Re-launching an existing issue: if the session still exists in iTerm,
   // just select it. Otherwise fall through to fresh assignment — the user
   // likely closed the pane, and the issueId → session mapping is stale.
+  const sessionTitle = args.issueTitle && args.issueTitle.length > 0 ? args.issueTitle : args.issueId;
   const existing = reg.surfaces[args.issueId];
   if (existing && (await sessionExists(opSettings, existing.sessionId))) {
     await selectSession(opSettings, existing.sessionId);
-    await setSessionName(opSettings, existing.sessionId, args.issueId);
+    await setSessionName(opSettings, existing.sessionId, sessionTitle);
     // tmux window still owns the agent process; the pane just reattaches.
     const scriptPath = await writeViewScript({
       args,
@@ -161,7 +167,7 @@ export async function orchestrateLaunch(
     });
 
     const sessionId = await splitSession(opSettings, parentId, op.dir, quoteForBash(viewScript));
-    await setSessionName(opSettings, sessionId, args.issueId);
+    await setSessionName(opSettings, sessionId, sessionTitle);
     win.sessionIds[nextCellIndex] = sessionId;
 
     const ref: SurfaceRef = {
@@ -193,7 +199,7 @@ export async function orchestrateLaunch(
   const viewScript = await writeViewScript({ args, tmuxSession, tmuxWindow: windowName });
   const { windowId, sessionId } = await createWindow(opSettings, quoteForBash(viewScript));
   await setWindowName(opSettings, windowId, tmuxSession);
-  await setSessionName(opSettings, sessionId, args.issueId);
+  await setSessionName(opSettings, sessionId, sessionTitle);
 
   const newWin: WindowState = {
     windowId,
@@ -262,19 +268,20 @@ async function writeViewScript({ args, tmuxSession, tmuxWindow }: ViewArgs): Pro
   const groupSess = shSingleQuote(`view-${args.issueId}`);
   const win = shSingleQuote(tmuxWindow);
   // Emit OSC 2 directly before exec so the iTerm session/pane title is set
-  // immediately to the issueId, even before tmux attaches. Do NOT enable
+  // immediately to the issue title, even before tmux attaches. Do NOT enable
   // tmux `set-titles` forwarding here: the iTerm window's title bar follows
   // the focused pane's OSC 2, so continuous forwarding would make the window
-  // title flip to a surviving pane's issueId when an anchor pane closes.
+  // title flip to a surviving pane's title when an anchor pane closes.
   // The one-shot OSC 2 is enough; setSessionName() pins the iTerm session
   // name separately.
-  const issueIdShell = shSingleQuote(args.issueId);
+  const sessionTitle = args.issueTitle && args.issueTitle.length > 0 ? args.issueTitle : args.issueId;
+  const titleShell = shSingleQuote(sessionTitle);
   const lines = [
     "#!/bin/bash",
     "set -e",
     `export PATH="/opt/homebrew/bin:/usr/local/bin:$HOME/.local/bin:$HOME/bin:$PATH"`,
     `${tmux} new-session -d -s ${groupSess} -t ${sess} 2>/dev/null || true`,
-    `printf '\\033]2;%s\\007' ${issueIdShell}`,
+    `printf '\\033]2;%s\\007' ${titleShell}`,
     `exec ${tmux} attach -t ${groupSess} \\; select-window -t ${groupSess}:${win}`,
     "",
   ];
