@@ -20,6 +20,8 @@ import { scaffoldProject, type ScaffoldProjectResult } from "./scaffoldProject";
 import { workIssue } from "./workIssue";
 import { appendCommit, setPr } from "./commits";
 import { setScope } from "./setScope";
+import { setEvaluation } from "./setEvaluation";
+import { setFlow } from "./setFlow";
 import {
   closeGithubIssue,
   createGithubIssue,
@@ -37,6 +39,8 @@ import {
   handleOpAppendCommitUri as handleOpAppendCommitUriPure,
   handleOpSetPrUri as handleOpSetPrUriPure,
   handleOpSetScopeUri as handleOpSetScopeUriPure,
+  handleOpSetEvaluationUri as handleOpSetEvaluationUriPure,
+  handleOpSetFlowUri as handleOpSetFlowUriPure,
   type UriHandlerDeps,
 } from "./uriHandlers";
 import {
@@ -44,6 +48,8 @@ import {
   parseAppendCommitParams,
   parseSetPrParams,
   parseSetScopeParams,
+  parseSetEvaluationParams,
+  parseSetFlowParams,
   parseNewParams,
 } from "./cliHandlers";
 import type { IssueEntry, LifecycleEvent } from "./types";
@@ -427,6 +433,16 @@ export default class OpPlugin extends Plugin {
       this.runUri("op-set-scope", normalizeUriParams(params), (p) => this.handleOpSetScopeUri(p));
     });
 
+    this.registerObsidianProtocolHandler("op-set-evaluation", (params) => {
+      this.runUri("op-set-evaluation", normalizeUriParams(params), (p) =>
+        this.handleOpSetEvaluationUri(p),
+      );
+    });
+
+    this.registerObsidianProtocolHandler("op-set-flow", (params) => {
+      this.runUri("op-set-flow", normalizeUriParams(params), (p) => this.handleOpSetFlowUri(p));
+    });
+
     this.registerObsidianProtocolHandler("op-resolve", (params) => {
       this.runUri("op-resolve", normalizeUriParams(params), (p) =>
         this.handleOpResolveUri(p, "op-resolve"),
@@ -555,6 +571,36 @@ export default class OpPlugin extends Plugin {
         },
       },
       (params) => this.handleOpSetScopeCli(params),
+    );
+
+    this.registerCliHandler(
+      "op-set-evaluation",
+      "Replace the body's `## Initial Evaluation` section on an issue (or append if missing).",
+      {
+        issue: { value: "<id>", description: "Issue id (e.g. OP-34)" },
+        evaluation: {
+          value: "<markdown>",
+          description: "New Initial Evaluation body. Must not contain H2 headings (`## ...`).",
+        },
+      },
+      (params) => this.handleOpSetEvaluationCli(params),
+    );
+
+    this.registerCliHandler(
+      "op-set-flow",
+      "Set the `flow` and/or `complexity` frontmatter field on an issue.",
+      {
+        issue: { value: "<id>", description: "Issue id (e.g. OP-34)" },
+        flow: {
+          value: "<evaluate|planning|implementation|review|finalization|done|null>",
+          description: "Workflow stage. Pass 'null' to clear.",
+        },
+        complexity: {
+          value: "<simple|complex|null>",
+          description: "Complexity classification. Pass 'null' to clear.",
+        },
+      },
+      (params) => this.handleOpSetFlowCli(params),
     );
   }
 
@@ -889,6 +935,8 @@ export default class OpPlugin extends Plugin {
       appendCommit: (entry, input) => appendCommit(this.app, entry, input),
       setPr: (entry, url) => setPr(this.app, entry, url),
       setScope: (entry, scope, options) => setScope(this.app, entry, scope, options),
+      setEvaluation: (entry, evaluation) => setEvaluation(this.app, entry, evaluation),
+      setFlow: (entry, input) => setFlow(this.app, entry, input),
     };
   }
 
@@ -930,6 +978,18 @@ export default class OpPlugin extends Plugin {
     params: Record<string, string>,
   ): Promise<UriResponsePayload> {
     return handleOpSetScopeUriPure(this.uriDeps(), params);
+  }
+
+  private handleOpSetEvaluationUri(
+    params: Record<string, string>,
+  ): Promise<UriResponsePayload> {
+    return handleOpSetEvaluationUriPure(this.uriDeps(), params);
+  }
+
+  private handleOpSetFlowUri(
+    params: Record<string, string>,
+  ): Promise<UriResponsePayload> {
+    return handleOpSetFlowUriPure(this.uriDeps(), params);
   }
 
   private activeIssuePath(): string | undefined {
@@ -1197,6 +1257,62 @@ export default class OpPlugin extends Plugin {
       });
       const target = res.mode === "body" ? "body" : "scope";
       return `${command}: ${res.issueId} ${target} ${res.replaced ? "replaced" : "appended"}`;
+    } catch (err: any) {
+      const msg = err?.message ?? String(err);
+      console.error("[op-obsidian]", command, err);
+      await writeUriResponse(this.app, { ok: false, command, error: msg });
+      return `${command} failed: ${msg}`;
+    }
+  }
+
+  private async handleOpSetEvaluationCli(params: Record<string, string>): Promise<string> {
+    const command = "op-set-evaluation";
+    try {
+      const parsed = parseSetEvaluationParams(params);
+      if (!parsed.ok) return parsed.error;
+      const { id, evaluation } = parsed.value;
+      const entry = this.resolveByIdOrThrow(id);
+      const res = await setEvaluation(this.app, entry, evaluation);
+      await writeUriResponse(this.app, {
+        ok: true,
+        command,
+        issueId: res.issueId,
+        path: res.path,
+        replaced: res.replaced,
+      });
+      return `${command}: ${res.issueId} evaluation ${res.replaced ? "replaced" : "appended"}`;
+    } catch (err: any) {
+      const msg = err?.message ?? String(err);
+      console.error("[op-obsidian]", command, err);
+      await writeUriResponse(this.app, { ok: false, command, error: msg });
+      return `${command} failed: ${msg}`;
+    }
+  }
+
+  private async handleOpSetFlowCli(params: Record<string, string>): Promise<string> {
+    const command = "op-set-flow";
+    try {
+      const parsed = parseSetFlowParams(params);
+      if (!parsed.ok) return parsed.error;
+      const { id, flow, complexity } = parsed.value;
+      const entry = this.resolveByIdOrThrow(id);
+      const input: { flow?: typeof flow; complexity?: typeof complexity } = {};
+      if (Object.prototype.hasOwnProperty.call(parsed.value, "flow")) input.flow = flow;
+      if (Object.prototype.hasOwnProperty.call(parsed.value, "complexity"))
+        input.complexity = complexity;
+      const res = await setFlow(this.app, entry, input);
+      await writeUriResponse(this.app, {
+        ok: true,
+        command,
+        issueId: res.issueId,
+        path: res.path,
+        flow: res.flow ?? undefined,
+        complexity: res.complexity ?? undefined,
+      });
+      const parts: string[] = [];
+      if (res.flow) parts.push(`flow=${res.flow}`);
+      if (res.complexity) parts.push(`complexity=${res.complexity}`);
+      return `${command}: ${res.issueId} ${parts.join(" ") || "(cleared)"}`;
     } catch (err: any) {
       const msg = err?.message ?? String(err);
       console.error("[op-obsidian]", command, err);

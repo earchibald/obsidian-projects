@@ -4,6 +4,8 @@ import {
   parseAppendCommitParams,
   parseSetPrParams,
   parseSetScopeParams,
+  parseSetEvaluationParams,
+  parseSetFlowParams,
   parseNewParams,
   parseScaffoldParams,
 } from "./cliHandlers";
@@ -60,6 +62,51 @@ describe("parseSetScopeParams", () => {
   it("rejects unknown mode", () => {
     const r = parseSetScopeParams({ id: "OP-1", scope: "x", mode: "wat" });
     expect(r.ok).toBe(false);
+  });
+});
+
+describe("parseSetEvaluationParams", () => {
+  it("requires id and evaluation", () => {
+    expect(parseSetEvaluationParams({}).ok).toBe(false);
+    expect(parseSetEvaluationParams({ id: "OP-1" }).ok).toBe(false);
+    const r = parseSetEvaluationParams({ id: "OP-1", evaluation: "body" });
+    expect(r.ok && r.value).toEqual({ id: "OP-1", evaluation: "body" });
+  });
+  it("accepts empty evaluation string (caller handles empty-payload rejection)", () => {
+    const r = parseSetEvaluationParams({ id: "OP-1", evaluation: "" });
+    expect(r.ok).toBe(true);
+  });
+});
+
+describe("parseSetFlowParams", () => {
+  it("requires id", () => {
+    expect(parseSetFlowParams({}).ok).toBe(false);
+  });
+  it("requires at least one of flow or complexity", () => {
+    const r = parseSetFlowParams({ id: "OP-1" });
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.error).toMatch(/at least one/);
+  });
+  it("accepts valid flow and complexity", () => {
+    const r = parseSetFlowParams({ id: "OP-1", flow: "planning", complexity: "complex" });
+    expect(r.ok && r.value).toEqual({ id: "OP-1", flow: "planning", complexity: "complex" });
+  });
+  it("rejects invalid flow enum", () => {
+    const r = parseSetFlowParams({ id: "OP-1", flow: "wat" });
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.error).toMatch(/invalid --flow/);
+  });
+  it("rejects invalid complexity enum", () => {
+    const r = parseSetFlowParams({ id: "OP-1", complexity: "epic" });
+    expect(r.ok).toBe(false);
+  });
+  it("maps 'null' string to null (clear)", () => {
+    const r = parseSetFlowParams({ id: "OP-1", flow: "null" });
+    expect(r.ok && r.value.flow).toBeNull();
+  });
+  it("maps empty string to null (clear)", () => {
+    const r = parseSetFlowParams({ id: "OP-1", complexity: "" });
+    expect(r.ok && r.value.complexity).toBeNull();
   });
 });
 

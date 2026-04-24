@@ -6,6 +6,8 @@ import {
   handleOpAppendCommitUri,
   handleOpSetPrUri,
   handleOpSetScopeUri,
+  handleOpSetEvaluationUri,
+  handleOpSetFlowUri,
   type UriHandlerDeps,
 } from "./uriHandlers";
 import type { IssueEntry } from "./types";
@@ -47,6 +49,18 @@ function makeDeps(overrides: Partial<UriHandlerDeps> = {}): UriHandlerDeps {
       scope: _scope,
       replaced: true,
       mode: options?.mode ?? "scope",
+    }),
+    setEvaluation: async (e, evaluation) => ({
+      issueId: e.id,
+      path: e.path,
+      evaluation,
+      replaced: true,
+    }),
+    setFlow: async (e, input) => ({
+      issueId: e.id,
+      path: e.path,
+      flow: (input.flow ?? null) as any,
+      complexity: (input.complexity ?? null) as any,
     }),
     ...overrides,
   };
@@ -136,6 +150,61 @@ describe("handleOpSetPrUri", () => {
   it("accepts pr alias for url", async () => {
     const r = await handleOpSetPrUri(makeDeps(), { id: "OP-1", pr: "https://x/y/pull/1" });
     expect(r).toMatchObject({ ok: true, pr: "https://x/y/pull/1" });
+  });
+});
+
+describe("handleOpSetEvaluationUri", () => {
+  it("requires id and evaluation string", async () => {
+    await expect(handleOpSetEvaluationUri(makeDeps(), { id: "OP-1" })).rejects.toThrow(
+      "op-set-evaluation URI requires id and evaluation",
+    );
+  });
+  it("happy path payload shape", async () => {
+    const r = await handleOpSetEvaluationUri(makeDeps(), {
+      id: "OP-1",
+      evaluation: "some notes",
+    });
+    expect(r).toMatchObject({
+      ok: true,
+      command: "op-set-evaluation",
+      issueId: "OP-1",
+      replaced: true,
+    });
+  });
+});
+
+describe("handleOpSetFlowUri", () => {
+  it("requires id", async () => {
+    await expect(handleOpSetFlowUri(makeDeps(), {})).rejects.toThrow(
+      "op-set-flow URI requires id",
+    );
+  });
+  it("requires at least one of flow or complexity", async () => {
+    await expect(handleOpSetFlowUri(makeDeps(), { id: "OP-1" })).rejects.toThrow(
+      /flow and\/or complexity/,
+    );
+  });
+  it("accepts valid flow + complexity", async () => {
+    const r = await handleOpSetFlowUri(makeDeps(), {
+      id: "OP-1",
+      flow: "planning",
+      complexity: "complex",
+    });
+    expect(r).toMatchObject({
+      ok: true,
+      command: "op-set-flow",
+      flow: "planning",
+      complexity: "complex",
+    });
+  });
+  it("rejects unknown flow value", async () => {
+    await expect(handleOpSetFlowUri(makeDeps(), { id: "OP-1", flow: "wat" })).rejects.toThrow(
+      /flow must be one of/,
+    );
+  });
+  it("passes 'null' through as null to clear", async () => {
+    const r = await handleOpSetFlowUri(makeDeps(), { id: "OP-1", flow: "null" });
+    expect(r.flow).toBeUndefined();
   });
 });
 

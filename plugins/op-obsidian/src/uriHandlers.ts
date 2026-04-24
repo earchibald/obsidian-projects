@@ -10,6 +10,8 @@ import type { WorkIssueResult } from "./workIssue";
 import type { AppendCommitResult } from "./commits";
 import type { SetPrResult } from "./commits";
 import type { SetScopeResult } from "./setScope";
+import type { SetEvaluationResult } from "./setEvaluation";
+import type { SetFlowResult, Flow, Complexity } from "./setFlow";
 import type { ResolveArgs, ResolveStatus } from "./resolve";
 
 export interface UriHandlerDeps {
@@ -22,6 +24,11 @@ export interface UriHandlerDeps {
     scope: string,
     options?: { mode?: "scope" | "body" },
   ) => Promise<SetScopeResult>;
+  setEvaluation: (entry: IssueEntry, evaluation: string) => Promise<SetEvaluationResult>;
+  setFlow: (
+    entry: IssueEntry,
+    input: { flow?: Flow | null; complexity?: Complexity | null },
+  ) => Promise<SetFlowResult>;
 }
 
 export function findIssueById(store: { issues(): IssueEntry[] }, id: string): IssueEntry {
@@ -101,6 +108,77 @@ export async function handleOpSetPrUri(
     issueId: res.issueId,
     path: res.path,
     pr: res.pr,
+  };
+}
+
+const FLOW_ENUM = ["evaluate", "planning", "implementation", "review", "finalization", "done"] as const;
+const COMPLEXITY_ENUM = ["simple", "complex"] as const;
+
+export async function handleOpSetEvaluationUri(
+  deps: UriHandlerDeps,
+  params: Record<string, string>,
+): Promise<UriResponsePayload> {
+  const id = params.id ?? params.issue;
+  const evaluation = params.evaluation;
+  if (!id || typeof evaluation !== "string") {
+    throw new Error("op-set-evaluation URI requires id and evaluation");
+  }
+  const entry = findIssueById(deps.store, id);
+  const res = await deps.setEvaluation(entry, evaluation);
+  return {
+    ok: true,
+    command: "op-set-evaluation",
+    issueId: res.issueId,
+    path: res.path,
+    replaced: res.replaced,
+  };
+}
+
+export async function handleOpSetFlowUri(
+  deps: UriHandlerDeps,
+  params: Record<string, string>,
+): Promise<UriResponsePayload> {
+  const id = params.id ?? params.issue;
+  if (!id) throw new Error("op-set-flow URI requires id");
+  const hasFlow = Object.prototype.hasOwnProperty.call(params, "flow");
+  const hasComplexity = Object.prototype.hasOwnProperty.call(params, "complexity");
+  if (!hasFlow && !hasComplexity) {
+    throw new Error("op-set-flow URI requires flow and/or complexity");
+  }
+  const input: { flow?: Flow | null; complexity?: Complexity | null } = {};
+  if (hasFlow) {
+    const v = params.flow;
+    if (v === "" || v === "null") {
+      input.flow = null;
+    } else if ((FLOW_ENUM as readonly string[]).includes(v)) {
+      input.flow = v as Flow;
+    } else {
+      throw new Error(
+        `op-set-flow URI flow must be one of ${FLOW_ENUM.join("|")} (or "null" to clear)`,
+      );
+    }
+  }
+  if (hasComplexity) {
+    const v = params.complexity;
+    if (v === "" || v === "null") {
+      input.complexity = null;
+    } else if ((COMPLEXITY_ENUM as readonly string[]).includes(v)) {
+      input.complexity = v as Complexity;
+    } else {
+      throw new Error(
+        `op-set-flow URI complexity must be one of ${COMPLEXITY_ENUM.join("|")} (or "null" to clear)`,
+      );
+    }
+  }
+  const entry = findIssueById(deps.store, id);
+  const res = await deps.setFlow(entry, input);
+  return {
+    ok: true,
+    command: "op-set-flow",
+    issueId: res.issueId,
+    path: res.path,
+    flow: res.flow ?? undefined,
+    complexity: res.complexity ?? undefined,
   };
 }
 

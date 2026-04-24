@@ -32,6 +32,71 @@ export function parseSetPrParams(
   return { ok: true, value: { id, url } };
 }
 
+export function parseSetEvaluationParams(
+  params: Record<string, string>,
+): ParamsResult<{ id: string; evaluation: string }> {
+  const id = params.issue ?? params.id;
+  const evaluation = params.evaluation;
+  if (!id || typeof evaluation !== "string") {
+    return { ok: false, error: "op-set-evaluation failed: --issue and --evaluation required" };
+  }
+  return { ok: true, value: { id, evaluation } };
+}
+
+const FLOW_ENUM = ["evaluate", "planning", "implementation", "review", "finalization", "done"] as const;
+const COMPLEXITY_ENUM = ["simple", "complex"] as const;
+
+export function parseSetFlowParams(
+  params: Record<string, string>,
+): ParamsResult<{
+  id: string;
+  flow?: (typeof FLOW_ENUM)[number] | null;
+  complexity?: (typeof COMPLEXITY_ENUM)[number] | null;
+}> {
+  const id = params.issue ?? params.id;
+  if (!id) return { ok: false, error: "op-set-flow failed: --issue is required" };
+  const hasFlow = Object.prototype.hasOwnProperty.call(params, "flow");
+  const hasComplexity = Object.prototype.hasOwnProperty.call(params, "complexity");
+  if (!hasFlow && !hasComplexity) {
+    return {
+      ok: false,
+      error: "op-set-flow failed: at least one of --flow or --complexity is required",
+    };
+  }
+  const out: {
+    id: string;
+    flow?: (typeof FLOW_ENUM)[number] | null;
+    complexity?: (typeof COMPLEXITY_ENUM)[number] | null;
+  } = { id };
+  if (hasFlow) {
+    const v = params.flow;
+    if (v === "" || v === "null") {
+      out.flow = null;
+    } else if ((FLOW_ENUM as readonly string[]).includes(v)) {
+      out.flow = v as (typeof FLOW_ENUM)[number];
+    } else {
+      return {
+        ok: false,
+        error: `op-set-flow failed: invalid --flow ${JSON.stringify(v)} (expected ${FLOW_ENUM.join("|")})`,
+      };
+    }
+  }
+  if (hasComplexity) {
+    const v = params.complexity;
+    if (v === "" || v === "null") {
+      out.complexity = null;
+    } else if ((COMPLEXITY_ENUM as readonly string[]).includes(v)) {
+      out.complexity = v as (typeof COMPLEXITY_ENUM)[number];
+    } else {
+      return {
+        ok: false,
+        error: `op-set-flow failed: invalid --complexity ${JSON.stringify(v)} (expected ${COMPLEXITY_ENUM.join("|")})`,
+      };
+    }
+  }
+  return { ok: true, value: out };
+}
+
 export function parseSetScopeParams(
   params: Record<string, string>,
 ): ParamsResult<{ id: string; scope: string; mode: "scope" | "body" }> {
