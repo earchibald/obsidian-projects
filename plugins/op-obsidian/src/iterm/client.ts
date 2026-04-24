@@ -2,11 +2,9 @@ import { LAYOUTS, type LayoutId, type SplitOp } from "../layout/layouts";
 import { iterm2 } from "./proto/api.generated";
 import { getTransport, type ConnectionOptions } from "./connection";
 
-// Native TS WebSocket client for iTerm2's API, replacement for applescript.ts.
-//
-// OP-101 Step 4: WebSocket is now the default; AppleScript remains as a
-// fallback while `useWebSocketClient` is still wired so users can opt out
-// during the soak. Step 5 deletes the AppleScript path.
+// Native TS WebSocket client for iTerm2's API. This is the only iTerm driver
+// — the legacy AppleScript path was removed in OP-101 Step 5. The one
+// remaining osascript call lives in `cookie.ts` for first-run auth.
 
 export interface CreateWindowResult {
   windowId: string;

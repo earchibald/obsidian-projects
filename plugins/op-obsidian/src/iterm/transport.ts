@@ -16,9 +16,6 @@ import { iterm2 } from "./proto/api.generated";
 // Obsidian's renderer provides a global `WebSocket`, so we do not take a `ws`
 // dependency. Node-only unit tests may inject a shim; the transport is
 // constructed with an explicit factory so we don't need to patch globals.
-//
-// This module is dead code for Step 1 of OP-101: nothing imports it at module
-// load outside tests. Step 2 wires it behind `useWebSocketClient`.
 
 export type WebSocketFactory = (url: string, protocols: string, headers: Record<string, string>) => WebSocketLike;
 
