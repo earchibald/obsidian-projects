@@ -134,6 +134,7 @@ export async function openAgent(
     iTermPlacement: settings.iTermPlacement,
     tmuxBinary: settings.tmuxBinary,
     issueId: args.entry.id,
+    issueTitle: args.entry.title,
     agentId,
     orchestrator: {
       settings,

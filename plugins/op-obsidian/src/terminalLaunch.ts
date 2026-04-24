@@ -29,6 +29,9 @@ export interface LaunchArgs {
   // Exported into the agent's env so SessionEnd hooks can identify which
   // op-obsidian issue/agent a terminating session belongs to.
   issueId: string;
+  // Human-readable title forwarded to the orchestrator for the iTerm
+  // session/pane title (e.g. the issue note's file basename).
+  issueTitle?: string;
   agentId: string;
   // Debug mode: skip running the agent; drop into an interactive login shell
   // in the tmux window so the launch flow can be exercised manually (OP-43).
@@ -65,6 +68,7 @@ export async function launchInTerminal(args: LaunchArgs): Promise<LaunchResult> 
     const r = await orchestrateLaunch(
       {
         issueId: args.issueId,
+        issueTitle: args.issueTitle,
         agentId: args.agentId,
         cwd: args.cwd,
         binary: args.binary,
