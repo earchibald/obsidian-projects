@@ -1,23 +1,31 @@
 import { iterm2 } from "./proto/api.generated";
+import { createUnixWebSocket } from "./unixWebSocket";
 
 // Persistent WebSocket+protobuf transport against iTerm2's local API.
 //
 // Wire protocol (documented at https://iterm2.com/python-api/websockets.html):
-//   - URL:          ws://localhost:<port>/ (port read from cookie.API_PORT_PATH)
+//   - URL:          ws+unix://<socketPath>/  (iTerm 3.6+ uses a unix socket;
+//                   pre-3.6 used a local TCP port — we only support 3.6+)
 //   - Subprotocol:  api.iterm2.com
 //   - Headers:      x-iterm2-library-version: op-obsidian <ver>
 //                   x-iterm2-cookie: <cookie>
 //                   x-iterm2-key:    <key>
-//                   origin:          ws://localhost:<port>
+//                   origin:          ws://localhost
 //   - Frames:       binary ClientOriginatedMessage / ServerOriginatedMessage
 //   - Multiplex:    each request carries a monotonically increasing u32 id;
 //                   the response echoes the same id.
 //
-// Obsidian's renderer provides a global `WebSocket`, so we do not take a `ws`
-// dependency. Node-only unit tests may inject a shim; the transport is
-// constructed with an explicit factory so we don't need to patch globals.
+// Obsidian's renderer has Node available (`require("net")`), so we hand-roll
+// the WebSocket handshake and framing over a unix-socket `net.Socket` in
+// `unixWebSocket.ts`. This avoids a bundled `ws` dep and works inside the
+// renderer where the global `WebSocket` class can't speak unix sockets.
+// Node-only unit tests inject a shim via the factory hook below.
 
-export type WebSocketFactory = (url: string, protocols: string, headers: Record<string, string>) => WebSocketLike;
+export type WebSocketFactory = (
+  socketPath: string,
+  protocol: string,
+  headers: Record<string, string>,
+) => WebSocketLike;
 
 export interface WebSocketLike {
   send(data: ArrayBuffer | Uint8Array): void;
@@ -29,7 +37,7 @@ export interface WebSocketLike {
 }
 
 export interface TransportOptions {
-  port: number;
+  socketPath: string;
   cookie: string;
   key: string;
   appName: string;
@@ -95,15 +103,14 @@ export class ITermTransport {
   }
 
   private async openSocket(): Promise<void> {
-    const url = `ws://localhost:${this.opts.port}/`;
     const factory = this.opts.wsFactory ?? defaultWebSocketFactory;
     const headers: Record<string, string> = {
       "x-iterm2-library-version": `${this.opts.appName} ${this.opts.version}`,
       "x-iterm2-cookie": this.opts.cookie,
       "x-iterm2-key": this.opts.key,
-      origin: `ws://localhost:${this.opts.port}`,
+      origin: "ws://localhost",
     };
-    const ws = factory(url, "api.iterm2.com", headers);
+    const ws = factory(this.opts.socketPath, "api.iterm2.com", headers);
     this.ws = ws;
     ws.onmessage = (ev) => {
       void this.handleFrame(ev.data);
@@ -120,12 +127,17 @@ export class ITermTransport {
     };
     await new Promise<void>((resolve, reject) => {
       ws.onopen = () => resolve();
-      ws.onerror = () =>
+      ws.onerror = (ev) => {
+        const detail =
+          ev && typeof ev === "object" && "message" in ev
+            ? String((ev as { message: unknown }).message)
+            : "";
         reject(
           new Error(
-            "op: iTerm websocket failed to open — is 'Enable Python API' turned on in iTerm2 > Settings > General > Magic?",
+            `op: iTerm websocket failed to open${detail ? ` (${detail})` : ""} — is 'Enable Python API' turned on in iTerm2 > Settings > General > Magic, and is iTerm2 running?`,
           ),
         );
+      };
     });
   }
 
@@ -148,14 +160,6 @@ async function toBytes(data: ArrayBuffer | Uint8Array | Blob): Promise<Uint8Arra
   return new Uint8Array(buf);
 }
 
-const defaultWebSocketFactory: WebSocketFactory = (url, protocols) => {
-  // Obsidian renderer: WebSocket is global. Custom headers aren't supported by
-  // the renderer's WebSocket constructor — iTerm's API actually reads cookie
-  // and key from the subprotocol when headers are absent, so we fall back to
-  // encoding them into the subprotocol string. Step 2 will validate this path
-  // on a real connection and adjust if iTerm rejects it.
-  const g = globalThis as { WebSocket?: new (url: string, protocols?: string | string[]) => WebSocketLike };
-  if (!g.WebSocket) throw new Error("op: no global WebSocket available — cannot talk to iTerm API");
-  return new g.WebSocket(url, protocols);
+const defaultWebSocketFactory: WebSocketFactory = (socketPath, protocol, headers) => {
+  return createUnixWebSocket({ socketPath, protocol, headers });
 };
-

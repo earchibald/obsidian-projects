@@ -1,9 +1,9 @@
 import { ITermTransport, type TransportOptions, type WebSocketFactory } from "./transport";
 import {
+  API_SOCKET_PATH,
   CookieAndKey,
   clearCachedCookie,
   loadCachedCookie,
-  readApiPort,
   requestCookieAndKey,
   saveCachedCookie,
   type SafeStorageLike,
@@ -19,7 +19,7 @@ const APP_NAME = "op-obsidian";
 interface ConnectionState {
   transport: ITermTransport;
   cookie: CookieAndKey;
-  port: number;
+  socketPath: string;
 }
 
 let state: ConnectionState | null = null;
@@ -59,7 +59,7 @@ export function __setStateForTests(injected: ConnectionState | null): void {
 
 async function openConnection(opts: ConnectionOptions): Promise<ConnectionState> {
   const appName = opts.appName ?? APP_NAME;
-  const port = await readApiPort();
+  const socketPath = API_SOCKET_PATH;
 
   let cookie: CookieAndKey | null = null;
   let fromCache = false;
@@ -72,11 +72,11 @@ async function openConnection(opts: ConnectionOptions): Promise<ConnectionState>
   }
 
   try {
-    const transport = await buildTransport({ port, cookie, appName, opts });
+    const transport = await buildTransport({ socketPath, cookie, appName, opts });
     if (opts.cachePath && !fromCache) {
       await saveCachedCookie(opts.cachePath, cookie, opts.safeStorage);
     }
-    return { transport, cookie, port };
+    return { transport, cookie, socketPath };
   } catch (err) {
     // Cached cookie could be decrypt-valid but iTerm-invalid (Library wipe,
     // iTerm reinstall, user cleared API authorization). Retry once with a
@@ -84,24 +84,24 @@ async function openConnection(opts: ConnectionOptions): Promise<ConnectionState>
     if (fromCache) {
       if (opts.cachePath) await clearCachedCookie(opts.cachePath);
       const fresh = await requestCookieAndKey(appName);
-      const transport = await buildTransport({ port, cookie: fresh, appName, opts });
+      const transport = await buildTransport({ socketPath, cookie: fresh, appName, opts });
       if (opts.cachePath) {
         await saveCachedCookie(opts.cachePath, fresh, opts.safeStorage);
       }
-      return { transport, cookie: fresh, port };
+      return { transport, cookie: fresh, socketPath };
     }
     throw err;
   }
 }
 
 async function buildTransport(args: {
-  port: number;
+  socketPath: string;
   cookie: CookieAndKey;
   appName: string;
   opts: ConnectionOptions;
 }): Promise<ITermTransport> {
   const transportOpts: TransportOptions = {
-    port: args.port,
+    socketPath: args.socketPath,
     cookie: args.cookie.cookie,
     key: args.cookie.key,
     appName: args.appName,

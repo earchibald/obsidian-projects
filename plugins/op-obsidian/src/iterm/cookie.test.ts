@@ -3,34 +3,31 @@ import { promises as fs } from "fs";
 import * as os from "os";
 import * as path from "path";
 import {
+  API_SOCKET_PATH,
   loadCachedCookie,
   parseCookieAndKey,
-  parsePort,
   saveCachedCookie,
   type SafeStorageLike,
 } from "./cookie";
 
 describe("iterm cookie", () => {
-  it("parses a port file with trailing newline", () => {
-    expect(parsePort("51234\n")).toBe(51234);
-  });
-
-  it("parses a port file without trailing newline", () => {
-    expect(parsePort("51234")).toBe(51234);
-  });
-
-  it("rejects a non-numeric port file", () => {
-    expect(() => parsePort("not-a-number")).toThrowError(/iTerm api port file/);
-  });
-
-  it("rejects an out-of-range port", () => {
-    expect(() => parsePort("99999")).toThrowError(/iTerm api port file/);
-    expect(() => parsePort("0")).toThrowError(/iTerm api port file/);
+  it("points at iTerm2's unix API socket", () => {
+    expect(API_SOCKET_PATH).toMatch(/iTerm2\/private\/socket$/);
   });
 
   it("parses a cookie/key pair separated by tab", () => {
     const pair = parseCookieAndKey("abc123\txyz789\n");
     expect(pair).toEqual({ cookie: "abc123", key: "xyz789" });
+  });
+
+  it("parses a cookie/key pair separated by a single space (osascript list rendering)", () => {
+    const pair = parseCookieAndKey(
+      "474e1b203be9b53087003c4444531354 9F541B4D-DDF2-492D-99B4-BC65E1BF0730\n",
+    );
+    expect(pair).toEqual({
+      cookie: "474e1b203be9b53087003c4444531354",
+      key: "9F541B4D-DDF2-492D-99B4-BC65E1BF0730",
+    });
   });
 
   it("rejects a cookie response missing the key", () => {

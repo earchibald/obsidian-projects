@@ -6,14 +6,16 @@ import * as os from "os";
 
 const pExecFile = promisify(execFile);
 
-// iTerm2's Python API is actually a local WebSocket on a port iTerm writes to
-// ~/Library/Application Support/iTerm2/private/.iterm2_api_port. Authentication
-// requires a (cookie, key) pair obtained via AppleScript the first time a given
-// app-name connects.
+// iTerm2's Python API is a local WebSocket speaking binary protobuf. iTerm
+// 3.6+ exposes it over a unix domain socket at
+// ~/Library/Application Support/iTerm2/private/socket (pre-3.6 used a TCP
+// port written to `.iterm2_api_port` — no longer supported by iTerm, and no
+// longer supported here). Authentication requires a (cookie, key) pair
+// obtained via AppleScript the first time a given app-name connects.
 //
-// This module owns the one-shot AppleScript call, the read of the port file,
-// and the persistent `safeStorage`-encrypted cache that keeps the prompt
-// one-shot across plugin reloads. It is the only remaining osascript site.
+// This module owns the one-shot AppleScript call, the known socket path, and
+// the persistent `safeStorage`-encrypted cache that keeps the prompt one-shot
+// across plugin reloads. It is the only remaining osascript site.
 
 export interface CookieAndKey {
   cookie: string;
@@ -30,41 +32,32 @@ export interface SafeStorageLike {
   decryptString(ciphertext: Buffer): string;
 }
 
-export const API_PORT_PATH = path.join(
+// iTerm 3.6+ listens on this unix domain socket when "Enable Python API" is
+// turned on. The directory exists independently, so its presence isn't a
+// reliable health check; the transport's connect() surfaces the real error
+// (including ENOENT on the socket itself) with an actionable message.
+export const API_SOCKET_PATH = path.join(
   os.homedir(),
   "Library",
   "Application Support",
   "iTerm2",
   "private",
-  ".iterm2_api_port",
+  "socket",
 );
 
-export async function readApiPort(): Promise<number> {
-  const raw = await fs.readFile(API_PORT_PATH, "utf8");
-  return parsePort(raw);
-}
-
-// Exported for unit tests. iTerm writes the port as an ASCII integer, usually
-// with a trailing newline.
-export function parsePort(raw: string): number {
-  const trimmed = raw.trim();
-  const n = Number(trimmed);
-  if (!Number.isInteger(n) || n <= 0 || n > 65535) {
-    throw new Error(`op: iTerm api port file has unexpected contents: ${JSON.stringify(raw)}`);
-  }
-  return n;
-}
-
-// Parse the raw AppleScript response, which iTerm2 returns as a tab-separated
-// "cookie<TAB>key" pair. Exported for tests.
+// Parse the raw AppleScript response. iTerm2 returns a two-element list from
+// `request cookie and key …`, which `osascript` renders as the two strings
+// separated by a single space (or, on some macOS builds, by a tab). Split on
+// any run of whitespace — both tokens are fixed-shape hex/UUID strings, so a
+// whitespace split is unambiguous.
 export function parseCookieAndKey(raw: string): CookieAndKey {
-  const [cookie, key] = raw.trim().split("\t");
-  if (!cookie || !key) {
+  const parts = raw.trim().split(/\s+/);
+  if (parts.length !== 2 || !parts[0] || !parts[1]) {
     throw new Error(
       `op: iTerm cookie request returned unexpected output: ${JSON.stringify(raw)}`,
     );
   }
-  return { cookie, key };
+  return { cookie: parts[0], key: parts[1] };
 }
 
 // Request a (cookie, key) pair from iTerm2 via AppleScript. This prompts the
