@@ -25,7 +25,7 @@ async function withTransport<T>(
 ): Promise<T> {
   const { transport, last } = fakeTransport(reply);
   const conn = await import("./connection");
-  conn.__setStateForTests({ transport, cookie: { cookie: "c", key: "k" }, port: 1 });
+  conn.__setStateForTests({ transport, cookie: { cookie: "c", key: "k" }, socketPath: "/tmp/fake" });
   const client = await import("./client");
   client.configureClient({ version: "test" });
   try {

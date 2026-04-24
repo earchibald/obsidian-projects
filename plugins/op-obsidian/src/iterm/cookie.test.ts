@@ -3,29 +3,16 @@ import { promises as fs } from "fs";
 import * as os from "os";
 import * as path from "path";
 import {
+  API_SOCKET_PATH,
   loadCachedCookie,
   parseCookieAndKey,
-  parsePort,
   saveCachedCookie,
   type SafeStorageLike,
 } from "./cookie";
 
 describe("iterm cookie", () => {
-  it("parses a port file with trailing newline", () => {
-    expect(parsePort("51234\n")).toBe(51234);
-  });
-
-  it("parses a port file without trailing newline", () => {
-    expect(parsePort("51234")).toBe(51234);
-  });
-
-  it("rejects a non-numeric port file", () => {
-    expect(() => parsePort("not-a-number")).toThrowError(/iTerm api port file/);
-  });
-
-  it("rejects an out-of-range port", () => {
-    expect(() => parsePort("99999")).toThrowError(/iTerm api port file/);
-    expect(() => parsePort("0")).toThrowError(/iTerm api port file/);
+  it("points at iTerm2's unix API socket", () => {
+    expect(API_SOCKET_PATH).toMatch(/iTerm2\/private\/socket$/);
   });
 
   it("parses a cookie/key pair separated by tab", () => {
