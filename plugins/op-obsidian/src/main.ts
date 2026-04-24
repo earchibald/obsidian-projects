@@ -22,6 +22,8 @@ import { appendCommit, setPr } from "./commits";
 import { setScope } from "./setScope";
 import { setEvaluation } from "./setEvaluation";
 import { setFlow } from "./setFlow";
+import { runEvaluatorFlow } from "./evaluator";
+import { launchHeadless } from "./launchHeadless";
 import {
   closeGithubIssue,
   createGithubIssue,
@@ -710,8 +712,8 @@ export default class OpPlugin extends Plugin {
       new NewIssueModal(
         this.app,
         project,
-        (input, andPlan) => {
-          this.submitCreateIssue(input, { launchPlan: andPlan });
+        (input, opts) => {
+          this.submitCreateIssue(input, opts);
         },
         { autoCreateGithubIssue: this.settings.github.autoCreateGithubIssue },
       ).open();
@@ -751,7 +753,7 @@ export default class OpPlugin extends Plugin {
 
   private async submitCreateIssue(
     input: CreateIssueInput,
-    opts: { launchPlan?: boolean } = {},
+    opts: { launchPlan?: boolean; startFlow?: boolean } = {},
   ): Promise<void> {
     try {
       const res = await createIssue(this.app, this.store, input);
@@ -774,9 +776,46 @@ export default class OpPlugin extends Plugin {
           new Notice(`op: could not resolve ${res.id} to launch plan-mode agent`);
         }
       }
+      if (opts.startFlow) {
+        const entry = this.store.byPath(res.path);
+        if (entry && entry.type === "issue") {
+          void this.runEvaluatorForIssue(entry, input);
+        } else {
+          new Notice(`op: could not resolve ${res.id} to launch evaluator`);
+        }
+      }
     } catch (err: any) {
       console.error("[op-obsidian] createIssue failed", err);
       new Notice(`op: create failed — ${err?.message ?? err}`);
+    }
+  }
+
+  private async runEvaluatorForIssue(
+    entry: IssueEntry,
+    input: CreateIssueInput,
+  ): Promise<void> {
+    new Notice(`op: evaluating ${entry.id} — running op-evaluate…`, 6000);
+    const body = (input.scope ?? []).map((s) => `- ${s}`).join("\n");
+    try {
+      const result = await runEvaluatorFlow(
+        {
+          launch: launchHeadless,
+          setEvaluation: (e, evaluation) => setEvaluation(this.app, e, evaluation),
+          setFlow: (e, i) => setFlow(this.app, e, i),
+        },
+        entry,
+        body,
+      );
+      new Notice(
+        `op: ${entry.id} evaluated — complexity=${result.complexity}. Advance manually via the command palette.`,
+        8000,
+      );
+    } catch (err: any) {
+      console.error("[op-obsidian] evaluator flow failed", err);
+      new Notice(
+        `op: evaluator failed for ${entry.id} — ${err?.message ?? err}. Leaving flow unset; retry manually.`,
+        10000,
+      );
     }
   }
 
