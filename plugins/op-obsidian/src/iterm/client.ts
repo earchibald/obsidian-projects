@@ -43,6 +43,25 @@ function invocation(method: string, argName: string, value: string): string {
   return `${method}(${argName}: ${JSON.stringify(value)})`;
 }
 
+// Profile overrides needed to actually run `command` on session startup
+// instead of the profile's default login shell. iTerm's profile has two
+// related keys: `Command` holds the command, and `Custom Command` is the
+// "Yes"/"No" string flag that gates whether `Command` is used at all. If you
+// only set `Command`, iTerm silently runs the default shell — you get a
+// window but nothing executes. Setting both makes the override take effect.
+function customCommandProperties(command: string): iterm2.ProfileProperty[] {
+  return [
+    iterm2.ProfileProperty.create({
+      key: "Custom Command",
+      jsonValue: JSON.stringify("Yes"),
+    }),
+    iterm2.ProfileProperty.create({
+      key: "Command",
+      jsonValue: JSON.stringify(command),
+    }),
+  ];
+}
+
 export async function createWindow(command: string): Promise<CreateWindowResult> {
   // Raise iTerm first so the new window is visible when it appears. The
   // legacy AppleScript did `activate` before `create window`.
@@ -57,12 +76,7 @@ export async function createWindow(command: string): Promise<CreateWindowResult>
 
   const reply = await call({
     createTabRequest: iterm2.CreateTabRequest.create({
-      customProfileProperties: [
-        iterm2.ProfileProperty.create({
-          key: "Command",
-          jsonValue: JSON.stringify(command),
-        }),
-      ],
+      customProfileProperties: customCommandProperties(command),
     }),
   });
   const sub = reply.createTabResponse;
@@ -88,12 +102,7 @@ export async function splitSession(
         dir === "vertical"
           ? iterm2.SplitPaneRequest.SplitDirection.VERTICAL
           : iterm2.SplitPaneRequest.SplitDirection.HORIZONTAL,
-      customProfileProperties: [
-        iterm2.ProfileProperty.create({
-          key: "Command",
-          jsonValue: JSON.stringify(command),
-        }),
-      ],
+      customProfileProperties: customCommandProperties(command),
     }),
   });
   const sub = reply.splitPaneResponse;
@@ -110,13 +119,19 @@ export async function splitSession(
   return newId;
 }
 
-// iTerm's session name drives the tab/pane title. We drive it via
-// InvokeFunctionRequest{context=Session, invocation=`set_name(name: "...")`}
-// — the same RPC the Python `session.async_set_name` uses.
+// iTerm's session name drives the tab/pane title. The proto documents
+// `session.set_name(name: String)` as a builtin *method* (not a registered
+// function), so the correct InvokeFunctionRequest context is
+// `Method { receiver: <session_id> }` and the invocation is the bare
+// `iterm2.set_name(name: …)` — this is what the Python library's
+// `async_invoke_method` wire path sends. The earlier `Session {}` context
+// targeted the session-scoped *registered-function* table instead, which
+// errors with "No function registered" even on installs where the scripting
+// runtime is present.
 export async function setSessionName(sessionId: string, name: string): Promise<void> {
   const reply = await call({
     invokeFunctionRequest: iterm2.InvokeFunctionRequest.create({
-      session: iterm2.InvokeFunctionRequest.Session.create({ sessionId }),
+      method: iterm2.InvokeFunctionRequest.Method.create({ receiver: sessionId }),
       invocation: invocation("iterm2.set_name", "name", name),
     }),
   });
@@ -124,12 +139,13 @@ export async function setSessionName(sessionId: string, name: string): Promise<v
 }
 
 // Best-effort — iTerm's window title has historically been read-only under
-// some builds. Mirror the AppleScript behaviour: attempt, swallow on error.
+// some builds. Use the `Method` context (same reason as setSessionName above).
+// Mirror the AppleScript behaviour: attempt, swallow on error.
 export async function setWindowName(windowId: string, name: string): Promise<void> {
   try {
     const reply = await call({
       invokeFunctionRequest: iterm2.InvokeFunctionRequest.create({
-        window: iterm2.InvokeFunctionRequest.Window.create({ windowId }),
+        method: iterm2.InvokeFunctionRequest.Method.create({ receiver: windowId }),
         invocation: invocation("iterm2.set_title", "title", name),
       }),
     });

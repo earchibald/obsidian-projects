@@ -45,16 +45,19 @@ export const API_SOCKET_PATH = path.join(
   "socket",
 );
 
-// Parse the raw AppleScript response, which iTerm2 returns as a tab-separated
-// "cookie<TAB>key" pair. Exported for tests.
+// Parse the raw AppleScript response. iTerm2 returns a two-element list from
+// `request cookie and key …`, which `osascript` renders as the two strings
+// separated by a single space (or, on some macOS builds, by a tab). Split on
+// any run of whitespace — both tokens are fixed-shape hex/UUID strings, so a
+// whitespace split is unambiguous.
 export function parseCookieAndKey(raw: string): CookieAndKey {
-  const [cookie, key] = raw.trim().split("\t");
-  if (!cookie || !key) {
+  const parts = raw.trim().split(/\s+/);
+  if (parts.length !== 2 || !parts[0] || !parts[1]) {
     throw new Error(
       `op: iTerm cookie request returned unexpected output: ${JSON.stringify(raw)}`,
     );
   }
-  return { cookie, key };
+  return { cookie: parts[0], key: parts[1] };
 }
 
 // Request a (cookie, key) pair from iTerm2 via AppleScript. This prompts the

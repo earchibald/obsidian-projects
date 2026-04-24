@@ -119,9 +119,10 @@ describe("client write ops (fake transport)", () => {
         const res = await createWindow("bash /tmp/x.sh");
         expect(res).toEqual({ windowId: "w-1", sessionId: "s-1" });
         // Last captured call is the createTab (the pre-activate fires first).
-        const prop = last.msg?.createTabRequest?.customProfileProperties?.[0];
-        expect(prop?.key).toBe("Command");
-        expect(prop?.jsonValue).toBe(JSON.stringify("bash /tmp/x.sh"));
+        const props = last.msg?.createTabRequest?.customProfileProperties ?? [];
+        const byKey = Object.fromEntries(props.map((p) => [p.key, p.jsonValue]));
+        expect(byKey["Custom Command"]).toBe(JSON.stringify("Yes"));
+        expect(byKey["Command"]).toBe(JSON.stringify("bash /tmp/x.sh"));
       },
     );
   });
@@ -143,9 +144,10 @@ describe("client write ops (fake transport)", () => {
         expect(msg?.splitPaneRequest?.splitDirection).toBe(
           iterm2.SplitPaneRequest.SplitDirection.VERTICAL,
         );
-        const prop = msg?.splitPaneRequest?.customProfileProperties?.[0];
-        expect(prop?.key).toBe("Command");
-        expect(prop?.jsonValue).toBe(JSON.stringify("bash -lc cmd"));
+        const props = msg?.splitPaneRequest?.customProfileProperties ?? [];
+        const byKey = Object.fromEntries(props.map((p) => [p.key, p.jsonValue]));
+        expect(byKey["Custom Command"]).toBe(JSON.stringify("Yes"));
+        expect(byKey["Command"]).toBe(JSON.stringify("bash -lc cmd"));
       },
     );
   });
@@ -167,15 +169,16 @@ describe("client write ops (fake transport)", () => {
     );
   });
 
-  it("setSessionName invokes iterm2.set_name with JSON-escaped name", async () => {
+  it("setSessionName invokes iterm2.set_name via the Method context with JSON-escaped name", async () => {
     await withTransport(
       { invokeFunctionResponse: { success: { jsonResult: "null" } } },
       async (last) => {
         const { setSessionName } = await import("./client");
         await setSessionName("sess", 'name with "quote"');
-        const inv = last.msg?.invokeFunctionRequest?.invocation;
-        expect(inv).toBe(`iterm2.set_name(name: ${JSON.stringify('name with "quote"')})`);
-        expect(last.msg?.invokeFunctionRequest?.session?.sessionId).toBe("sess");
+        const req = last.msg?.invokeFunctionRequest;
+        expect(req?.invocation).toBe(`iterm2.set_name(name: ${JSON.stringify('name with "quote"')})`);
+        expect(req?.method?.receiver).toBe("sess");
+        expect(req?.session?.sessionId).toBeFalsy();
       },
     );
   });

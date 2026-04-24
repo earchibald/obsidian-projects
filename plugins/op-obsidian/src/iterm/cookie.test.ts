@@ -20,6 +20,16 @@ describe("iterm cookie", () => {
     expect(pair).toEqual({ cookie: "abc123", key: "xyz789" });
   });
 
+  it("parses a cookie/key pair separated by a single space (osascript list rendering)", () => {
+    const pair = parseCookieAndKey(
+      "474e1b203be9b53087003c4444531354 9F541B4D-DDF2-492D-99B4-BC65E1BF0730\n",
+    );
+    expect(pair).toEqual({
+      cookie: "474e1b203be9b53087003c4444531354",
+      key: "9F541B4D-DDF2-492D-99B4-BC65E1BF0730",
+    });
+  });
+
   it("rejects a cookie response missing the key", () => {
     expect(() => parseCookieAndKey("only-cookie\n")).toThrowError(/iTerm cookie request/);
   });
