@@ -136,3 +136,43 @@ export function parseScaffoldParams(
   if (!prefix) return { ok: false, error: "--prefix is required" };
   return { ok: true, value: { slug, prefix } };
 }
+
+export function parseSetLinkParams(
+  params: Record<string, string>,
+): ParamsResult<{ srcId: string; dstId: string; relation: string }> {
+  const srcId = params.issue ?? params.id ?? params.src;
+  const dstId = params.target ?? params.dst;
+  const relation = params.relation;
+  if (!srcId || !dstId || !relation) {
+    return {
+      ok: false,
+      error:
+        "op-set-link failed: --issue, --relation, --target all required",
+    };
+  }
+  return { ok: true, value: { srcId, dstId, relation } };
+}
+
+export function parseRemoveLinkParams(
+  params: Record<string, string>,
+): ParamsResult<{ srcId: string; dstId: string; relation: string }> {
+  const srcId = params.issue ?? params.id ?? params.src;
+  const dstId = params.target ?? params.dst;
+  const relation = params.relation;
+  if (!srcId || !dstId || !relation) {
+    return {
+      ok: false,
+      error:
+        "op-remove-link failed: --issue, --relation, --target all required",
+    };
+  }
+  return { ok: true, value: { srcId, dstId, relation } };
+}
+
+export function parseLinkCheckParams(
+  params: Record<string, string>,
+): ParamsResult<{ repair: boolean }> {
+  const raw = params.repair;
+  const repair = raw === "1" || raw === "true";
+  return { ok: true, value: { repair } };
+}

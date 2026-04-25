@@ -56,6 +56,10 @@ All `op-*` commands take `key=value` arguments (not `--flag`). Each prints a one
 | `op-append-commit` | `issue`, `sha`, `subject` | — | idempotent append to issue's `commits:` list |
 | `op-set-pr` | `issue`, `url` | — | sets scalar `pr:` |
 | `op-set-scope` | `issue`, `scope` | `mode=scope\|body` | default `mode=scope` replaces the issue body's `## Scope` section (appends it if missing); payload is markdown without H2 headings. `mode=body` replaces the entire body content after the optional `# Title` heading; payload may include H2s. This is the one mutation the plan-mode agent is allowed, so it can persist a refined plan back to the issue note. |
+| `op-set-link` | `issue`, `relation`, `target` | — | writes both sides of an inter-issue link atomically. Plugin owns the inverse — agents MUST NOT touch link frontmatter directly. Relations: `parent` / `children` (many-to-one), `depends_on` / `depended_on_by` (many-to-many), `related_to` (symmetric). |
+| `op-remove-link` | `issue`, `relation`, `target` | — | removes both sides of a link. Idempotent. |
+| `op-link-check` | — | `repair=true` | walks every issue, reports any one-sided link drift (`missing-inverse` / `dangling-target`); with `repair=true` reconciles drift by re-applying links. |
+| `op-migrate-links` | — | — | one-shot rewrite of legacy `parent_issue` / `subissues` to canonical `parent` / `children`. Idempotent. |
 | `op-resolve` (or `op-close-current-issue`) | `issue` (or `path`) | `status=wontfix` | sets `status: resolved`, writes `resolved: <today>`, moves into `RESOLVED ISSUES/`, trashes linked TASKS — atomically. When `closeGithubIssueOnResolve` is on and the issue has a `github_issue:` URL, also runs `gh issue close` on it; the JSON response reports `githubClosed` / `githubCloseError` |
 
 `scope` is a single value containing newline-separated bullets.
@@ -143,7 +147,36 @@ Skip both for meta-only projects with no git repo.
 - Missing or unknown issue id (the caller didn't pass one, or the id doesn't resolve to a file) → stop and ask the user for the `<PREFIX>-<N>`. Never append to a guessed issue — the `commits:` trail is a permanent record and wrong attribution is worse than a missing entry.
 - `obsidian op-append-commit` returns an error (vault unreachable, plugin disabled, issue file moved mid-session) → re-probe the plugin (`app.plugins.enabledPlugins.has("op-obsidian")`) and re-resolve the issue path. If it still fails, record the `<sha7> <subject>` pair in the session (or a scratch note) and batch-append at resolve time; don't block the commit cadence on vault health.
 
-### GitHub issue linkage
+### Linking issues
+
+Issue-to-issue links live as plugin-managed frontmatter fields. **Never write `parent`, `children`, `depends_on`, `depended_on_by`, or `related_to` directly** — call `op-set-link` / `op-remove-link` and let the plugin maintain both sides. Direct frontmatter edits are tolerated for human convenience but `op-link-check` will flag the drift.
+
+Canonical relations and call shape:
+
+```bash
+# X is a child of umbrella Y (many-to-one)
+obsidian op-set-link issue=OP-95 relation=parent target=OP-92
+
+# Equivalent from the umbrella side (same effect — plugin writes both)
+obsidian op-set-link issue=OP-92 relation=children target=OP-95
+
+# X blocks on Y (many-to-many)
+obsidian op-set-link issue=OP-X relation=depends_on target=OP-Y
+
+# X and Y are related (symmetric)
+obsidian op-set-link issue=OP-X relation=related_to target=OP-Y
+
+# Remove a link (idempotent)
+obsidian op-remove-link issue=OP-95 relation=parent target=OP-92
+
+# Audit the entire vault for one-sided drift
+obsidian op-link-check                # report-only
+obsidian op-link-check repair=true    # reconcile drift in place
+```
+
+Resolved-folder issues are valid link targets — a parent→child link must remain valid after the child resolves and moves into `RESOLVED ISSUES/`. The plugin's resolver looks at both folders.
+
+When you discover a parent/child relationship mid-session, set the link with `op-set-link` and append a one-line note in the issue's `## Notes` block — don't paste a bare wikilink.
 
 If the issue has a `github_issue:` frontmatter field, it mirrors a GitHub issue. The URL may have been populated automatically at `op-new` time (when `autoCreateGithubIssue` is on) or set later via the plugin's "Set GitHub issue URL" command. While working, treat it as a one-way mirror: you may comment on, label, or reference the GH issue, but do **not** close it manually — the plugin closes it atomically during `op-resolve` (see below). If the user asks "is the GitHub issue still open?", check live state with `gh issue view <url>` rather than inferring from the op status.
 
