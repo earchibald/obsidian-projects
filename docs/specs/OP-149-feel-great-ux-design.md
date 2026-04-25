@@ -63,7 +63,9 @@ Sections are independent. Each `RECOMMEND` becomes a follow-up issue.
 **Proposed.**
 
 1. **Persist a recency log.** Every time `op-work`, `op-open-agent`, or sidebar-row-click fires, append `{issueId, at}` to `data.json` → `recent: [...]` (cap 25). Survives plugin reloads.
-2. **New command `op: resume last`** — opens the most recent issue note; if its agent session is still alive in tmux (`tmux has-session && tmux list-windows | grep`), reattaches via the existing terminal launch path; otherwise just opens the note.
+2. **New command `op: resume last`** — opens the most recent issue note; if its agent session is still alive in tmux, reattaches via the existing terminal launch path; otherwise just opens the note.
+
+   **Implementation note: never use a shell pipeline for the liveness check.** The naive form `tmux list-windows … | grep <id>` is wrong on two counts: (a) it requires `child_process.exec` (a shell), opening an injection surface if `<id>` is ever derived from untrusted input; (b) `grep` is a substring match, so the window name `OP-3` matches `OP-31` (the codebase already documents this trap in `terminalLaunch.ts` — `grep -Fxq` is used there for the same reason). Use `child_process.execFile(tmux, ['list-windows', '-t', 'op-agents', '-F', '#W'])` and split the stdout into lines, then test for an **exact** match with the `tmuxWindowName(id)` helper (already exported from `terminalLaunch.ts`). No shell, no substring matches.
 3. **Sidebar header chip.** Above the tab strip, a single line: `Last touched: OP-72 · agent attached · 2h ago` — clickable, executes `op: resume last`. Empty when `recent` is empty.
 4. **Liveness probe in sidebar render.** Every 5s (only when sidebar is visible — drop the timer on `onClose`), probe `tmux list-windows -t op-agents -F '#W'` once, intersect with rendered `agent:` badges, and demote ghost badges (agent set in FM but no tmux window) to a muted "stale" style. This eliminates the "is this badge real or stale?" cognitive load.
 
@@ -105,7 +107,9 @@ flowchart TD
 
 **Liveness probe exec timeout.** `tmux list-windows` under normal conditions takes 1–5ms. Under pathological conditions (tmux zombie process, NFS home directory, kernel scheduling hiccup), the exec can hang indefinitely. The probe runs on the main thread via `child_process.execSync` and will block the sidebar render if it hangs. Fix: use `execSync` with an explicit `timeout` option: `execSync('tmux list-windows -t op-agents -F \'#W\'', { timeout: 500 })` — 500ms is generous for any healthy tmux and will throw if exceeded, which the caller already handles as "tmux unavailable". This prevents the render thread from stalling.
 
-**Cost / risk.** Small. Recency log is ~30 LoC. Liveness probe is one `tmux` exec on a 5s interval gated on visibility — negligible. The probe is the only new platform call; on non-macOS it no-ops (tmux available everywhere we ship). The corruption-guard and exec-timeout together add ~5 LoC.
+**Platform scope.** The plugin's terminal-launch code path is **macOS-only** (`launchInTerminal()` throws `op: terminal launch currently supports macOS only` on any non-darwin platform). The recency log itself is platform-agnostic — `op: resume last` on Linux/Windows would still open the last issue's note, just without the agent re-attach step. On non-macOS, treat liveness probe results as "unknown" and render badges in their default style (no muted/stale demotion). This keeps the spec accurate for future implementers and avoids an implicit assumption that tmux is callable on every host.
+
+**Cost / risk.** Small. Recency log is ~30 LoC. Liveness probe is one `tmux` exec on a 5s interval gated on visibility — negligible. The probe is macOS-only (no-ops elsewhere). The corruption-guard, exec-timeout, and platform-guard together add ~10 LoC.
 
 **Verdict.** `RECOMMEND` — leads. Highest leverage per LoC in the spec.
 
@@ -220,6 +224,8 @@ flowchart TD
 ```
 
 **Why it feels better.** Out of the box the user has a working keyboard workflow. Today the answer to "how do I drive this with the keyboard?" is "go bind 27 commands, good luck." The pick-and-act modal is the single most ergonomic surface for keyboard-only work — far better than a chord scheme that Obsidian doesn't natively support.
+
+**`app.hotkeyManager.customKeys` is an internal Obsidian surface — fallback path required.** The cleanest implementation writes directly to `app.hotkeyManager.customKeys` (the same field the Settings → Hotkeys UI mutates) and calls `app.hotkeyManager.save()`. This works today but the field is undocumented and could change across Obsidian minor versions. The implementation must therefore wrap that call in a `try` and fall back to a degraded path if it throws or if `customKeys` is missing: **(a)** generate a JSON snippet of the bindings the user can paste into a Templater/QuickAdd macro, displayed in a copy-to-clipboard modal; **(b)** include a `[Open Hotkeys settings]` button that runs `app.setting.openTabById('hotkeys')` and a Notice listing the seven commands to bind. This keeps the feature alive across Obsidian API drift; the degraded path is uglier but never a hard failure.
 
 **Hotkey collision strategy — decided.** "Best effort, show what was skipped." When the user clicks "Apply op default", the plugin calls `app.hotkeyManager.customKeys` for each target binding. If a target key is already bound to another command, the preset skips that binding and adds the skipped pair to a reported list. After applying, the plugin opens a modal (or a Notice for small counts) that says: "Applied 6 of 8 bindings. Skipped: `⌘⇧L` (bound to Note Export → export as PDF), `⌘⇧A` (bound to Admonition → insert). You can rebind these manually in Settings → Hotkeys." "All or nothing" is wrong — it destroys the value of the preset for any power user with an existing setup. Silently skipping without reporting is also wrong — it leaves the user with a partially working preset and no idea why two shortcuts don't work. The best-effort-plus-report pattern is what Obsidian itself uses for theme CSS variables and is the least surprising behavior.
 
