@@ -8,6 +8,8 @@ describe("pickLayout", () => {
     expect(pickLayout(3, { maxRows: 3, maxCols: 3 })).toBe("3");
     expect(pickLayout(4, { maxRows: 3, maxCols: 3 })).toBe("2x2");
     expect(pickLayout(5, { maxRows: 3, maxCols: 3 })).toBe("2+3");
+    expect(pickLayout(6, { maxRows: 3, maxCols: 3 })).toBe("2x3");
+    expect(pickLayout(7, { maxRows: 3, maxCols: 3 })).toBe("2x3+2");
     expect(pickLayout(8, { maxRows: 3, maxCols: 3 })).toBe("2x3+2");
     expect(pickLayout(9, { maxRows: 3, maxCols: 3 })).toBe("3x3");
   });

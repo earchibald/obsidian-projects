@@ -122,7 +122,7 @@ export const DEFAULT_SETTINGS: OpSettings = {
     enabled: false,
     maxRows: 3,
     maxCols: 3,
-    preferred: "2x2",
+    preferred: "2x3",
   },
   orchestratorState: emptyRegistry(),
   projectOrder: [],
