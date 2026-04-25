@@ -31,6 +31,7 @@ Projects/<project-slug>/
 ---
 id: <PROJECT-N>          # e.g. JB-2  — stable, never changes
 project: <slug>          # e.g. jira-bases
+title: "<full title>"    # full pre-sanitization title; filenames are truncated and have forbidden chars stripped, this field keeps the original
 type: issue
 status: open | in-progress | blocked | resolved | wontfix
 priority: low | med | high
@@ -63,6 +64,8 @@ tags:
 Example: `JB-2 prepend id to issue filenames.md`
 
 Why: keeps the project key visible in file lists and makes wikilinks from TASKS self-documenting.
+
+**Title field.** The filename is sanitized (forbidden chars `#^[]|\/:?"<>*` replaced with spaces, capped at 80 chars at a word boundary) and may lose information. `title:` in frontmatter holds the full original title verbatim, JSON-quoted so YAML parses safely. Bases views and pickers prefer it over the file basename. Plugin-managed at `op-new` — agents shouldn't write it directly.
 
 **Body:** one-line summary checklist at minimum. Agents may expand freely.
 

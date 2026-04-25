@@ -95,7 +95,7 @@ export async function createIssue(
     priority: input.priority ?? "med",
     assignee: input.assignee ?? "earchibald",
     githubIssue: input.githubIssue?.trim() || undefined,
-    title: file.basename,
+    title: input.title,
     resolvedFolder: false,
   };
   return { file, id, path, project, entry };
