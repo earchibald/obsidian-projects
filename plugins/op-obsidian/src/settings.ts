@@ -29,6 +29,7 @@ export type {
   ViewSettings,
   GithubSettings,
   AgentsSettings,
+  FlowSettings,
   OpSettings,
 } from "./settingsPure";
 
@@ -570,6 +571,45 @@ export class OpSettingsTab extends PluginSettingTab {
           s.agents.enforceWorktree = v;
           await this.plugin.saveSettings();
           await this.plugin.reinstallAgentHooks();
+        }),
+      );
+
+    containerEl.createEl("h2", { text: "Flow chaining" });
+    containerEl.createEl("p", {
+      text: "Drives automatic stage-to-stage progression: evaluate → planning|implementation, planning → implementation, implementation → review, review → finalization. The SessionEnd hook fires when an agent exits cleanly; if Auto-advance is on, op writes the next `flow:` value to the issue note and launches the next agent. Otherwise the new flow stays pinned and the user resumes manually via `op-launch-next-stage`.",
+      cls: "setting-item-description",
+    });
+
+    new Setting(containerEl)
+      .setName("Auto-advance flow on SessionEnd")
+      .setDesc("When an agent exits cleanly, automatically launch the next stage per the flow transition matrix. Off by default — the new `flow:` value is still set, but the user runs `op-launch-next-stage` to relaunch.")
+      .addToggle((t) =>
+        t.setValue(s.flow.autoAdvance).onChange(async (v) => {
+          s.flow.autoAdvance = v;
+          await this.plugin.saveSettings();
+        }),
+      );
+
+    new Setting(containerEl)
+      .setName("Allow finalize agent to merge PR")
+      .setDesc("Read by the finalize-mode preamble. When off, the agent stops before `gh pr merge` and asks for human confirmation. When on, the agent may merge directly. Off by default — destructive op gated behind explicit opt-in.")
+      .addToggle((t) =>
+        t.setValue(s.flow.autoMerge).onChange(async (v) => {
+          s.flow.autoMerge = v;
+          await this.plugin.saveSettings();
+        }),
+      );
+
+    new Setting(containerEl)
+      .setName("Headless agent timeout (ms)")
+      .setDesc("Timeout applied to flow-driven `claude -p` invocations (e.g. evaluator). Default 600000 (10 minutes).")
+      .addText((t) =>
+        t.setValue(String(s.flow.headlessTimeoutMs)).onChange(async (v) => {
+          const n = parseInt(v, 10);
+          if (Number.isFinite(n) && n > 0) {
+            s.flow.headlessTimeoutMs = n;
+            await this.plugin.saveSettings();
+          }
         }),
       );
   }
