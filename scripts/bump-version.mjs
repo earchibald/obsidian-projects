@@ -12,16 +12,21 @@
 // When npm invokes this via `npm version` it sets `npm_package_version` to the
 // already-bumped package.json — we detect that and mirror it to the other files.
 
-import { readFileSync, writeFileSync } from "node:fs";
+import { readFileSync, writeFileSync, statSync, existsSync } from "node:fs";
+import { spawnSync } from "node:child_process";
 import { join, dirname, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const root = join(here, "..");
 
+const pluginDir = join(root, "plugins/op-obsidian");
+const manifestPath = join(pluginDir, "manifest.json");
+const mainJsPath = join(pluginDir, "main.js");
+
 const targets = [
-  join(root, "plugins/op-obsidian/manifest.json"),
-  join(root, "plugins/op-obsidian/package.json"),
+  manifestPath,
+  join(pluginDir, "package.json"),
   join(root, "plugins/op/.claude-plugin/plugin.json"),
 ];
 
@@ -77,3 +82,45 @@ for (const path of targets) {
   writeJSON(path, obj);
   console.log(`${path} → ${next}`);
 }
+
+// Freshness gate (OP-105): rebuild plugins/op-obsidian/main.js and assert its
+// mtime is at or after the manifest we just wrote. Catches the OP-98 footgun
+// where main.js is gitignored and a hand-bumped manifest shipped with a stale
+// bundle.
+if (!existsSync(join(pluginDir, "node_modules"))) {
+  console.error(
+    `bump-version: ${relative(root, pluginDir)}/node_modules is missing — run \`npm ci\` (or \`npm install\`) in ${relative(root, pluginDir)} before bumping.`,
+  );
+  process.exit(1);
+}
+
+console.log(`bump-version: building ${relative(root, pluginDir)}/main.js …`);
+const build = spawnSync("npm", ["run", "build"], {
+  cwd: pluginDir,
+  stdio: "inherit",
+});
+
+if (build.status !== 0) {
+  console.error(
+    `bump-version: \`npm run build\` failed in ${relative(root, pluginDir)} (exit ${build.status}). Version files were bumped to ${next} — fix the source and re-run \`node scripts/bump-version.mjs ${next}\`.`,
+  );
+  process.exit(build.status ?? 1);
+}
+
+if (!existsSync(mainJsPath)) {
+  console.error(
+    `bump-version: build returned 0 but ${relative(root, mainJsPath)} is missing — esbuild config likely broken.`,
+  );
+  process.exit(1);
+}
+
+const mainMtime = statSync(mainJsPath).mtimeMs;
+const manifestMtime = statSync(manifestPath).mtimeMs;
+if (mainMtime < manifestMtime) {
+  console.error(
+    `bump-version: ${relative(root, mainJsPath)} mtime (${new Date(mainMtime).toISOString()}) is older than ${relative(root, manifestPath)} (${new Date(manifestMtime).toISOString()}). Build did not refresh the bundle.`,
+  );
+  process.exit(1);
+}
+
+console.log(`bump-version: ${relative(root, mainJsPath)} rebuilt and fresher than manifest — OK.`);
