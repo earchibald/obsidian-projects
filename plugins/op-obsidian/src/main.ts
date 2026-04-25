@@ -38,6 +38,7 @@ import {
   createGithubIssue,
   setGithubIssue,
 } from "./github";
+import { closeReasonForStatus } from "./githubPure";
 import { resolveRepoPath } from "./repoPath";
 import { writeUriResponse, type UriResponsePayload } from "./uriResponse";
 import { normalizeUriParams, collectRepeated } from "./uriParams";
@@ -215,7 +216,11 @@ export default class OpPlugin extends Plugin {
         new Notice(`op: no repo_path for ${entry.project} — skipping gh issue close`);
         return;
       }
-      return closeGithubIssue(repoPath, entry.githubIssue).catch((err: any) => {
+      return closeGithubIssue(
+        repoPath,
+        entry.githubIssue,
+        closeReasonForStatus(entry.status),
+      ).catch((err: any) => {
         const msg = err?.message ?? String(err);
         console.error("[op-obsidian] gh issue close failed", msg);
         new Notice(`op: gh issue close failed — ${msg}`);
@@ -1223,7 +1228,7 @@ export default class OpPlugin extends Plugin {
           new Notice(`op: no repo_path for ${entry.project} — skipping gh issue close`);
           return;
         }
-        await closeGithubIssue(repoPath, entry.githubIssue);
+        await closeGithubIssue(repoPath, entry.githubIssue, closeReasonForStatus(entry.status));
       },
     };
   }
