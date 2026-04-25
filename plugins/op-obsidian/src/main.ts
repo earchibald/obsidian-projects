@@ -605,6 +605,9 @@ export default class OpPlugin extends Plugin {
     }
 
     // Install hooks in the background so SessionEnd reports land reliably.
+    // Intentionally ungated — this is the silent background path that must
+    // always run regardless of showDevCommands. Only the *palette command*
+    // (above) is gated; removing it from the palette does not disable hooks.
     void this.runInstallAgentHooks(false);
 
     const resolveFlags = {

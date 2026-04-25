@@ -170,6 +170,9 @@ describe("mergeSettings", () => {
     expect(mergeSettings({ developer: "garbage" as unknown as object }).developer.showDevCommands).toBe(
       false,
     );
+    // null and array inputs fall through to default (matches agents/github pattern)
+    expect(mergeSettings({ developer: null as unknown as object }).developer.showDevCommands).toBe(false);
+    expect(mergeSettings({ developer: [] as unknown as object }).developer.showDevCommands).toBe(false);
   });
 
   it("projectOrder rejects non-array, drops non-string / blank / duplicate entries", () => {

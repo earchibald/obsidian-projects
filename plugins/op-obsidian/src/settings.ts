@@ -767,6 +767,7 @@ export class OpSettingsTab extends PluginSettingTab {
         t.setValue(s.developer.showDevCommands).onChange(async (v) => {
           s.developer.showDevCommands = v;
           await this.plugin.saveSettings();
+          new Notice("Reload the plugin to apply — Settings → Community plugins → op-obsidian → toggle off then on.", 8000);
         }),
       );
   }
