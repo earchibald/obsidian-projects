@@ -61,6 +61,10 @@ export interface OpSettings {
   flow: FlowSettings;
   orchestrator: OrchestratorSettings;
   orchestratorState: RegistryData;
+  // User-curated display order for project pickers, by slug. Slugs not in this
+  // list (e.g. newly-discovered projects) sort lexically at the tail. Empty
+  // array ⇒ pure lexical sort (the historical default).
+  projectOrder: string[];
 }
 
 export const DEFAULT_SETTINGS: OpSettings = {
@@ -102,6 +106,7 @@ export const DEFAULT_SETTINGS: OpSettings = {
     preferred: "2x2",
   },
   orchestratorState: emptyRegistry(),
+  projectOrder: [],
 };
 
 const SIDEBAR_TABS: ReadonlySet<SidebarTab> = new Set(["issues", "in-flight", "resolved"]);
@@ -166,6 +171,18 @@ export function mergeSettings(loaded: unknown): OpSettings {
     if (typeof a.enforceWorktree === "boolean") {
       base.agents.enforceWorktree = a.enforceWorktree;
     }
+  }
+  if (Array.isArray((l as { projectOrder?: unknown }).projectOrder)) {
+    const seen = new Set<string>();
+    const out: string[] = [];
+    for (const v of (l as { projectOrder: unknown[] }).projectOrder) {
+      if (typeof v !== "string") continue;
+      const trimmed = v.trim();
+      if (!trimmed || seen.has(trimmed)) continue;
+      seen.add(trimmed);
+      out.push(trimmed);
+    }
+    base.projectOrder = out;
   }
   if (l.flow && typeof l.flow === "object") {
     const f = l.flow as Partial<FlowSettings>;
