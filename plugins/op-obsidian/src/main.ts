@@ -21,9 +21,14 @@ import { workIssue } from "./workIssue";
 import { appendCommit, setPr } from "./commits";
 import { setScope } from "./setScope";
 import { setEvaluation } from "./setEvaluation";
-import { setFlow } from "./setFlow";
+import { setFlow, type Complexity, type Flow } from "./setFlow";
 import { runEvaluatorFlow } from "./evaluator";
 import { launchHeadless } from "./launchHeadless";
+import {
+  flowAdvanceDecision,
+  type FlowAdvanceOutput,
+  type FlowExitStatus,
+} from "./flowOrchestrator";
 import {
   closeGithubIssue,
   createGithubIssue,
@@ -377,6 +382,18 @@ export default class OpPlugin extends Plugin {
     });
 
     this.addCommand({
+      id: "op-launch-next-stage",
+      name: "op: launch next flow stage",
+      callback: () => this.runLaunchNextStageCommand(),
+    });
+
+    this.addCommand({
+      id: "op-reset-flow",
+      name: "op: reset flow / complexity",
+      callback: () => this.runResetFlowCommand(),
+    });
+
+    this.addCommand({
       id: "op-debug-agent-launch",
       name: "op-dev: open agent to debug agent launch",
       callback: () => void this.runDebugAgentLaunch(),
@@ -466,6 +483,18 @@ export default class OpPlugin extends Plugin {
     this.registerObsidianProtocolHandler("op-agent-ended", (params) => {
       this.runUri("op-agent-ended", normalizeUriParams(params), (p) =>
         this.handleOpAgentEndedUri(p),
+      );
+    });
+
+    this.registerObsidianProtocolHandler("op-launch-next-stage", (params) => {
+      this.runUri("op-launch-next-stage", normalizeUriParams(params), (p) =>
+        this.handleOpLaunchNextStageUri(p),
+      );
+    });
+
+    this.registerObsidianProtocolHandler("op-reset-flow", (params) => {
+      this.runUri("op-reset-flow", normalizeUriParams(params), (p) =>
+        this.handleOpResetFlowUri(p),
       );
     });
 
@@ -586,6 +615,24 @@ export default class OpPlugin extends Plugin {
         },
       },
       (params) => this.handleOpSetEvaluationCli(params),
+    );
+
+    this.registerCliHandler(
+      "op-launch-next-stage",
+      "Advance the issue's flow and launch the next stage's agent (ignores autoAdvance).",
+      {
+        issue: { value: "<id>", description: "Issue id (e.g. OP-34)" },
+      },
+      (params) => this.handleOpLaunchNextStageCli(params),
+    );
+
+    this.registerCliHandler(
+      "op-reset-flow",
+      "Clear `flow` and `complexity` frontmatter on an issue.",
+      {
+        issue: { value: "<id>", description: "Issue id (e.g. OP-34)" },
+      },
+      (params) => this.handleOpResetFlowCli(params),
     );
 
     this.registerCliHandler(
@@ -1532,7 +1579,190 @@ export default class OpPlugin extends Plugin {
       return { ok: true, command: "op-agent-ended", issueId: id, cleared: false };
     }
     await clearAgentOnIssue(this.app, entry.path);
-    return { ok: true, command: "op-agent-ended", issueId: id, path: entry.path, cleared: true };
+    // V1: the SessionEnd shell hook can't pass an exit code, so any URI hit is
+    // treated as a clean exit. Crashes don't fire SessionEnd at all, so they
+    // leave `flow:` pinned automatically. Future: hook reads `reason` from
+    // stdin and forwards `exit_status=abnormal`.
+    const exitStatus: FlowExitStatus = params.exit_status === "abnormal" ? "abnormal" : "clean";
+    let advanced: FlowAdvanceOutput | null = null;
+    if (this.settings.flow.autoAdvance) {
+      try {
+        advanced = await this.advanceFlowAndLaunch(entry, exitStatus);
+      } catch (err: any) {
+        console.error("[op-obsidian] flow auto-advance failed", err);
+        new Notice(`op: flow auto-advance failed — ${err?.message ?? err}`);
+      }
+    }
+    return {
+      ok: true,
+      command: "op-agent-ended",
+      issueId: id,
+      path: entry.path,
+      cleared: true,
+      exitStatus,
+      autoAdvance: this.settings.flow.autoAdvance,
+      advancedTo: advanced ? advanced.nextFlow : undefined,
+      launchedMode: advanced ? advanced.nextMode : undefined,
+    };
+  }
+
+  /**
+   * Read `flow`/`complexity` from the issue's frontmatter, run the orchestrator
+   * decision, write the new `flow:` value, then launch the next stage's agent.
+   * Returns the decision so callers can include it in their response payload.
+   * Returns `null` when no advance is possible (terminal stage, missing
+   * complexity at evaluate, or abnormal exit).
+   */
+  private async advanceFlowAndLaunch(
+    entry: IssueEntry,
+    exitStatus: FlowExitStatus,
+  ): Promise<FlowAdvanceOutput | null> {
+    const { flow, complexity } = this.readFlowState(entry.path);
+    const decision = flowAdvanceDecision({ flow, complexity, exitStatus });
+    if (!decision) return null;
+    await setFlow(this.app, entry, { flow: decision.nextFlow });
+    // Yield once so the metadataCache `changed` event has a chance to fan
+    // through IssueStore before we re-read. openAgent itself is fine with the
+    // stale entry, but we prefer the freshly-parsed copy when available so any
+    // dependent state (status, path after rename) is current.
+    await new Promise((r) => setTimeout(r, 0));
+    const refreshed = this.store.byId(entry.id);
+    const target = refreshed && refreshed.type === "issue" ? refreshed : entry;
+    await this.doOpenAgent(target, { mode: decision.nextMode });
+    return decision;
+  }
+
+  private runLaunchNextStageCommand(): void {
+    this.pickIssueInteractive(async (entry) => {
+      try {
+        const decision = await this.advanceFlowAndLaunch(entry, "clean");
+        if (!decision) {
+          new Notice(
+            `op: ${entry.id} has no next flow stage to launch — set complexity, or current stage is terminal`,
+          );
+        }
+      } catch (err: any) {
+        console.error("[op-obsidian] op-launch-next-stage failed", err);
+        new Notice(`op-launch-next-stage failed: ${err?.message ?? err}`);
+      }
+    });
+  }
+
+  private runResetFlowCommand(): void {
+    this.pickIssueInteractive(async (entry) => {
+      try {
+        await setFlow(this.app, entry, { flow: null, complexity: null });
+        new Notice(`op: ${entry.id} flow + complexity cleared`);
+      } catch (err: any) {
+        console.error("[op-obsidian] op-reset-flow failed", err);
+        new Notice(`op-reset-flow failed: ${err?.message ?? err}`);
+      }
+    });
+  }
+
+  private async handleOpLaunchNextStageUri(
+    params: Record<string, string>,
+  ): Promise<UriResponsePayload> {
+    const id = params.id ?? params.issue;
+    if (!id) throw new Error("op-launch-next-stage URI requires id");
+    const entry = this.resolveByIdOrThrow(id);
+    const decision = await this.advanceFlowAndLaunch(entry, "clean");
+    return {
+      ok: true,
+      command: "op-launch-next-stage",
+      issueId: entry.id,
+      path: entry.path,
+      advancedTo: decision ? decision.nextFlow : undefined,
+      launchedMode: decision ? decision.nextMode : undefined,
+    };
+  }
+
+  private async handleOpResetFlowUri(
+    params: Record<string, string>,
+  ): Promise<UriResponsePayload> {
+    const id = params.id ?? params.issue;
+    if (!id) throw new Error("op-reset-flow URI requires id");
+    const entry = this.resolveByIdOrThrow(id);
+    const res = await setFlow(this.app, entry, { flow: null, complexity: null });
+    return {
+      ok: true,
+      command: "op-reset-flow",
+      issueId: res.issueId,
+      path: res.path,
+    };
+  }
+
+  private async handleOpLaunchNextStageCli(params: Record<string, string>): Promise<string> {
+    const command = "op-launch-next-stage";
+    try {
+      const id = params.issue ?? params.id;
+      if (!id) {
+        const error = `${command} failed: --issue is required`;
+        await writeUriResponse(this.app, { ok: false, command, error });
+        return error;
+      }
+      const entry = this.resolveByIdOrThrow(id);
+      const decision = await this.advanceFlowAndLaunch(entry, "clean");
+      await writeUriResponse(this.app, {
+        ok: true,
+        command,
+        issueId: entry.id,
+        path: entry.path,
+        advancedTo: decision ? decision.nextFlow : undefined,
+        launchedMode: decision ? decision.nextMode : undefined,
+      });
+      if (!decision) {
+        return `${command}: ${entry.id} no advance available (set complexity, or stage is terminal)`;
+      }
+      return `${command}: ${entry.id} → ${decision.nextFlow} (mode ${decision.nextMode})`;
+    } catch (err: any) {
+      const msg = err?.message ?? String(err);
+      console.error("[op-obsidian]", command, err);
+      await writeUriResponse(this.app, { ok: false, command, error: msg });
+      return `${command} failed: ${msg}`;
+    }
+  }
+
+  private async handleOpResetFlowCli(params: Record<string, string>): Promise<string> {
+    const command = "op-reset-flow";
+    try {
+      const id = params.issue ?? params.id;
+      if (!id) {
+        const error = `${command} failed: --issue is required`;
+        await writeUriResponse(this.app, { ok: false, command, error });
+        return error;
+      }
+      const entry = this.resolveByIdOrThrow(id);
+      const res = await setFlow(this.app, entry, { flow: null, complexity: null });
+      await writeUriResponse(this.app, {
+        ok: true,
+        command,
+        issueId: res.issueId,
+        path: res.path,
+      });
+      return `${command}: ${res.issueId} flow + complexity cleared`;
+    } catch (err: any) {
+      const msg = err?.message ?? String(err);
+      console.error("[op-obsidian]", command, err);
+      await writeUriResponse(this.app, { ok: false, command, error: msg });
+      return `${command} failed: ${msg}`;
+    }
+  }
+
+  /**
+   * Read `flow:` and `complexity:` from the issue note's cached frontmatter.
+   * Returns undefined for fields that are missing or not strings; the caller
+   * passes both into `flowAdvanceDecision` which handles `undefined` cleanly.
+   */
+  private readFlowState(path: string): { flow?: Flow; complexity?: Complexity } {
+    const file = this.app.vault.getAbstractFileByPath(path);
+    if (!(file instanceof TFile)) return {};
+    const fm = this.app.metadataCache.getFileCache(file)?.frontmatter;
+    if (!fm) return {};
+    const flow = typeof fm.flow === "string" ? (fm.flow as Flow) : undefined;
+    const complexity =
+      typeof fm.complexity === "string" ? (fm.complexity as Complexity) : undefined;
+    return { flow, complexity };
   }
 
   private async runInstallAgentHooks(announce: boolean): Promise<void> {
