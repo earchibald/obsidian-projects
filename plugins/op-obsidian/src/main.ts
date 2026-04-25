@@ -96,6 +96,13 @@ import { closeTransport } from "./iterm/connection";
 import { existsSync } from "fs";
 
 /**
+ * How long to wait after `onLayoutReady` before probing tmux for stale agent
+ * badges. Gives `op-work` mid-flight at startup time to create its tmux window
+ * so we don't fire a false-positive [Clear badge] Notice during that window.
+ */
+const STALE_AGENT_PROBE_DELAY_MS = 2_000;
+
+/**
  * The Obsidian plugin half of the Obsidian Projects workflow.
  *
  * Responsibilities:
@@ -923,7 +930,7 @@ export default class OpPlugin extends Plugin {
     if (issues.length === 0) return;
     // Brief delay so `op-work` mid-flight at startup can finish creating its
     // tmux window before we probe — reduces false-positive [Clear badge] Notices.
-    await new Promise((r) => setTimeout(r, 2000));
+    await new Promise((r) => setTimeout(r, STALE_AGENT_PROBE_DELAY_MS));
     const probe = await probeLiveTmuxWindows(
       this.settings.tmuxBinary,
       tmuxSessionsForCleanup(this.settings.orchestratorState),
