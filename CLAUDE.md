@@ -52,6 +52,26 @@ Always, in order:
 
 Never skip these steps, even for "trivial" changes — untested plugin builds ship silently broken.
 
+## OP-Test vault: install builds locally, never via BRAT
+
+The **OP-Test** vault at `~/Documents/OP-Test/OP-Test/` is a clean-room test vault — separate from your day-to-day Agent-Vault — used to verify the plugin's behavior in a vault that has no project state, no settings carry-over, and no other plugins. **Do not install op-obsidian into OP-Test via BRAT.** We're the plugin's authors and the dev build is on disk; BRAT adds GitHub-release latency and doesn't carry uncommitted work. Install the locally-built artifact directly:
+
+```bash
+DEST="$HOME/Documents/OP-Test/OP-Test/.obsidian/plugins/op-obsidian"
+mkdir -p "$DEST"
+cp plugins/op-obsidian/main.js plugins/op-obsidian/manifest.json "$DEST/"
+```
+
+First install needs the same `loadManifests + enablePluginAndSave` recipe as the active-vault first install (community plugins must be enabled in OP-Test's settings first):
+
+```bash
+obsidian eval code='(async()=>{await app.plugins.loadManifests(); await app.plugins.enablePluginAndSave("op-obsidian"); return {enabled: app.plugins.enabledPlugins.has("op-obsidian"), version: app.plugins.plugins["op-obsidian"]?.manifest?.version}})()'
+```
+
+Subsequent installs (the file-copy alone, then `obsidian plugin:reload id=op-obsidian`) work the same way as for Agent-Vault.
+
+**One CLI-target caveat.** The `obsidian` CLI binds to whichever Obsidian window is currently active — switching from Agent-Vault to OP-Test (or vice versa) changes which vault `obsidian vault`, `obsidian eval`, and the `op-*` dispatch verbs target. Re-run `obsidian vault` after any window switch to confirm you're operating on the vault you think you are. There's no per-vault flag; activate the right window first.
+
 ## Merging a PR from a delegated worktree
 
 When you ran `EnterWorktree` (or otherwise work in `.claude/worktrees/<name>/`) and another checkout — typically the delegating agent — still holds `main`, `gh pr merge <#> --squash --delete-branch` will **fail locally** with:
