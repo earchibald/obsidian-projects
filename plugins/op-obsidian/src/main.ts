@@ -95,6 +95,11 @@ import { configureClient } from "./iterm/client";
 import { closeWindow as itermCloseWindow } from "./iterm/driver";
 import { closeTransport } from "./iterm/connection";
 import { existsSync } from "fs";
+import { execFile } from "child_process";
+import { promisify } from "util";
+import { PickAndActModal } from "./pickAndActModal";
+
+const pExecFile = promisify(execFile);
 
 /**
  * How long to wait after `onLayoutReady` before probing tmux for stale agent
@@ -422,6 +427,60 @@ export default class OpPlugin extends Plugin {
       id: "op-open-agent-plan-pick",
       name: "op: open agent (plan mode, pick)",
       callback: () => this.runOpenAgentCommand(true, "plan"),
+    });
+
+    this.addCommand({
+      id: "op-pick-and-act",
+      name: "op: pick & act",
+      callback: () => this.runPickAndActCommand(),
+    });
+
+    this.addCommand({
+      id: "op-attach-current",
+      name: "op: attach to agent for current issue",
+      checkCallback: (checking) => {
+        const path = this.activeIssuePath();
+        if (checking) return !!path;
+        if (!path) return false;
+        const entry = this.store.byPath(path);
+        if (entry && entry.type === "issue") void revealAgentSession(this.settings, entry.id);
+        return true;
+      },
+    });
+
+    this.addCommand({
+      id: "op-resume-last",
+      name: "op: resume last (stub — OP-149 §1)",
+      callback: () => {
+        new Notice(
+          "op: resume-last is not yet implemented. Tracked under OP-149 §1.",
+          6000,
+        );
+      },
+    });
+
+    this.addCommand({
+      id: "op-next-issue",
+      name: "op: next issue in project",
+      checkCallback: (checking) => {
+        const path = this.activeIssuePath();
+        if (checking) return !!path;
+        if (!path) return false;
+        this.runRotateIssueCommand(path, +1);
+        return true;
+      },
+    });
+
+    this.addCommand({
+      id: "op-previous-issue",
+      name: "op: previous issue in project",
+      checkCallback: (checking) => {
+        const path = this.activeIssuePath();
+        if (checking) return !!path;
+        if (!path) return false;
+        this.runRotateIssueCommand(path, -1);
+        return true;
+      },
     });
 
     this.addCommand({
@@ -2090,6 +2149,90 @@ export default class OpPlugin extends Plugin {
     });
   }
 
+  /**
+   * Open the `op: pick & act` modal — fuzzy-pick any issue and dispatch one of
+   * five actions via modifier-enter. See {@link PickAndActModal}.
+   */
+  private runPickAndActCommand(): void {
+    new PickAndActModal(this.app, () => this.store.issues(), {
+      open: (entry) => this.openIssue(entry),
+      launch: (entry) => this.doOpenAgent(entry, {}),
+      plan: (entry) => this.doOpenAgent(entry, { mode: "plan" }),
+      resolve: (entry) => this.runResolveCommand({ path: entry.path }),
+      commit: (entry) => this.runPickAndActCommitFor(entry),
+    }).open();
+  }
+
+  /**
+   * Append the project repo's HEAD commit to the issue's `commits:` list. Used
+   * by `op: pick & act` when the user hits `⌃↵` on an issue.
+   */
+  private async runPickAndActCommitFor(entry: IssueEntry): Promise<void> {
+    try {
+      const repoPath = resolveRepoPath(this.app, this.settings, entry.project);
+      if (!repoPath) {
+        new Notice(`op: no repo_path for ${entry.project} — cannot append commit`);
+        return;
+      }
+      const { stdout: shaRaw } = await pExecFile(
+        "git",
+        ["rev-parse", "--short=7", "HEAD"],
+        { cwd: repoPath },
+      );
+      const { stdout: subjRaw } = await pExecFile(
+        "git",
+        ["log", "-1", "--pretty=%s"],
+        { cwd: repoPath },
+      );
+      const sha = shaRaw.trim();
+      const subject = subjRaw.trim();
+      if (!sha || !subject) {
+        new Notice(`op: empty git output in ${repoPath} — skipping append`);
+        return;
+      }
+      const res = await appendCommit(this.app, entry, { sha, subject });
+      new Notice(
+        res.added
+          ? `op: appended ${sha} to ${res.issueId}`
+          : `op: ${sha} already on ${res.issueId}`,
+      );
+    } catch (err: any) {
+      console.error("[op-obsidian] pick-and-act commit failed", err);
+      new Notice(`op: pick & act commit failed — ${err?.message ?? err}`);
+    }
+  }
+
+  /**
+   * Open the next/previous issue in the same project as `currentPath`, sorted
+   * numerically by ID and skipping resolved entries. Wraps around at the
+   * boundaries.
+   */
+  private runRotateIssueCommand(currentPath: string, direction: 1 | -1): void {
+    const current = this.store.byPath(currentPath);
+    if (!current || current.type !== "issue") return;
+    const peers = this.store
+      .issues()
+      .filter(
+        (e) =>
+          e.project === current.project &&
+          !e.resolvedFolder &&
+          !["resolved", "wontfix"].includes(e.status),
+      )
+      .sort((a, b) => issueIdNumericSuffix(a.id) - issueIdNumericSuffix(b.id));
+    if (peers.length === 0) {
+      new Notice(`op: no other open issues in ${current.project}`);
+      return;
+    }
+    const idx = peers.findIndex((e) => e.path === current.path);
+    if (idx === -1) {
+      // current is resolved — jump to the first/last open peer
+      void this.openIssue(direction > 0 ? peers[0] : peers[peers.length - 1]);
+      return;
+    }
+    const next = peers[(idx + direction + peers.length) % peers.length];
+    void this.openIssue(next);
+  }
+
   private runEditWorkflowCommand(): void {
     const projects = applyProjectOrder(listProjects(this.app), this.settings.projectOrder);
     if (projects.length === 0) {
@@ -2523,6 +2666,11 @@ function formatRegistrationNote(res: WorkIssueResult): string {
   if (res.alreadyHeld) return " · registration unchanged";
   if (res.registration) return ` · registered as ${res.registration.agent}`;
   return "";
+}
+
+function issueIdNumericSuffix(id: string): number {
+  const m = id.match(/-(\d+)$/);
+  return m ? parseInt(m[1], 10) : 0;
 }
 
 function defaultBinaryFor(id: AgentId): string {

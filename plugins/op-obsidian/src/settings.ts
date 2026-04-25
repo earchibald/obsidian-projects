@@ -1,4 +1,13 @@
-import { App, PluginSettingTab, Setting, Notice } from "obsidian";
+import { App, Modal, PluginSettingTab, Setting, Notice } from "obsidian";
+import {
+  applyPreset,
+  defaultPreset,
+  revertPreset,
+  type ApplyResult,
+  type Hotkey,
+  type HotkeyEntry,
+  type SkippedBinding,
+} from "./hotkeyPreset";
 import { existsSync } from "fs";
 import * as path from "path";
 import type OpPlugin from "./main";
@@ -756,6 +765,29 @@ export class OpSettingsTab extends PluginSettingTab {
         }),
       );
 
+    containerEl.createEl("h2", { text: "Hotkey preset" });
+    containerEl.createEl("p", {
+      text:
+        "One-click install of the op default keyboard shortcuts. Best-effort: any binding whose key is already taken by another command is skipped, and the results modal lists what landed and what didn't. Click Apply to mutate; nothing happens automatically.",
+      cls: "setting-item-description",
+    });
+
+    new Setting(containerEl)
+      .setName("Apply op default hotkey preset")
+      .setDesc(
+        "Binds the 10 op commands to ⌘⇧* / ⌘⌥* shortcuts. Reversible from the results modal during this session.",
+      )
+      .addButton((b) =>
+        b
+          .setButtonText("Apply preset")
+          .setCta()
+          .onClick(() => {
+            const preset = defaultPreset();
+            const result = applyPreset(this.app, preset);
+            new HotkeyPresetResultsModal(this.app, preset, result).open();
+          }),
+      );
+
     containerEl.createEl("h2", { text: "Advanced" });
 
     new Setting(containerEl)
@@ -778,6 +810,158 @@ function describeWorkingDir(p: string): string {
   if (!path.isAbsolute(p)) return `⚠ not an absolute path`;
   if (!existsSync(p)) return `⚠ path does not exist`;
   return `✓ ${p}`;
+}
+
+function formatHotkey(h: Hotkey): string {
+  const order = ["Mod", "Meta", "Ctrl", "Alt", "Shift"];
+  const mods = [...h.modifiers].sort(
+    (a, b) => order.indexOf(a) - order.indexOf(b),
+  );
+  const glyphs: Record<string, string> = {
+    Mod: "⌘",
+    Meta: "⌘",
+    Ctrl: "⌃",
+    Alt: "⌥",
+    Shift: "⇧",
+  };
+  const keyGlyph = h.key === "Enter" ? "↵" : h.key;
+  return mods.map((m) => glyphs[m] ?? m).join("") + keyGlyph;
+}
+
+/**
+ * Results modal for the "Apply op default hotkey preset" button. Lists what
+ * landed and what was skipped; offers a Revert button (session-scoped, restores
+ * the snapshot captured before the apply) and an Open Hotkeys settings shortcut
+ * so the user can manually rebind anything skipped. On the JSON-snippet
+ * fallback path, surfaces the snippet in a textarea instead.
+ */
+export class HotkeyPresetResultsModal extends Modal {
+  constructor(
+    app: App,
+    private preset: HotkeyEntry[],
+    private result: ApplyResult,
+  ) {
+    super(app);
+  }
+
+  onOpen(): void {
+    const { contentEl } = this;
+    contentEl.empty();
+
+    if (!this.result.ok) {
+      this.renderFallback(contentEl, this.result.reason, this.result.snippet);
+      return;
+    }
+
+    const { applied, skipped, previousCustomKeys } = this.result;
+
+    contentEl.createEl("h2", { text: "op hotkey preset applied" });
+    contentEl.createEl("p", {
+      text: `${applied.length} binding${applied.length === 1 ? "" : "s"} landed${
+        skipped.length ? `, ${skipped.length} skipped due to conflicts` : ""
+      }.`,
+      cls: "setting-item-description",
+    });
+
+    if (applied.length > 0) {
+      contentEl.createEl("h3", { text: "Applied" });
+      const list = contentEl.createDiv({ cls: "op-hotkey-preset__results" });
+      for (const e of applied) {
+        const row = list.createDiv({ cls: "op-hotkey-preset__row" });
+        row.createSpan({ cls: "op-hotkey-preset__keys", text: formatHotkey(e.hotkey) });
+        row.createSpan({ cls: "op-hotkey-preset__cmd", text: e.command });
+      }
+    }
+
+    if (skipped.length > 0) {
+      contentEl.createEl("h3", { text: "Skipped (key already bound)" });
+      const list = contentEl.createDiv({ cls: "op-hotkey-preset__results" });
+      for (const s of skipped) {
+        const row = list.createDiv({ cls: "op-hotkey-preset__row" });
+        row.createSpan({
+          cls: "op-hotkey-preset__keys",
+          text: formatHotkey(s.binding.hotkey),
+        });
+        row.createSpan({ cls: "op-hotkey-preset__cmd", text: s.binding.command });
+        row.createSpan({
+          cls: "op-hotkey-preset__skip-reason",
+          text: `→ taken by ${s.conflictingCommandName}`,
+        });
+      }
+    }
+
+    new Setting(contentEl)
+      .addButton((b) =>
+        b
+          .setButtonText("Open Hotkeys settings")
+          .onClick(() => {
+            this.close();
+            const setting = (this.app as any).setting;
+            setting?.open?.();
+            setting?.openTabById?.("hotkeys");
+          }),
+      )
+      .addButton((b) =>
+        b
+          .setButtonText("Revert")
+          .setWarning()
+          .onClick(() => {
+            const r = revertPreset(this.app, previousCustomKeys);
+            if (r.ok) {
+              new Notice("op: hotkey preset reverted");
+              this.close();
+            } else {
+              new Notice(`op: revert failed — ${r.reason}`);
+            }
+          }),
+      )
+      .addButton((b) => b.setButtonText("Close").setCta().onClick(() => this.close()));
+  }
+
+  private renderFallback(
+    el: HTMLElement,
+    reason: string,
+    snippet: string,
+  ): void {
+    el.createEl("h2", { text: "op hotkey preset — degraded mode" });
+    el.createEl("p", {
+      cls: "setting-item-description",
+      text:
+        `Could not write hotkeys directly: ${reason}. Paste the JSON below into your vault's .obsidian/hotkeys.json (merge with any existing entries) and reload Obsidian.`,
+    });
+    const ta = el.createEl("textarea", { cls: "op-hotkey-preset__snippet" });
+    ta.value = snippet;
+    ta.readOnly = true;
+    new Setting(el)
+      .addButton((b) =>
+        b
+          .setButtonText("Copy to clipboard")
+          .setCta()
+          .onClick(async () => {
+            try {
+              await navigator.clipboard.writeText(snippet);
+              new Notice("op: snippet copied");
+            } catch (err: any) {
+              new Notice(`op: copy failed — ${err?.message ?? err}`);
+            }
+          }),
+      )
+      .addButton((b) =>
+        b
+          .setButtonText("Open Hotkeys settings")
+          .onClick(() => {
+            this.close();
+            const setting = (this.app as any).setting;
+            setting?.open?.();
+            setting?.openTabById?.("hotkeys");
+          }),
+      )
+      .addButton((b) => b.setButtonText("Close").onClick(() => this.close()));
+  }
+
+  onClose(): void {
+    this.contentEl.empty();
+  }
 }
 
 function detectionSummary(plugin: OpPlugin): string {
