@@ -28,6 +28,7 @@ export function renderIssueNote(i: RenderInput): string {
     "---",
     `id: ${i.id}`,
     `project: ${i.project}`,
+    `title: ${JSON.stringify(i.title)}`,
     "type: issue",
     "status: open",
     `priority: ${i.priority}`,
