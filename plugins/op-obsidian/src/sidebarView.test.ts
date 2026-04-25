@@ -17,6 +17,12 @@ vi.mock("obsidian", () => ({
   ItemView: class {
     contentEl: any = makeFakeEl();
   },
+  Menu: class {
+    addItem() {
+      return this;
+    }
+    showAtMouseEvent() {}
+  },
   Modal: class {},
   TFile: class {},
   WorkspaceLeaf: class {},
@@ -30,6 +36,7 @@ vi.mock("./staleAgentBadges", () => ({
 }));
 
 import {
+  buildSidebarMenuItems,
   decideKeyAction,
   filterEntries,
   OpResolveConfirmModal,
@@ -213,9 +220,12 @@ describe("decideKeyAction", () => {
 });
 
 function makeFakeEl(): any {
+  const _listeners: Record<string, Array<(ev: any) => void>> = {};
   const el: any = {
     children: [] as any[],
     classList: new Set<string>(),
+    /** Captured handlers, keyed by event name.  Used by wiring tests. */
+    _listeners,
     addClass(c: string) {
       this.classList.add(c);
     },
@@ -242,7 +252,9 @@ function makeFakeEl(): any {
       return child;
     },
     setAttr() {},
-    addEventListener() {},
+    addEventListener(event: string, handler: (ev: any) => void) {
+      (_listeners[event] ??= []).push(handler);
+    },
     removeEventListener() {},
     removeClass() {},
     focus() {},
@@ -415,6 +427,146 @@ describe("OpResolveConfirmModal", () => {
   });
 });
 
+// ─── buildSidebarMenuItems ───────────────────────────────────────────────────
+
+describe("buildSidebarMenuItems", () => {
+  const baseHooks: OpSidebarHooks = {
+    getRecent: () => [],
+    tmuxBinary: () => "tmux",
+    tmuxSessions: () => [],
+    recordRecency: async () => {},
+    executeResumeLast: () => {},
+  };
+
+  function keys(items: ReturnType<typeof buildSidebarMenuItems>): string[] {
+    return items.map((i) => i.key);
+  }
+
+  it("offers Resolve + Resolve as wontfix on an open issue", () => {
+    const items = buildSidebarMenuItems(entry({ status: "open" }), {
+      ...baseHooks,
+      resolveIssue: vi.fn(),
+    });
+    expect(keys(items)).toEqual(["resolve", "resolve-wontfix"]);
+  });
+
+  it("forwards the right status to resolveIssue for each item", () => {
+    const resolveIssue = vi.fn();
+    const e = entry({ status: "open" });
+    const items = buildSidebarMenuItems(e, { ...baseHooks, resolveIssue });
+    items.find((i) => i.key === "resolve")!.run();
+    items.find((i) => i.key === "resolve-wontfix")!.run();
+    expect(resolveIssue).toHaveBeenNthCalledWith(1, e, "resolved");
+    expect(resolveIssue).toHaveBeenNthCalledWith(2, e, "wontfix");
+  });
+
+  it("omits Resolve / Resolve-wontfix on a resolved issue (any of status, wontfix, resolvedFolder)", () => {
+    for (const e of [
+      entry({ status: "resolved" }),
+      entry({ status: "wontfix" }),
+      entry({ status: "open", resolvedFolder: true }),
+    ]) {
+      const items = buildSidebarMenuItems(e, { ...baseHooks, resolveIssue: vi.fn() });
+      expect(keys(items)).not.toContain("resolve");
+      expect(keys(items)).not.toContain("resolve-wontfix");
+    }
+  });
+
+  it("treats resolvedFolder:true as resolved even when status is 'in-progress' or 'blocked' (stale-frontmatter scenario)", () => {
+    // A file can end up in RESOLVED ISSUES/ while the frontmatter still has a
+    // work-in-progress status — e.g. the file was dragged back in Finder but
+    // the op watcher hasn't rewritten the note yet.  resolvedFolder is the
+    // ground truth; Resolve items must be suppressed to prevent a double-move.
+    for (const status of ["in-progress", "blocked"] as const) {
+      const stale = entry({ status, resolvedFolder: true });
+      const items = buildSidebarMenuItems(stale, { ...baseHooks, resolveIssue: vi.fn() });
+      expect(keys(items)).not.toContain("resolve");
+      expect(keys(items)).not.toContain("resolve-wontfix");
+    }
+  });
+
+  it("offers Reopen only when the row is resolved AND the hook is wired", () => {
+    const open = entry({ status: "open" });
+    const resolved = entry({ status: "resolved" });
+    const wontfix = entry({ status: "wontfix" });
+
+    // Hook absent → never offered.
+    expect(keys(buildSidebarMenuItems(resolved, baseHooks))).not.toContain("reopen");
+
+    const hooks = { ...baseHooks, reopenIssue: vi.fn() };
+    expect(keys(buildSidebarMenuItems(open, hooks))).not.toContain("reopen");
+    expect(keys(buildSidebarMenuItems(resolved, hooks))).toContain("reopen");
+    expect(keys(buildSidebarMenuItems(wontfix, hooks))).toContain("reopen");
+  });
+
+  it("offers Detach agent only when entry.agent is set AND the hook is wired", () => {
+    const noAgent = entry({ agent: undefined });
+    const withAgent = entry({ agent: "claude" });
+
+    // Hook absent → never offered, even if agent is set.
+    expect(keys(buildSidebarMenuItems(withAgent, baseHooks))).not.toContain("detach-agent");
+
+    const hooks = { ...baseHooks, detachAgent: vi.fn() };
+    expect(keys(buildSidebarMenuItems(noAgent, hooks))).not.toContain("detach-agent");
+    expect(keys(buildSidebarMenuItems(withAgent, hooks))).toContain("detach-agent");
+  });
+
+  it("offers Open GitHub issue only when githubIssue is set AND the hook is wired", () => {
+    const noGh = entry({ githubIssue: undefined });
+    const withGh = entry({ githubIssue: "https://github.com/x/y/issues/3" });
+
+    // Hook absent → never offered, even if URL is set.
+    expect(keys(buildSidebarMenuItems(withGh, baseHooks))).not.toContain("open-github-issue");
+
+    const hooks = { ...baseHooks, openGithubIssue: vi.fn() };
+    expect(keys(buildSidebarMenuItems(noGh, hooks))).not.toContain("open-github-issue");
+    expect(keys(buildSidebarMenuItems(withGh, hooks))).toContain("open-github-issue");
+  });
+
+  it("returns the menu items in a stable order: resolve → wontfix → reopen → detach → github", () => {
+    // Open with agent and GH — the resolve pair appears, then detach, then github.
+    const open = entry({ status: "open", agent: "claude", githubIssue: "https://github.com/x/y/issues/3" });
+    const openHooks: OpSidebarHooks = {
+      ...baseHooks,
+      resolveIssue: vi.fn(),
+      detachAgent: vi.fn(),
+      openGithubIssue: vi.fn(),
+    };
+    expect(keys(buildSidebarMenuItems(open, openHooks))).toEqual([
+      "resolve",
+      "resolve-wontfix",
+      "detach-agent",
+      "open-github-issue",
+    ]);
+
+    // Resolved with everything wired — reopen sits between the (omitted)
+    // resolve pair and detach/github.
+    const resolved = entry({
+      status: "resolved",
+      agent: "claude",
+      githubIssue: "https://github.com/x/y/issues/3",
+    });
+    const allHooks: OpSidebarHooks = { ...openHooks, reopenIssue: vi.fn() };
+    expect(keys(buildSidebarMenuItems(resolved, allHooks))).toEqual([
+      "reopen",
+      "detach-agent",
+      "open-github-issue",
+    ]);
+  });
+
+  it("returns an empty list when no items apply (resolved row, no hooks wired)", () => {
+    expect(buildSidebarMenuItems(entry({ status: "resolved" }), baseHooks)).toEqual([]);
+  });
+
+  it("calls openGithubIssue with the entry when the menu item runs", () => {
+    const openGithubIssue = vi.fn();
+    const e = entry({ githubIssue: "https://github.com/x/y/issues/9" });
+    const items = buildSidebarMenuItems(e, { ...baseHooks, openGithubIssue });
+    items.find((i) => i.key === "open-github-issue")!.run();
+    expect(openGithubIssue).toHaveBeenCalledWith(e);
+  });
+});
+
 // ─── render() selection identity preservation ────────────────────────────────
 
 describe("render() selection identity", () => {
@@ -470,6 +622,62 @@ describe("render() selection identity", () => {
     (view as any).render();
     expect((view as any).selectedIndex).toBe(0);
     expect((view as any).displayedIssues[0].id).toBe("OP-1");
+
+    await view.onClose();
+  });
+});
+
+// ─── render() contextmenu wiring ────────────────────────────────────────────
+
+describe("render() contextmenu wiring", () => {
+  it("attaches a contextmenu listener that calls preventDefault/stopPropagation and selects the row", async () => {
+    const resolveIssue = vi.fn();
+    const e1 = entry({ id: "OP-1", status: "open" });
+    const e2 = entry({ id: "OP-2", status: "open" });
+    const issues = [e1, e2];
+
+    const store = { byId: () => undefined, issues: () => issues };
+    const bus = new FakeBus();
+    const view = new OpSidebarView(
+      {} as any,
+      store as any,
+      bus as any,
+      () =>
+        ({
+          defaultTab: "issues",
+          recentResolvedLimit: 20,
+          openOnStartup: false,
+          density: "comfortable",
+        } as any),
+      undefined,
+      undefined,
+      {
+        getRecent: () => [],
+        tmuxBinary: () => "tmux",
+        tmuxSessions: () => [],
+        recordRecency: async () => {},
+        executeResumeLast: () => {},
+        resolveIssue,
+      },
+    );
+
+    await view.onOpen();
+
+    const rows: any[] = (view as any).rowEls;
+    expect(rows).toHaveLength(2);
+
+    // Every rendered row must have exactly one contextmenu handler wired.
+    expect(rows[0]._listeners["contextmenu"]).toHaveLength(1);
+    expect(rows[1]._listeners["contextmenu"]).toHaveLength(1);
+
+    // Fire contextmenu on the second row (index 1).
+    const fakeEv = { preventDefault: vi.fn(), stopPropagation: vi.fn() };
+    rows[1]._listeners["contextmenu"][0](fakeEv);
+
+    expect(fakeEv.preventDefault).toHaveBeenCalled();
+    expect(fakeEv.stopPropagation).toHaveBeenCalled();
+    // Selection must have moved to the second row.
+    expect((view as any).selectedIndex).toBe(1);
 
     await view.onClose();
   });
