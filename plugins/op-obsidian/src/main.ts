@@ -97,6 +97,7 @@ import { launchInTerminal, SHARED_TMUX_SESSION, tmuxWindowName } from "./termina
 import { installAgentHooks, type HookInstallResult } from "./agentHooks";
 import { userError } from "./userError";
 import { cleanupAgentSessions, tmuxSessionsForCleanup } from "./agentSessionCleanup";
+import { detachAgent } from "./detachAgent";
 import { detectTmux } from "./tmuxDetect";
 import { notify, notifyAction, registerApp, unregisterApp, openNotificationLog } from "./notificationLog";
 import { probeLiveTmuxWindows, selectStaleAgentBadges } from "./staleAgentBadges";
@@ -501,6 +502,21 @@ export default class OpPlugin extends Plugin {
     });
 
     this.addCommand({
+      id: "op-detach-agent",
+      name: "op: detach agent",
+      checkCallback: (checking) => {
+        const path = this.activeIssuePath();
+        if (checking) return !!path;
+        if (!path) return false;
+        const entry = this.store.byPath(path);
+        if (entry && entry.type === "issue") {
+          void this.runDetachAgentCommand(entry.id);
+        }
+        return true;
+      },
+    });
+
+    this.addCommand({
       id: "op-resume-last",
       name: "op: resume last",
       callback: () => void this.runResumeLastCommand(),
@@ -719,6 +735,12 @@ export default class OpPlugin extends Plugin {
       );
     });
 
+    this.registerObsidianProtocolHandler("op-detach-agent", (params) => {
+      this.runUri("op-detach-agent", normalizeUriParams(params), (p) =>
+        this.handleOpDetachAgentUri(p),
+      );
+    });
+
     this.registerObsidianProtocolHandler("op-launch-next-stage", (params) => {
       this.runUri("op-launch-next-stage", normalizeUriParams(params), (p) =>
         this.handleOpLaunchNextStageUri(p),
@@ -766,6 +788,16 @@ export default class OpPlugin extends Plugin {
       "Close an issue — same as op-resolve but falls back to the active issue when no id/path given.",
       resolveFlags,
       (params) => this.handleOpResolveCli(params, "op-close-current-issue", true),
+    );
+
+    this.registerCliHandler(
+      "op-detach-agent",
+      "Kill the issue's tmux window and clear `agent:` (cleanup for crash zombies or after manual resolve).",
+      {
+        issue: { value: "<id>", description: "Issue id (e.g. OP-34)" },
+        id: { value: "<id>", description: "Alias for issue" },
+      },
+      (params) => this.handleOpDetachAgentCli(params),
     );
 
     this.registerCliHandler(
@@ -1684,6 +1716,30 @@ export default class OpPlugin extends Plugin {
     };
   }
 
+  /**
+   * Wraps `args.probeAgentLive` with the default tmux probe so callers don't
+   * have to assemble the same boilerplate. Caller-supplied probes win — the
+   * URI/CLI dispatch path passes a no-op probe to keep `agent:` state
+   * unchanged when the request originates outside the live tmux context.
+   *
+   * §5: a single `tmux list-windows` per session via `probeLiveTmuxWindows`.
+   * No separate `has-session` probe — TOCTOU-safe by construction.
+   */
+  private withAgentProbe(args: ResolveArgs): ResolveArgs {
+    if (args.probeAgentLive) return args;
+    return {
+      ...args,
+      probeAgentLive: async (issueId) => {
+        const probe = await probeLiveTmuxWindows(
+          this.settings.tmuxBinary,
+          tmuxSessionsForCleanup(this.settings.orchestratorState),
+        );
+        if (!probe.ok) return { ok: false };
+        return { ok: true, alive: probe.live.has(tmuxWindowName(issueId)) };
+      },
+    };
+  }
+
   private resolveUriArgs(params: Record<string, string>): ResolveArgs {
     return resolveUriArgsPure(params);
   }
@@ -1704,7 +1760,11 @@ export default class OpPlugin extends Plugin {
     const path = this.resolveArgsToPath(args);
     if (path) this.inFlightResolvePaths.add(path);
     try {
-      const result = await runResolve(this.app, this.store, this.withGhCloseHook(args));
+      const result = await runResolve(
+        this.app,
+        this.store,
+        this.withAgentProbe(this.withGhCloseHook(args)),
+      );
       this.surfaceResolveResult(result, args.issue);
       return result;
     } finally {
@@ -1747,6 +1807,35 @@ export default class OpPlugin extends Plugin {
             ]
           : [],
       });
+
+      // §5: surface a second, actionable Notice when `agent:` survived the
+      // resolve (live tmux window) or when tmux was unreachable. [Open agent]
+      // re-attaches via the existing reveal command; [Detach] kills the
+      // window and clears `agent:`.
+      if (result.agentKept && result.issueId) {
+        const issueId = result.issueId;
+        const probeOk = result.agentProbeOk !== false;
+        const text = probeOk
+          ? `op: ${issueId} — agent session still attached, agent: kept`
+          : `op: ${issueId} — tmux unreachable, agent: kept`;
+        notifyAction({
+          text,
+          actions: [
+            {
+              label: "Open agent",
+              onClick: () => {
+                void revealAgentSession(this.settings, issueId);
+              },
+            },
+            {
+              label: "Detach",
+              onClick: () => {
+                void this.runDetachAgentCommand(issueId);
+              },
+            },
+          ],
+        });
+      }
     }
     if (result.githubCloseError && result.issueId) {
       const entry = this.store.issues().find((e) => e.id === result.issueId);
@@ -1846,6 +1935,8 @@ export default class OpPlugin extends Plugin {
         trashed: result.trashed,
         status: result.status,
         error: result.error,
+        agentKept: result.agentKept,
+        agentProbeOk: result.agentProbeOk,
       });
     } catch (err: any) {
       console.error("[op-obsidian]", command, err);
@@ -1853,6 +1944,78 @@ export default class OpPlugin extends Plugin {
       notify(`${command} failed: ${msg}`);
       await writeUriResponse(this.app, { ok: false, command, error: msg });
     }
+  }
+
+  /**
+   * `op: detach agent` runner — used by the palette command, the URI handler,
+   * and the [Detach] action on the resolve-time agent-kept Notice. Idempotent:
+   * safe to call when the tmux window is already gone (covers crash zombies
+   * where SessionEnd never fired).
+   */
+  private async runDetachAgentCommand(issueId: string): Promise<void> {
+    const command = "op-detach-agent";
+    try {
+      const result = await detachAgent({
+        app: this.app,
+        store: this.store,
+        settings: this.settings,
+        saveSettings: () => this.saveSettings(),
+        issueId,
+      });
+      if (!result.found) {
+        notify(`op: ${issueId} not found — nothing to detach`);
+      } else if (result.killed.length === 0 && !result.cleared) {
+        notify(`op: ${issueId} — no agent attached`);
+      } else {
+        const killed = result.killed.length
+          ? ` (killed ${result.killed.length} window${result.killed.length === 1 ? "" : "s"})`
+          : "";
+        notify(`op: ${issueId} agent detached${killed}`);
+      }
+      await writeUriResponse(this.app, {
+        ok: result.ok,
+        command,
+        issueId: result.issueId,
+        path: result.path,
+        found: result.found,
+        cleared: result.cleared,
+        killed: result.killed,
+        prunedSurfaces: result.prunedSurfaces,
+        closedWindows: result.closedWindows,
+        error: result.error,
+      });
+    } catch (err: any) {
+      console.error("[op-obsidian]", command, err);
+      const msg = err?.message ?? String(err);
+      notify(`${command} failed: ${msg}`);
+      await writeUriResponse(this.app, { ok: false, command, error: msg });
+    }
+  }
+
+  private async handleOpDetachAgentUri(
+    params: Record<string, string>,
+  ): Promise<UriResponsePayload> {
+    const id = params.id ?? params.issue;
+    if (!id) throw new Error("op-detach-agent URI requires id");
+    const result = await detachAgent({
+      app: this.app,
+      store: this.store,
+      settings: this.settings,
+      saveSettings: () => this.saveSettings(),
+      issueId: id,
+    });
+    return {
+      ok: result.ok,
+      command: "op-detach-agent",
+      issueId: result.issueId,
+      path: result.path,
+      found: result.found,
+      cleared: result.cleared,
+      killed: result.killed,
+      prunedSurfaces: result.prunedSurfaces,
+      closedWindows: result.closedWindows,
+      error: result.error,
+    };
   }
 
   private async handleOpScaffoldUri(
@@ -2358,10 +2521,17 @@ export default class OpPlugin extends Plugin {
         trashed: result.trashed,
         status: result.status,
         error: result.error,
+        agentKept: result.agentKept,
+        agentProbeOk: result.agentProbeOk,
       });
       if (!result.ok) return `${command} failed: ${result.error ?? "unknown error"}`;
       const tCount = result.trashed?.length ?? 0;
-      return `${command}: ${result.issueId} → ${result.status} · moved to ${result.movedTo} · trashed ${tCount} task(s)`;
+      const agentTail = result.agentKept
+        ? result.agentProbeOk === false
+          ? " · agent: kept (tmux unreachable)"
+          : " · agent: kept (session live)"
+        : "";
+      return `${command}: ${result.issueId} → ${result.status} · moved to ${result.movedTo} · trashed ${tCount} task(s)${agentTail}`;
     } catch (err: any) {
       const msg = err?.message ?? String(err);
       console.error("[op-obsidian]", command, err);
@@ -2390,7 +2560,51 @@ export default class OpPlugin extends Plugin {
       movedTo: result.movedTo,
       trashed: result.trashed,
       status: result.status,
+      agentKept: result.agentKept,
+      agentProbeOk: result.agentProbeOk,
     };
+  }
+
+  private async handleOpDetachAgentCli(
+    params: Record<string, string>,
+  ): Promise<string> {
+    const command = "op-detach-agent";
+    const id = params.issue ?? params.id;
+    if (!id) {
+      const msg = `${command} failed: --issue (or --id) required`;
+      await writeUriResponse(this.app, { ok: false, command, error: msg });
+      return msg;
+    }
+    try {
+      const result = await detachAgent({
+        app: this.app,
+        store: this.store,
+        settings: this.settings,
+        saveSettings: () => this.saveSettings(),
+        issueId: id,
+      });
+      await writeUriResponse(this.app, {
+        ok: result.ok,
+        command,
+        issueId: result.issueId,
+        path: result.path,
+        found: result.found,
+        cleared: result.cleared,
+        killed: result.killed,
+        prunedSurfaces: result.prunedSurfaces,
+        closedWindows: result.closedWindows,
+        error: result.error,
+      });
+      if (!result.ok) return `${command} failed: ${result.error ?? "unknown error"}`;
+      if (!result.found) return `${command}: ${id} not found`;
+      const killed = result.killed.length;
+      return `${command}: ${id} · killed ${killed} window${killed === 1 ? "" : "s"} · cleared=${result.cleared}`;
+    } catch (err: any) {
+      const msg = err?.message ?? String(err);
+      console.error("[op-obsidian]", command, err);
+      await writeUriResponse(this.app, { ok: false, command, error: msg });
+      return `${command} failed: ${msg}`;
+    }
   }
 
   private runOpenAgentCommand(forcePick: boolean, mode: AgentLaunchMode = "work"): void {

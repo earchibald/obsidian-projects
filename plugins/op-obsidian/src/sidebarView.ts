@@ -302,6 +302,12 @@ export class OpSidebarView extends ItemView {
     for (let idx = 0; idx < issues.length; idx++) {
       const e = issues[idx];
       const li = ul.createEl("li", { cls: "op-sidebar__item" });
+      // OP-156 §5: a row in the In flight tab whose issue is already resolved
+      // (the agent session outlived `op-resolve`) renders as muted +
+      // strikethrough so the user can see at a glance which entries are
+      // "agent still attached but issue closed."
+      const resolvedLive = this.active === "in-flight" && isResolved(e) && !!e.agent;
+      if (resolvedLive) li.addClass("op-sidebar__item--resolved-live");
       const headerRow = li.createDiv({ cls: "op-sidebar__row" });
       if (idx === this.selectedIndex) headerRow.addClass("is-selected");
       this.rowEls.push(headerRow);
@@ -391,6 +397,11 @@ export class OpSidebarView extends ItemView {
         meta.createSpan({ text: e.resolved, cls: "op-sidebar__date" });
       } else if (this.active === "issues" && e.status !== "open") {
         meta.createSpan({ text: e.status, cls: "op-sidebar__status" });
+      } else if (resolvedLive) {
+        meta.createSpan({
+          text: e.status === "wontfix" ? "wontfix" : "resolved",
+          cls: "op-sidebar__resolved-chip",
+        });
       }
       if (e.githubIssue) {
         const n = ghIssueNumber(e.githubIssue);
@@ -487,22 +498,10 @@ export class OpSidebarView extends ItemView {
   }
 
   private pickFor(tab: TabId): IssueEntry[] {
-    const all = this.store.issues();
-    if (tab === "in-flight") {
-      return all
-        .filter((e) => e.status === "in-progress" || e.status === "blocked" || !!e.agent)
-        .sort(byId);
-    }
-    if (tab === "resolved") {
-      const limit = this.getSettings().recentResolvedLimit;
-      return all
-        .filter((e) => e.resolvedFolder || e.status === "resolved" || e.status === "wontfix")
-        .sort(byResolvedDesc)
-        .slice(0, limit);
-    }
-    return all
-      .filter((e) => !e.resolvedFolder && e.status !== "resolved" && e.status !== "wontfix")
-      .sort(byId);
+    return pickIssuesForTab(this.store.issues(), tab, {
+      liveTmuxWindows: this.liveTmuxWindows,
+      recentResolvedLimit: this.getSettings().recentResolvedLimit,
+    });
   }
 
   private async openEntry(entry: IssueEntry): Promise<void> {
@@ -949,6 +948,51 @@ function sameLiveSet(
   if (prev.size !== next.size) return false;
   for (const v of prev) if (!next.has(v)) return false;
   return true;
+}
+
+function isResolved(e: IssueEntry): boolean {
+  return e.resolvedFolder || e.status === "resolved" || e.status === "wontfix";
+}
+
+/**
+ * Pure: classify an issue list into the entries shown for `tab`.
+ *
+ *  - `issues`     → everything not resolved.
+ *  - `in-flight`  → in-progress / blocked AND any resolved-with-agent row whose
+ *                   tmux window is still live (per OP-156 §5). Unknown-tmux
+ *                   (`undefined`/`null`) does not hide rows — same rule as
+ *                   {@link OpSidebarView.isAgentBadgeStale}.
+ *  - `resolved`   → resolved/wontfix, sorted by resolved-date desc, sliced to
+ *                   `opts.recentResolvedLimit`.
+ */
+export function pickIssuesForTab(
+  issues: ReadonlyArray<IssueEntry>,
+  tab: TabId,
+  opts: {
+    liveTmuxWindows: Set<string> | null | undefined;
+    recentResolvedLimit: number;
+  },
+): IssueEntry[] {
+  if (tab === "in-flight") {
+    return issues
+      .filter((e) => {
+        if (e.status === "in-progress" || e.status === "blocked") return true;
+        if (!e.agent) return false;
+        if (isResolved(e)) {
+          if (!opts.liveTmuxWindows) return true;
+          return opts.liveTmuxWindows.has(tmuxWindowName(e.id));
+        }
+        return true;
+      })
+      .sort(byId);
+  }
+  if (tab === "resolved") {
+    return issues
+      .filter((e) => isResolved(e))
+      .sort(byResolvedDesc)
+      .slice(0, opts.recentResolvedLimit);
+  }
+  return issues.filter((e) => !isResolved(e)).sort(byId);
 }
 
 function byId(a: IssueEntry, b: IssueEntry): number {
