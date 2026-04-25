@@ -4,6 +4,7 @@ import {
   parseAppendCommitParams,
   parseSetPrParams,
   parseSetScopeParams,
+  parseSetSectionParams,
   parseSetEvaluationParams,
   parseSetFlowParams,
   parseNewParams,
@@ -64,6 +65,31 @@ describe("parseSetScopeParams", () => {
   it("rejects unknown mode", () => {
     const r = parseSetScopeParams({ id: "OP-1", scope: "x", mode: "wat" });
     expect(r.ok).toBe(false);
+  });
+});
+
+describe("parseSetSectionParams", () => {
+  it("requires id, name, content", () => {
+    expect(parseSetSectionParams({}).ok).toBe(false);
+    expect(parseSetSectionParams({ id: "OP-1" }).ok).toBe(false);
+    expect(parseSetSectionParams({ id: "OP-1", name: "Plan" }).ok).toBe(false);
+  });
+  it("happy path defaults append=false", () => {
+    const r = parseSetSectionParams({ id: "OP-1", name: "Plan", content: "body" });
+    expect(r.ok && r.value).toEqual({ id: "OP-1", name: "Plan", content: "body", append: false });
+  });
+  it("accepts empty content (caller handles empty-payload rejection)", () => {
+    const r = parseSetSectionParams({ id: "OP-1", name: "Notes", content: "" });
+    expect(r.ok).toBe(true);
+  });
+  it("forwards append=true", () => {
+    const r = parseSetSectionParams({ id: "OP-1", name: "Notes", content: "x", append: "true" });
+    expect(r.ok && r.value.append).toBe(true);
+  });
+  it("rejects name outside Plan|Notes|Summary", () => {
+    const r = parseSetSectionParams({ id: "OP-1", name: "Scope", content: "x" });
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.error).toMatch(/Plan\|Notes\|Summary/);
   });
 });
 

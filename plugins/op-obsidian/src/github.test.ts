@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { extractIssueUrl, isAlreadyClosedError } from "./githubPure";
+import { closeReasonForStatus, extractIssueUrl, isAlreadyClosedError } from "./githubPure";
 
 describe("extractIssueUrl", () => {
   it("extracts issue URL from gh output", () => {
@@ -30,5 +30,20 @@ describe("isAlreadyClosedError", () => {
   it("does not match unrelated errors", () => {
     expect(isAlreadyClosedError("HTTP 401: Bad credentials")).toBe(false);
     expect(isAlreadyClosedError("")).toBe(false);
+  });
+});
+
+describe("closeReasonForStatus", () => {
+  it("maps resolved to completed", () => {
+    expect(closeReasonForStatus("resolved")).toBe("completed");
+  });
+
+  it("maps wontfix to not planned", () => {
+    expect(closeReasonForStatus("wontfix")).toBe("not planned");
+  });
+
+  it("falls back to completed for unexpected statuses", () => {
+    expect(closeReasonForStatus("in-progress")).toBe("completed");
+    expect(closeReasonForStatus("")).toBe("completed");
   });
 });

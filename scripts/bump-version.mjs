@@ -30,6 +30,11 @@ const targets = [
   join(root, "plugins/op/.claude-plugin/plugin.json"),
 ];
 
+// Parallel-bump collision guard (OP-122) reads the manifest at this path on
+// origin/main. Keep this in sync with `targets[0]` above — if the manifest
+// moves, update both.
+const ORIGIN_MANIFEST_REF = "origin/main:plugins/op-obsidian/manifest.json";
+
 const SEMVER = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/;
 
 function readJSON(p) {
@@ -55,6 +60,38 @@ function writeJSON(p, obj) {
   writeFileSync(p, JSON.stringify(obj, null, 2) + "\n");
 }
 
+function cmpSemver(a, b) {
+  const pa = a.split(".").map(Number);
+  const pb = b.split(".").map(Number);
+  for (let i = 0; i < 3; i++) {
+    if (pa[i] !== pb[i]) return pa[i] - pb[i];
+  }
+  return 0;
+}
+
+function tryFetchOriginMain() {
+  const r = spawnSync("git", ["fetch", "--quiet", "origin", "main"], {
+    cwd: root,
+    stdio: ["ignore", "ignore", "pipe"],
+    timeout: 15000,
+  });
+  return r.status === 0;
+}
+
+function readOriginMainManifestVersion() {
+  const r = spawnSync("git", ["show", ORIGIN_MANIFEST_REF], {
+    cwd: root,
+    encoding: "utf8",
+  });
+  if (r.status !== 0) return null;
+  try {
+    const v = JSON.parse(r.stdout).version;
+    return SEMVER.test(v) ? v : null;
+  } catch {
+    return null;
+  }
+}
+
 function bump(current, kind) {
   if (!SEMVER.test(current)) {
     throw new Error(`current version ${JSON.stringify(current)} is not strict semver (x.y.z)`);
@@ -75,6 +112,25 @@ if (!arg) {
 
 const manifest = readJSON(targets[0]);
 const next = process.env.npm_package_version ?? bump(manifest.version, arg);
+
+// OP-122: refuse if origin/main already shows a version >= what we'd write.
+// Catches the OP-112/OP-113 footgun: two branches forked from the same base,
+// each bumped to the same target in isolation, collided at squash-merge.
+if (tryFetchOriginMain()) {
+  const originVersion = readOriginMainManifestVersion();
+  if (originVersion && cmpSemver(next, originVersion) <= 0) {
+    console.error(
+      `bump-version: origin/main is at ${originVersion}, but local bump would land at ${next}. ` +
+        `Another branch likely already shipped this version. ` +
+        `Rebase onto origin/main first, or pass an explicit higher target version.`,
+    );
+    process.exit(1);
+  }
+} else {
+  console.warn(
+    "bump-version: could not fetch origin/main (offline or no remote?) — skipping parallel-bump collision check.",
+  );
+}
 
 for (const path of targets) {
   const obj = readJSON(path);

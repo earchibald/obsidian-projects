@@ -11,6 +11,7 @@ import type { AppendCommitResult } from "./commits";
 import type { SetPrResult } from "./commits";
 import type { SetScopeResult } from "./setScope";
 import type { SetEvaluationResult } from "./setEvaluation";
+import type { SetSectionResult } from "./setSection";
 import type { SetFlowResult, Flow, Complexity } from "./setFlow";
 import type { ResolveArgs, ResolveStatus } from "./resolve";
 import type { ApplyLinkResult, LinkCheckResult, MigrateLinksResult } from "./links";
@@ -27,6 +28,12 @@ export interface UriHandlerDeps {
     options?: { mode?: "scope" | "body" },
   ) => Promise<SetScopeResult>;
   setEvaluation: (entry: IssueEntry, evaluation: string) => Promise<SetEvaluationResult>;
+  setSection: (
+    entry: IssueEntry,
+    name: string,
+    content: string,
+    options?: { append?: boolean },
+  ) => Promise<SetSectionResult>;
   setFlow: (
     entry: IssueEntry,
     input: { flow?: Flow | null; complexity?: Complexity | null },
@@ -262,6 +269,33 @@ export async function handleOpGetWorkflowUri(
     exists: res.exists,
     content: res.content,
     size: res.size,
+  };
+}
+
+export async function handleOpSetSectionUri(
+  deps: UriHandlerDeps,
+  params: Record<string, string>,
+): Promise<UriResponsePayload> {
+  const id = params.id ?? params.issue;
+  const name = params.name;
+  const content = params.content;
+  if (!id || typeof name !== "string" || typeof content !== "string") {
+    throw new Error("op-set-section URI requires id, name, content");
+  }
+  if (name !== "Plan" && name !== "Notes" && name !== "Summary") {
+    throw new Error("op-set-section URI name must be one of Plan|Notes|Summary");
+  }
+  const append = params.append === "1" || params.append === "true";
+  const entry = findIssueById(deps.store, id);
+  const res = await deps.setSection(entry, name, content, { append });
+  return {
+    ok: true,
+    command: "op-set-section",
+    issueId: res.issueId,
+    path: res.path,
+    section: res.section,
+    replaced: res.replaced,
+    appended: res.appended,
   };
 }
 
