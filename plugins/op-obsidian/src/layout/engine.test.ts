@@ -40,6 +40,7 @@ describe("pickLayout", () => {
 describe("maxLayoutForCeiling", () => {
   it("returns the largest fitting layout", () => {
     expect(maxLayoutForCeiling({ maxRows: 3, maxCols: 3 })).toBe("3x3");
+    expect(maxLayoutForCeiling({ maxRows: 2, maxCols: 3 })).toBe("2x3");
     expect(maxLayoutForCeiling({ maxRows: 2, maxCols: 2 })).toBe("2x2");
     expect(maxLayoutForCeiling({ maxRows: 1, maxCols: 2 })).toBe("1x2");
     expect(maxLayoutForCeiling({ maxRows: 1, maxCols: 1 })).toBe("1");
