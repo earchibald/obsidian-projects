@@ -339,6 +339,9 @@ export default class OpPlugin extends Plugin {
             executeResumeLast: () => void this.runResumeLastCommand(),
             resolveIssue: (entry, status) =>
               this.runResolveCommand({ path: entry.path, status }),
+            // OP-156 §5: wire the row context menu's [Detach] action through
+            // the same path as the palette/URI/CLI handlers.
+            detachAgent: (entry) => void this.runDetachAgentCommand(entry.id),
             openGithubIssue: (entry) => {
               if (entry.githubIssue) window.open(entry.githubIssue, "_blank");
             },
