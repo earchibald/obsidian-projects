@@ -1,6 +1,8 @@
 import { Plugin, TFile, WorkspaceLeaf } from "obsidian";
 import { OP_SIDEBAR_VIEW_TYPE, OpSidebarView } from "./sidebarView";
 import { revealAgentSession } from "./revealAgentSession";
+import { findAgentTmuxLocation } from "./agentTmuxLocation";
+import { captureTmuxPane } from "./tmuxCapture";
 import { EventBus } from "./eventBus";
 import { IssueStore } from "./issueStore";
 import { createIssue, type CreateIssueInput, type Priority } from "./createIssue";
@@ -335,6 +337,16 @@ export default class OpPlugin extends Plugin {
             recordRecency: (id) => this.recordRecency(id),
             executeResumeLast: () => void this.runResumeLastCommand(),
             resolveIssue: (entry) => this.runResolveCommand({ path: entry.path }),
+          },
+          async (entry) => {
+            const loc = await findAgentTmuxLocation(this.settings, entry.id);
+            if (!loc) return null;
+            return captureTmuxPane(
+              this.settings.tmuxBinary,
+              loc.session,
+              loc.window,
+              this.settings.view.agentHoverLines,
+            );
           },
         ),
     );

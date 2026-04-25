@@ -113,6 +113,46 @@ describe("mergeSettings", () => {
     ).toBe(DEFAULT_SETTINGS.view.openOnStartup);
   });
 
+  it("agent hover defaults: preview on, 30 lines, 400ms delay", () => {
+    const v = mergeSettings({}).view;
+    expect(v.agentHoverPreview).toBe(true);
+    expect(v.agentHoverLines).toBe(30);
+    expect(v.agentHoverDelayMs).toBe(400);
+  });
+
+  it("agent hover: accepts valid overrides; round-trips through mergeSettings", () => {
+    const out = mergeSettings({
+      view: { agentHoverPreview: false, agentHoverLines: 100, agentHoverDelayMs: 1500 },
+    });
+    expect(out.view.agentHoverPreview).toBe(false);
+    expect(out.view.agentHoverLines).toBe(100);
+    expect(out.view.agentHoverDelayMs).toBe(1500);
+  });
+
+  it("agent hover: clamps and floors out-of-range numbers (falls back to default)", () => {
+    // out of range → keep default
+    expect(mergeSettings({ view: { agentHoverLines: 0 } }).view.agentHoverLines).toBe(30);
+    expect(mergeSettings({ view: { agentHoverLines: 501 } }).view.agentHoverLines).toBe(30);
+    expect(mergeSettings({ view: { agentHoverLines: -3 } }).view.agentHoverLines).toBe(30);
+    expect(mergeSettings({ view: { agentHoverDelayMs: -1 } }).view.agentHoverDelayMs).toBe(400);
+    expect(mergeSettings({ view: { agentHoverDelayMs: 2001 } }).view.agentHoverDelayMs).toBe(400);
+    // floors fractional in-range values
+    expect(mergeSettings({ view: { agentHoverLines: 42.9 } }).view.agentHoverLines).toBe(42);
+    expect(mergeSettings({ view: { agentHoverDelayMs: 99.7 } }).view.agentHoverDelayMs).toBe(99);
+  });
+
+  it("agent hover: rejects non-boolean / non-numeric input", () => {
+    expect(
+      mergeSettings({ view: { agentHoverPreview: "yes" as unknown as boolean } }).view.agentHoverPreview,
+    ).toBe(true);
+    expect(
+      mergeSettings({ view: { agentHoverLines: "100" as unknown as number } }).view.agentHoverLines,
+    ).toBe(30);
+    expect(
+      mergeSettings({ view: { agentHoverDelayMs: NaN } }).view.agentHoverDelayMs,
+    ).toBe(400);
+  });
+
   it("rejects unknown view.defaultTab", () => {
     expect(mergeSettings({ view: { defaultTab: "resolved" } }).view.defaultTab).toBe("resolved");
     expect(

@@ -702,6 +702,44 @@ export class OpSettingsTab extends PluginSettingTab {
           }),
       );
 
+    new Setting(containerEl)
+      .setName("Agent hover preview")
+      .setDesc(
+        "When hovering an agent badge in the sidebar, show the last N lines of the agent's tmux pane in a small popover.",
+      )
+      .addToggle((t) =>
+        t.setValue(s.view.agentHoverPreview).onChange(async (v) => {
+          s.view.agentHoverPreview = v;
+          await this.plugin.saveSettings();
+        }),
+      );
+
+    new Setting(containerEl)
+      .setName("Agent hover preview lines")
+      .setDesc("How many lines of the tmux pane to capture for the hover preview (1–500).")
+      .addText((t) =>
+        t.setValue(String(s.view.agentHoverLines)).onChange(async (v) => {
+          const n = parseInt(v, 10);
+          if (Number.isFinite(n) && n >= 1 && n <= 500) {
+            s.view.agentHoverLines = n;
+            await this.plugin.saveSettings();
+          }
+        }),
+      );
+
+    new Setting(containerEl)
+      .setName("Agent hover preview delay (ms)")
+      .setDesc("Delay before the popover opens on hover (0–2000 ms).")
+      .addText((t) =>
+        t.setValue(String(s.view.agentHoverDelayMs)).onChange(async (v) => {
+          const n = parseInt(v, 10);
+          if (Number.isFinite(n) && n >= 0 && n <= 2000) {
+            s.view.agentHoverDelayMs = n;
+            await this.plugin.saveSettings();
+          }
+        }),
+      );
+
     containerEl.createEl("h2", { text: "GitHub integration" });
     containerEl.createEl("p", {
       text: "Requires the `gh` CLI installed and authenticated. `gh` is run in the project's repo (repo_path in STATUS.md or the working-dir setting above).",

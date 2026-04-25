@@ -81,6 +81,14 @@ export class OpSidebarView extends ItemView {
    * elsewhere is rendered with the muted "stale" class. */
   private liveTmuxWindows: Set<string> | null | undefined = undefined;
 
+  /** Single popover element owned by the view; rebuilt per hover. */
+  private hoverEl?: HTMLElement;
+  private hoverTimer: ReturnType<typeof setTimeout> | undefined;
+  /** Monotonic counter so a stale in-flight capture is ignored after the
+   * pointer has moved on. Bumped on every hover-start and hover-end. */
+  private hoverSeq = 0;
+  private hoverDocClickHandler: ((ev: MouseEvent) => void) | undefined;
+
   constructor(
     leaf: WorkspaceLeaf,
     private store: IssueStore,
@@ -93,6 +101,7 @@ export class OpSidebarView extends ItemView {
       forcePick: boolean,
     ) => void | Promise<void>,
     private hooks?: OpSidebarHooks,
+    private capturePreview?: (entry: IssueEntry) => Promise<string | null>,
   ) {
     super(leaf);
   }
@@ -169,6 +178,7 @@ export class OpSidebarView extends ItemView {
     this.unsubscribe?.();
     this.unsubscribe = undefined;
     this.stopTmuxProbe();
+    this.teardownHoverPreview();
     this.tabButtons.clear();
     if (this.keydownHandler) {
       this.contentEl.removeEventListener("keydown", this.keydownHandler);
@@ -238,6 +248,10 @@ export class OpSidebarView extends ItemView {
   }
 
   private render(): void {
+    // The list is about to be rebuilt; any popover anchored to the previous
+    // DOM is now dangling. Tear it down before re-rendering so we don't
+    // orphan a `position: fixed` element on top of the new list.
+    this.teardownHoverPreview();
     this.renderHeader();
     for (const [id, btn] of this.tabButtons) {
       btn.toggleClass("is-active", id === this.active);
@@ -318,6 +332,7 @@ export class OpSidebarView extends ItemView {
             void this.revealAgent?.(e);
           });
         }
+        this.attachHoverPreview(badge, e);
       } else if (this.launchAgent) {
         const launchBtn = actions.createEl("button", {
           cls: "op-sidebar__action op-sidebar__action--launch",
@@ -561,6 +576,90 @@ export class OpSidebarView extends ItemView {
     );
     modal.open();
   }
+
+  /**
+   * Attach mouseenter/mouseleave handlers to an agent badge so that
+   * hovering it shows a tmux pane preview popover after the configured
+   * delay. Skips wiring entirely when the feature is disabled or no
+   * capture callback is supplied (legacy callers / tests).
+   */
+  private attachHoverPreview(badge: HTMLElement, entry: IssueEntry): void {
+    const settings = this.getSettings();
+    if (!settings.agentHoverPreview) return;
+    if (!this.capturePreview) return;
+    const capture = this.capturePreview;
+
+    badge.addEventListener("mouseenter", () => {
+      const seq = ++this.hoverSeq;
+      const delay = clampHoverDelay(settings.agentHoverDelayMs);
+      this.clearHoverTimer();
+      this.hoverTimer = setTimeout(() => {
+        this.hoverTimer = undefined;
+        if (seq !== this.hoverSeq) return;
+        void capture(entry).then((text) => {
+          // Stale request? Pointer has already moved on or another hover
+          // started — drop this result rather than racing to render it.
+          if (seq !== this.hoverSeq) return;
+          if (text === null || text === undefined) return;
+          this.showHoverPreview(badge, text);
+        });
+      }, delay);
+    });
+
+    badge.addEventListener("mouseleave", () => {
+      this.hoverSeq++;
+      this.teardownHoverPreview();
+    });
+  }
+
+  private showHoverPreview(anchor: HTMLElement, text: string): void {
+    // Replace any existing popover so we never stack two.
+    this.teardownHoverPreview(/* keepSeq */ true);
+
+    const el = document.createElement("div");
+    el.addClass("op-sidebar__hover-preview");
+    const pre = document.createElement("pre");
+    pre.textContent = text;
+    el.appendChild(pre);
+    document.body.appendChild(el);
+
+    const rect = anchor.getBoundingClientRect();
+    el.style.position = "fixed";
+    el.style.left = `${Math.round(rect.left)}px`;
+    el.style.top = `${Math.round(rect.bottom + 4)}px`;
+
+    this.hoverEl = el;
+
+    // Click-outside dismissal: any document click closes the popover. We
+    // attach to `document` (not the leaf) so a click in another pane also
+    // dismisses it. Use capture phase to beat downstream stopPropagation.
+    const handler = (ev: MouseEvent) => {
+      if (ev.target instanceof Node && el.contains(ev.target)) return;
+      this.hoverSeq++;
+      this.teardownHoverPreview();
+    };
+    this.hoverDocClickHandler = handler;
+    document.addEventListener("click", handler, true);
+  }
+
+  private teardownHoverPreview(keepSeq = false): void {
+    if (!keepSeq) this.clearHoverTimer();
+    if (this.hoverEl) {
+      this.hoverEl.remove();
+      this.hoverEl = undefined;
+    }
+    if (this.hoverDocClickHandler) {
+      document.removeEventListener("click", this.hoverDocClickHandler, true);
+      this.hoverDocClickHandler = undefined;
+    }
+  }
+
+  private clearHoverTimer(): void {
+    if (this.hoverTimer !== undefined) {
+      clearTimeout(this.hoverTimer);
+      this.hoverTimer = undefined;
+    }
+  }
 }
 
 /**
@@ -671,6 +770,13 @@ export function shouldShowProjectChip(
     if (entries[i].project !== first) return true;
   }
   return false;
+}
+
+function clampHoverDelay(ms: number): number {
+  if (!Number.isFinite(ms)) return 400;
+  if (ms <= 0) return 0;
+  if (ms >= 2000) return 2000;
+  return Math.floor(ms);
 }
 
 function sameLiveSet(
