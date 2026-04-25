@@ -62,6 +62,10 @@ export class OpSidebarView extends ItemView {
   private tabButtons = new Map<TabId, HTMLElement>();
   private rafPending = false;
   private probeTimer: ReturnType<typeof setInterval> | undefined;
+  /** Guard against `r` auto-repeat (or rapid double-tap) stacking multiple
+   * resolve modals on top of each other. Set when a modal opens, cleared via
+   * the `onDismiss` callback when it closes (Cancel OR Resolve). */
+  private resolveModalOpen = false;
   /** Last list rendered into the body — keyed by index so j/k can map cleanly
    * onto a row without re-running the filter. */
   private displayedIssues: IssueEntry[] = [];
@@ -243,10 +247,17 @@ export class OpSidebarView extends ItemView {
     this.contentEl.toggleClass("op-sidebar--density-comfortable", density !== "compact");
 
     const issues = filterEntries(this.pickFor(this.active), this.filterQuery);
+    // Preserve selection identity across re-renders by id. Without this, a new
+    // issue that sorts before the current selection (e.g. OP-001 arriving
+    // while OP-100 is highlighted at index 0) silently shifts the highlight
+    // to a different row mid-keypress. O(n) findIndex is fine — renders are
+    // RAF-debounced and project-vault issue lists are small.
+    const selectedId = this.displayedIssues[this.selectedIndex]?.id;
     this.displayedIssues = issues;
     this.rowEls = [];
-    // Clamp the selection to the new list shape. Empty list ⇒ -1 (no row).
+    const identityIdx = selectedId !== undefined ? issues.findIndex((e) => e.id === selectedId) : -1;
     if (issues.length === 0) this.selectedIndex = -1;
+    else if (identityIdx >= 0) this.selectedIndex = identityIdx;
     else if (this.selectedIndex < 0 || this.selectedIndex >= issues.length) this.selectedIndex = 0;
 
     const showProjectChip = shouldShowProjectChip(density, issues);
@@ -486,6 +497,9 @@ export class OpSidebarView extends ItemView {
     const action = decideKeyAction(ev, { inFilter: ev.target === this.filterInput });
     if (action === "ignore") return;
     ev.preventDefault();
+    // For Cmd/Ctrl+Enter we additionally stopPropagation so Obsidian's global
+    // "Open link in new pane" handler doesn't double-fire on the same chord.
+    if (action === "launch") ev.stopPropagation();
     switch (action) {
       case "next":
         this.setSelectedIndex(this.selectedIndex + 1);
@@ -525,15 +539,26 @@ export class OpSidebarView extends ItemView {
   }
 
   private async resolveSelected(): Promise<void> {
+    // Guard against `r` auto-repeat (or rapid double-tap) stacking modals.
+    // Cleared via the modal's onDismiss callback below.
+    if (this.resolveModalOpen) return;
     const entry = this.currentSelection();
     if (!entry || !this.hooks?.resolveIssue) return;
     if (entry.resolvedFolder || entry.status === "resolved" || entry.status === "wontfix") {
       return;
     }
+    this.resolveModalOpen = true;
     const hook = this.hooks.resolveIssue;
-    const modal = new OpResolveConfirmModal(this.app, entry, async () => {
-      await hook(entry);
-    });
+    const modal = new OpResolveConfirmModal(
+      this.app,
+      entry,
+      async () => {
+        await hook(entry);
+      },
+      () => {
+        this.resolveModalOpen = false;
+      },
+    );
     modal.open();
   }
 }
@@ -548,6 +573,10 @@ export class OpResolveConfirmModal extends Modal {
     app: App,
     private entry: IssueEntry,
     private onConfirm: () => void | Promise<void>,
+    /** Called when the modal closes for any reason (Cancel, Resolve, or
+     * Esc/click-outside). The sidebar uses it to clear the auto-repeat
+     * stacking guard so the next `r` keypress works normally. */
+    private onDismiss?: () => void,
   ) {
     super(app);
   }
@@ -580,6 +609,7 @@ export class OpResolveConfirmModal extends Modal {
 
   onClose(): void {
     this.contentEl.empty();
+    this.onDismiss?.();
   }
 }
 

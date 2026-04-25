@@ -32,6 +32,7 @@ vi.mock("./staleAgentBadges", () => ({
 import {
   decideKeyAction,
   filterEntries,
+  OpResolveConfirmModal,
   OpSidebarView,
   shouldShowProjectChip,
   TMUX_PROBE_INTERVAL_MS,
@@ -360,5 +361,94 @@ describe("OpSidebarView visibility-gated tmux probe", () => {
       expect(view.isProbeRunning()).toBe(false);
       await view.onClose();
     });
+  });
+});
+
+// ─── OpResolveConfirmModal ────────────────────────────────────────────────────
+
+describe("OpResolveConfirmModal", () => {
+  it("calls onDismiss when closed (Cancel / Resolve / Esc all hit onClose)", () => {
+    const onConfirm = vi.fn();
+    const onDismiss = vi.fn();
+    const modal = new OpResolveConfirmModal(
+      {} as any,
+      entry({ id: "OP-42", title: "OP-42 example" }),
+      onConfirm,
+      onDismiss,
+    );
+    (modal as any).contentEl = makeFakeEl();
+    modal.onClose();
+    expect(onDismiss).toHaveBeenCalledTimes(1);
+    expect(onConfirm).not.toHaveBeenCalled();
+  });
+
+  it("does not throw when onDismiss is omitted", () => {
+    const modal = new OpResolveConfirmModal(
+      {} as any,
+      entry({ id: "OP-1", title: "OP-1 placeholder" }),
+      vi.fn(),
+    );
+    (modal as any).contentEl = makeFakeEl();
+    expect(() => modal.onClose()).not.toThrow();
+  });
+});
+
+// ─── render() selection identity preservation ────────────────────────────────
+
+describe("render() selection identity", () => {
+  function makeViewWithIssues(issues: IssueEntry[]): any {
+    const bus = new FakeBus();
+    const store = {
+      byId: () => undefined,
+      issues: () => issues,
+    };
+    return new OpSidebarView(
+      {} as any,
+      store as any,
+      bus as any,
+      () =>
+        ({
+          defaultTab: "issues",
+          recentResolvedLimit: 20,
+          openOnStartup: false,
+          density: "comfortable",
+        } as any),
+      undefined,
+      undefined,
+      undefined,
+    );
+  }
+
+  it("preserves the selected row by id when a new issue inserts before it", async () => {
+    const op100 = entry({ id: "OP-100", title: "OP-100 original" });
+    const issues: IssueEntry[] = [op100];
+    const view = makeViewWithIssues(issues);
+    await view.onOpen();
+    expect((view as any).selectedIndex).toBe(0);
+    expect((view as any).displayedIssues[0].id).toBe("OP-100");
+
+    // OP-001 sorts before OP-100 numerically — the selection must stay on OP-100.
+    issues.unshift(entry({ id: "OP-001", title: "OP-001 new" }));
+    (view as any).render();
+    expect((view as any).selectedIndex).toBe(1);
+    expect((view as any).displayedIssues[(view as any).selectedIndex].id).toBe("OP-100");
+
+    await view.onClose();
+  });
+
+  it("falls back to index 0 when the previously selected issue leaves the list", async () => {
+    const op1 = entry({ id: "OP-1" });
+    const op2 = entry({ id: "OP-2" });
+    const issues: IssueEntry[] = [op1, op2];
+    const view = makeViewWithIssues(issues);
+    await view.onOpen();
+    (view as any).selectedIndex = 1;
+
+    issues.splice(1, 1); // OP-2 leaves the rendered list
+    (view as any).render();
+    expect((view as any).selectedIndex).toBe(0);
+    expect((view as any).displayedIssues[0].id).toBe("OP-1");
+
+    await view.onClose();
   });
 });
