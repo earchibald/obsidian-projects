@@ -10,7 +10,7 @@ vi.mock("obsidian", () => {
 });
 
 import { TFile } from "obsidian";
-import { listLinkedTargets } from "./links";
+import { listLinkedTargets, listDanglingLinkedIds } from "./links";
 import type { IssueEntry } from "./types";
 import type { IssueStore } from "./issueStore";
 
@@ -116,6 +116,61 @@ describe("listLinkedTargets", () => {
     const src = entry("OP-1");
     const { app, store } = makeEnv({ src, fm: {}, others: [] });
     expect(() => listLinkedTargets(app, store, "OP-1", "not_a_relation")).toThrow(
+      /Unknown relation/,
+    );
+  });
+});
+
+describe("listDanglingLinkedIds", () => {
+  it("returns ids that no longer resolve when all links are dangling", () => {
+    const src = entry("OP-1");
+    const { app, store } = makeEnv({
+      src,
+      fm: { parent: "OP-404" },
+      others: [],
+    });
+    expect(listDanglingLinkedIds(app, store, "OP-1", "parent")).toEqual(["OP-404"]);
+  });
+
+  it("returns only the dangling ids in a mixed list (some live, some dangling)", () => {
+    const src = entry("OP-1");
+    const live = entry("OP-2");
+    const { app, store } = makeEnv({
+      src,
+      fm: { children: ["OP-2", "OP-404", "OP-405"] },
+      others: [live],
+    });
+    expect(listDanglingLinkedIds(app, store, "OP-1", "children")).toEqual(["OP-404", "OP-405"]);
+  });
+
+  it("returns [] when all linked ids resolve (no drift)", () => {
+    const src = entry("OP-1");
+    const c1 = entry("OP-2");
+    const c2 = entry("OP-3");
+    const { app, store } = makeEnv({
+      src,
+      fm: { children: ["OP-2", "OP-3"] },
+      others: [c1, c2],
+    });
+    expect(listDanglingLinkedIds(app, store, "OP-1", "children")).toEqual([]);
+  });
+
+  it("returns [] when the source has no entry under that relation", () => {
+    const src = entry("OP-1");
+    const { app, store } = makeEnv({ src, fm: {}, others: [] });
+    expect(listDanglingLinkedIds(app, store, "OP-1", "parent")).toEqual([]);
+  });
+
+  it("returns [] when the source id is unknown", () => {
+    const src = entry("OP-1");
+    const { app, store } = makeEnv({ src, fm: { children: ["OP-2"] }, others: [] });
+    expect(listDanglingLinkedIds(app, store, "OP-999", "children")).toEqual([]);
+  });
+
+  it("throws on an unknown relation name", () => {
+    const src = entry("OP-1");
+    const { app, store } = makeEnv({ src, fm: {}, others: [] });
+    expect(() => listDanglingLinkedIds(app, store, "OP-1", "not_a_relation")).toThrow(
       /Unknown relation/,
     );
   });

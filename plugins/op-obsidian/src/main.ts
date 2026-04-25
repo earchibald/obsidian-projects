@@ -26,7 +26,14 @@ import { parseNewScopePayload, type NewScopeMode } from "./setScopePure";
 import { setEvaluation } from "./setEvaluation";
 import { setSection } from "./setSection";
 import { setFlow, type Complexity, type Flow } from "./setFlow";
-import { applyLink, listLinkedTargets, removeLink, linkCheck, migrateLinks } from "./links";
+import {
+  applyLink,
+  listDanglingLinkedIds,
+  listLinkedTargets,
+  removeLink,
+  linkCheck,
+  migrateLinks,
+} from "./links";
 import { RELATION_NAMES, type RelationName } from "./relations";
 import { runEvaluatorFlow } from "./evaluator";
 import { launchHeadless } from "./launchHeadless";
@@ -1316,7 +1323,15 @@ export default class OpPlugin extends Plugin {
   private pickRemoveLinkTarget(srcEntry: IssueEntry, relation: RelationName): void {
     const linked = listLinkedTargets(this.app, this.store, srcEntry.id, relation);
     if (linked.length === 0) {
-      new Notice(`op: ${srcEntry.id} has no ${relation} links to remove`);
+      const dangling = listDanglingLinkedIds(this.app, this.store, srcEntry.id, relation);
+      if (dangling.length > 0) {
+        new Notice(
+          `op: ${srcEntry.id} has no resolvable ${relation} links` +
+            ` (${dangling.length} dangling — run 'op: check issue link drift' to repair)`,
+        );
+      } else {
+        new Notice(`op: ${srcEntry.id} has no ${relation} links to remove`);
+      }
       return;
     }
     if (linked.length === 1) {

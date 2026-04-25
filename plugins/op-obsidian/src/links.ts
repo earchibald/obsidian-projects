@@ -133,19 +133,20 @@ export async function removeLink(
 }
 
 /**
- * Enumerate the issues currently linked from `srcId` under `relation`. Returns
- * resolved IssueEntry rows so callers can present them in a picker; ids that
- * point at a missing/unresolved file are dropped silently (link drift is the
- * `op-link-check` command's job, not this picker's). Used by the `op-remove-link`
- * palette flow to constrain the target picker.
+ * Read the raw ids stored in `srcId`'s `relation` field from frontmatter,
+ * regardless of whether each id resolves to a known issue. Shared by
+ * `listLinkedTargets` and `listDanglingLinkedIds`.
+ *
+ * Throws if `relation` is not a known relation name (consistent with
+ * `validateLinkArgs`).
  */
-export function listLinkedTargets(
+function readLinkedIds(
   app: App,
   store: IssueStore,
   srcId: string,
   relation: string,
-): IssueEntry[] {
-  const def = getRelation(relation);
+): string[] {
+  const def = getRelation(relation); // throws on unknown relation
   const srcEntry = store.byId(srcId);
   if (!srcEntry || srcEntry.type !== "issue") return [];
   const file = app.vault.getAbstractFileByPath(srcEntry.path);
@@ -163,12 +164,51 @@ export function listLinkedTargets(
     const v = fm[def.name];
     if (typeof v === "string" && v.length > 0) ids.push(v);
   }
+  return ids;
+}
+
+/**
+ * Enumerate the issues currently linked from `srcId` under `relation`. Returns
+ * resolved IssueEntry rows so callers can present them in a picker; ids that
+ * point at a missing/unresolved issue are dropped silently (link drift is the
+ * `op-link-check` command's job, not this picker's). Used by the `op-remove-link`
+ * palette flow to constrain the target picker.
+ *
+ * See also `listDanglingLinkedIds` to detect dropped drift entries.
+ */
+export function listLinkedTargets(
+  app: App,
+  store: IssueStore,
+  srcId: string,
+  relation: string,
+): IssueEntry[] {
+  const ids = readLinkedIds(app, store, srcId, relation);
   const out: IssueEntry[] = [];
   for (const id of ids) {
     const entry = store.byId(id);
     if (entry && entry.type === "issue") out.push(entry);
   }
   return out;
+}
+
+/**
+ * Return the ids stored in `srcId`'s `relation` field that no longer resolve
+ * to a known issue (link drift). These are the entries silently dropped by
+ * `listLinkedTargets`. Surfaced here so callers can inform the user to run
+ * `op-link-check` rather than showing a misleading "no links to remove" notice
+ * when the frontmatter still contains stale ids.
+ */
+export function listDanglingLinkedIds(
+  app: App,
+  store: IssueStore,
+  srcId: string,
+  relation: string,
+): string[] {
+  const ids = readLinkedIds(app, store, srcId, relation);
+  return ids.filter((id) => {
+    const e = store.byId(id);
+    return !e || e.type !== "issue";
+  });
 }
 
 export interface LinkCheckResult {
