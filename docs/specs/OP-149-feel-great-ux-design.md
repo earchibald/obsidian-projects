@@ -195,16 +195,20 @@ flowchart TD
 
    | Keybinding | Command |
    |---|---|
-   | `⌘⇧O` | op: open sidebar |
-   | `⌘⇧I` | op: pick & act (new — see below) |
-   | `⌘⇧↵` | op: resume last |
-   | `⌘⇧A` | op: attach current issue's agent |
-   | `⌘⇧L` | op: launch agent for current issue |
-   | `⌘⇧R` | op: resolve current issue |
-   | `⌘⇧N` | op: new issue (current project) |
-   | `⌘⇧.` | op: append last commit |
-   | `⌘⇧]` | op: next issue in project (§19a) |
-   | `⌘⇧[` | op: previous issue in project (§19a) |
+   | Keybinding | Command | Notes |
+   |---|---|---|
+   | `⌘⇧O` | op: open sidebar | |
+   | `⌘⇧I` | op: pick & act (new — see below) | |
+   | `⌘⇧↵` | op: resume last | |
+   | `⌘⇧A` | op: attach current issue's agent | |
+   | `⌘⇧L` | op: launch agent for current issue | |
+   | `⌘⇧R` | op: resolve current issue | |
+   | `⌘⌥N` | op: new issue (current project) | Was `⌘⇧N` — bound by Obsidian core (new note in same folder). `⌘⌥N` preserves the "new" mnemonic and is reliably free. |
+   | `⌘⇧.` | op: append last commit | |
+   | `⌘⇧J` | op: next issue in project (§19a) | Was `⌘⇧]` — bound by Obsidian core (next tab). Vim-style J = down/next. |
+   | `⌘⇧K` | op: previous issue in project (§19a) | Was `⌘⇧[` — bound by Obsidian core (previous tab). Vim-style K = up/previous. |
+
+   **Conflict-driven choices.** The default preset deliberately steers around Obsidian core bindings. Three originally-proposed keys conflicted and were swapped: `⌘⇧N` (Obsidian: new note in same folder), `⌘⇧[` and `⌘⇧]` (Obsidian: previous/next tab). The replacements (`⌘⌥N`, `⌘⇧K`, `⌘⇧J`) are reliably free in stock Obsidian. The §3 collision strategy still applies — at apply-time the implementation must check `app.hotkeyManager` for any user-installed bindings on these keys and skip-with-report if conflicts exist.
 
 2. **`op: pick & act` — single SuggestModal that does picking and acting in one step.** The footer hint shows `↵ open · ⌘↵ launch · ⌥↵ plan-mode · ⇧↵ resolve · ⌃↵ append commit`. This is the Omnisearch / Make.md / Raycast pattern — collapses the today's two-step "find issue, then run a command on it" into one modal.
 
@@ -390,7 +394,7 @@ flowchart TD
 
 Both commands resolve the project from: (a) the active note's `project:` frontmatter if any, (b) the most-recent project from §1's recency log, (c) interactive picker as last resort. The interactive confirmation step is preserved per the op skill's "always pause for explicit user confirmation before mutating vault or repo" rule.
 
-**Why it feels better.** Captures the moment-of-thought without breaking flow. Today, "I should make an issue for this" is a 6-step interruption; this makes it 2 steps (`⌘⇧N` → confirm).
+**Why it feels better.** Captures the moment-of-thought without breaking flow. Today, "I should make an issue for this" is a 6-step interruption; this makes it 2 steps (`⌘⌥N` → confirm).
 
 **Cost / risk.** Low. Wraps existing `op-new` plumbing.
 
@@ -693,13 +697,13 @@ Things not in the seed prompt, not surfaced by the pre-spec adversarial pass, an
 
 **Today.** When you're in an issue note (OP-72), navigating to the next open issue in the project requires: close note → open sidebar → find next row → click. Or: open palette → `op: pick & act` → type something. Neither is fluid.
 
-**Proposed.** Two new commands: **`op: next issue in project`** and **`op: previous issue in project`**. Bound to `]` and `[` in the default preset (or `⌘⇧]`/`⌘⇧[` if `]`/`[` conflict with existing note-editing bindings — check against Obsidian core first). Logic: from the frontmatter of the current note, read `project:` and the current `id:`, then look up the next/previous issue by ID in `issueStore`. Wrap at boundaries.
+**Proposed.** Two new commands: **`op: next issue in project`** and **`op: previous issue in project`**. Bound to `⌘⇧J` (next) and `⌘⇧K` (previous) in the default preset — Vim-style down/up mnemonic, and both keys are reliably free in stock Obsidian (the more obvious `⌘⇧]`/`⌘⇧[` are taken by Obsidian's tab-navigation commands and were dropped from the preset). Logic: from the frontmatter of the current note, read `project:` and the current `id:`, then look up the next/previous issue by ID in `issueStore`. Wrap at boundaries.
 
 **Why it feels better.** The issue list in the sidebar is a *list* — pressing `j/k` and `↵` (§6) gets you into a note, but getting to the *next* note in that list currently requires a context switch back to the sidebar. This closes that loop. The model is Vim's `]q`/`[q` (quickfix next/previous) or GitHub's `j/k` in the issue list — established muscle memory for the target user.
 
 **Cost / risk.** Trivial. ~30 LoC: two commands, one `issueStore` lookup, one `app.workspace.getLeaf().openFile()` call. Add to the §16 sequence as a fast follow to §6 (sidebar keyboard nav) — bundle into PR #5 or standalone as PR #9a.
 
-**Verdict.** `RECOMMEND`. Add to §3's preset table: `⌘⇧]` → `op: next issue in project`, `⌘⇧[` → `op: previous issue in project`.
+**Verdict.** `RECOMMEND`. Already in §3's preset table: `⌘⇧J` → `op: next issue in project`, `⌘⇧K` → `op: previous issue in project`.
 
 ### 19b. `op: show session log` — surfacing shell output for debugging
 
