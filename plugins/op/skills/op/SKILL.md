@@ -52,7 +52,7 @@ All `op-*` commands take `key=value` arguments (not `--flag`). Each prints a one
 | :--- | :--- | :--- | :--- |
 | `op-scaffold` | `slug`, `prefix` | `repo_path`, `title`, `priority`, `scope`, `scope_mode` | creates `Projects/<slug>/<slug>.base` + `STATUS.md`; writes `repo_path:` (absolute path only) if given; seeds `<PREFIX>-1` if `title` given. `scope_mode=bullets\|body` matches `op-new` semantics |
 | `op-new` | `project`, `title` | `priority`, `scope`, `scope_mode`, `github_issue` | creates next-N issue with sanitized filename and schema-conformant frontmatter. Default `scope_mode=bullets` splits `scope=` on newlines and wraps each line as `- [ ]`; rejects payloads containing `## ` H2s or code fences (would be flattened). Pass `scope_mode=body` to write `scope=` verbatim under `## Scope` (bullets, paragraphs, code fences allowed; H2s still rejected since they would terminate the section). When the plugin's `autoCreateGithubIssue` setting is on and no `github_issue` is passed, also runs `gh issue create` in the project's `repo_path` and writes the URL to `github_issue:` |
-| `op-work` | `issue` | — | sets `status: in-progress`; creates the initial TASKS note |
+| `op-work` | `issue` | `agent`, `agent_session` (alias: `session`), `force` | sets `status: in-progress`; creates the initial TASKS note. Optional params: `agent=` records the working agent id; `agent_session=` adds an opaque per-session id. If a different agent or session is already registered, returns `conflict` in the JSON payload and refuses to write (pass `force=true` to override). Force-overwriting a different agent without supplying `agent_session=` clears the stale session from the previous agent. |
 | `op-append-commit` | `issue`, `sha`, `subject` | — | idempotent append to issue's `commits:` list |
 | `op-set-pr` | `issue`, `url` | — | sets scalar `pr:` |
 | `op-get-workflow` | `project` | — | reads `Projects/<project>/WORKFLOW.md` (the project's SDLC policy, optional). Returns `{exists, path, content, size}`. Read-only. |
@@ -109,7 +109,14 @@ Accepts `slug N`, `slug PREFIX-N`, `PREFIX N`, `PREFIX-N`, or just `slug`/`PREFI
 
 ### Start
 
-1. `obsidian op-work issue=<PREFIX>-<N>`. Emit a one-line ack with the issue's `obsidian://` link so the user can open the note while you write `## Plan`.
+1. `obsidian op-work issue=<PREFIX>-<N> agent=<your-agent-id> [agent_session=<session-id>]`. The `agent` value is your runtime's identity (`claude`, `codex`, `gemini`, `copilot`, …) — pass the literal id, not the model name. The `agent_session` value should be a stable per-session identifier from your runtime; for Claude Code use `$CLAUDE_SESSION_ID` (exported in hook environments and via `--env`), and for other runtimes use whatever equivalent your harness exposes. Omit `agent_session=` if no stable id is available.
+
+   Read the JSON payload at `Projects/_scratch/op-last-response.md` after the call:
+   - `registered: true` and no `conflict` → you own the issue, proceed.
+   - `alreadyHeld: true` → idempotent re-entry, proceed.
+   - `conflict: { agent?, session? }` → another agent (or another session) is already registered. **Stop and ask the user** whether to take over — never pass `force=true` on your own. If they confirm, retry with `force=true`.
+
+   Emit a one-line ack with the issue's `obsidian://` link so the user can open the note while you write `## Plan`.
 2. **Check for a project workflow.** Read `Projects/<slug>/WORKFLOW.md` if it exists — that's the project's authoritative SDLC policy (branching, version cadence, PR rules, commit-to-issue mapping). Programmatic access: `obsidian op-get-workflow project=<slug>` returns `{exists, path, content}`. If absent, the project has no opinion — ask the user when policy ambiguity comes up; if the user wants to author one, the **`op: edit project workflow (WORKFLOW.md)`** palette command (or `obsidian op-edit-workflow project=<slug>`) launches an agent dedicated to that. (When you're launched via `op:open-agent`, the kickoff prompt already inlines the workflow text up to a configurable cap; use the CLI when you need the full file or want to verify.)
 3. If the body is empty or one line, scope is ambiguous — state your interpretation and confirm before implementing, even in auto mode.
 4. Reconcile scope vs. current repo/vault state — skip items already done; flag drift between the schema and observed reality.

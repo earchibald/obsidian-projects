@@ -27,6 +27,47 @@ describe("parseWorkParams", () => {
     expect(b.ok && b.value.id).toBe("OP-2");
     expect(c.ok && c.value.id).toBe("OP-3");
   });
+  it("defaults force=false and omits agent fields when absent", () => {
+    const r = parseWorkParams({ issue: "OP-1" });
+    expect(r.ok && r.value).toEqual({ id: "OP-1", force: false });
+  });
+  it("accepts agent and agent_session and force=true", () => {
+    const r = parseWorkParams({
+      issue: "OP-1",
+      agent: "claude",
+      agent_session: "abc-123",
+      force: "true",
+    });
+    expect(r.ok && r.value).toEqual({
+      id: "OP-1",
+      agent: "claude",
+      agentSession: "abc-123",
+      force: true,
+    });
+  });
+  it("session alias works for agent_session", () => {
+    const r = parseWorkParams({ issue: "OP-1", agent: "claude", session: "abc" });
+    expect(r.ok && r.value.agentSession).toBe("abc");
+  });
+  it("force=1 also enables force", () => {
+    const r = parseWorkParams({ issue: "OP-1", agent: "claude", force: "1" });
+    expect(r.ok && r.value.force).toBe(true);
+  });
+  it("rejects whitespace-only agent", () => {
+    const r = parseWorkParams({ issue: "OP-1", agent: "   " });
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.error).toMatch(/non-empty/);
+  });
+  it("rejects agent containing whitespace", () => {
+    const r = parseWorkParams({ issue: "OP-1", agent: "claude code" });
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.error).toMatch(/whitespace/);
+  });
+  it("trims agent and session values", () => {
+    const r = parseWorkParams({ issue: "OP-1", agent: "  claude  ", agent_session: "  abc  " });
+    expect(r.ok && r.value.agent).toBe("claude");
+    expect(r.ok && r.value.agentSession).toBe("abc");
+  });
 });
 
 describe("parseAppendCommitParams", () => {

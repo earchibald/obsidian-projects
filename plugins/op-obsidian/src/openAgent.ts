@@ -218,6 +218,7 @@ export async function clearAgentOnIssue(app: App, path: string): Promise<void> {
   if (!(file instanceof TFile)) return;
   await app.fileManager.processFrontMatter(file, (fm) => {
     delete fm.agent;
+    delete fm.agent_session;
   });
 }
 

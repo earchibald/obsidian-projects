@@ -5,10 +5,30 @@
 
 export type ParamsResult<T> = { ok: true; value: T } | { ok: false; error: string };
 
-export function parseWorkParams(params: Record<string, string>): ParamsResult<{ id: string }> {
+export function parseWorkParams(
+  params: Record<string, string>,
+): ParamsResult<{ id: string; agent?: string; agentSession?: string; force: boolean }> {
   const id = params.issue ?? params.id;
   if (!id) return { ok: false, error: "op-work failed: --issue is required" };
-  return { ok: true, value: { id } };
+  const agent = nonEmptyTrim(params.agent);
+  const agentSession = nonEmptyTrim(params.agent_session ?? params.session);
+  if (params.agent !== undefined && agent === undefined) {
+    return { ok: false, error: "op-work failed: --agent must be a non-empty string" };
+  }
+  if (agent !== undefined && /\s/.test(agent)) {
+    return { ok: false, error: "op-work failed: --agent must not contain whitespace" };
+  }
+  const force = params.force === "1" || params.force === "true";
+  const out: { id: string; agent?: string; agentSession?: string; force: boolean } = { id, force };
+  if (agent !== undefined) out.agent = agent;
+  if (agentSession !== undefined) out.agentSession = agentSession;
+  return { ok: true, value: out };
+}
+
+function nonEmptyTrim(v: unknown): string | undefined {
+  if (typeof v !== "string") return undefined;
+  const t = v.trim();
+  return t.length > 0 ? t : undefined;
 }
 
 export function parseAppendCommitParams(
