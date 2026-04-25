@@ -14,9 +14,11 @@ export interface TmuxProbeResult {
 
 /**
  * Pure: pick the issues whose `agent:` is set but whose tmux window is not
- * present on the shared session. Resolved/closed issues are skipped (their
- * agent fields are cleared by the resolve flow; if one slips through, the
- * fix is in the resolve path, not here).
+ * present on the shared session. Resolved/closed issues are skipped — post
+ * OP-156 the resolve flow may intentionally keep `agent:` on a resolved note
+ * when the session is still live; those are shown in the In flight tab and
+ * cleaned up via the `op: detach agent` command (or the SessionEnd hook on
+ * clean exit). The stale-badge surface is for non-resolved issues only.
  */
 export function selectStaleAgentBadges(
   issues: ReadonlyArray<IssueEntry>,

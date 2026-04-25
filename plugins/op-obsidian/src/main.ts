@@ -1721,9 +1721,15 @@ export default class OpPlugin extends Plugin {
 
   /**
    * Wraps `args.probeAgentLive` with the default tmux probe so callers don't
-   * have to assemble the same boilerplate. Caller-supplied probes win — the
-   * URI/CLI dispatch path passes a no-op probe to keep `agent:` state
-   * unchanged when the request originates outside the live tmux context.
+   * have to assemble the same boilerplate. Caller-supplied probes win — if
+   * `args.probeAgentLive` is already set (e.g., in tests), this is a no-op.
+   *
+   * All current resolve paths (palette, sidebar `r`, URI, CLI) go through
+   * `runResolveTracked` which always applies this wrapper, so they all receive
+   * the live tmux probe. For a CLI-driven agent self-resolve the probe returns
+   * alive=true (the agent's own window is running), `agent:` is kept, and
+   * the agent's own SessionEnd hook clears it on exit — the "SessionEnd-wins"
+   * contract.
    *
    * §5: a single `tmux list-windows` per session via `probeLiveTmuxWindows`.
    * No separate `has-session` probe — TOCTOU-safe by construction.
