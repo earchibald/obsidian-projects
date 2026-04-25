@@ -36,6 +36,14 @@ export interface AgentsSettings {
   enforceWorktree: boolean;
 }
 
+export interface DeveloperSettings {
+  // When true, `op-dev:*` debugging commands appear in the command palette.
+  // Default false so end-user palettes aren't crowded with plugin-author
+  // diagnostics. Reload the plugin after toggling — Obsidian's `addCommand`
+  // is a one-shot at plugin-load and has no `removeCommand` companion.
+  showDevCommands: boolean;
+}
+
 export interface FlowSettings {
   // When true, the SessionEnd hook auto-launches the next stage per the
   // flowOrchestrator transition matrix. Default false so the v1 ship doesn't
@@ -63,6 +71,7 @@ export interface OpSettings {
   view: ViewSettings;
   github: GithubSettings;
   agents: AgentsSettings;
+  developer: DeveloperSettings;
   flow: FlowSettings;
   orchestrator: OrchestratorSettings;
   orchestratorState: RegistryData;
@@ -100,6 +109,9 @@ export const DEFAULT_SETTINGS: OpSettings = {
   },
   agents: {
     enforceWorktree: false,
+  },
+  developer: {
+    showDevCommands: false,
   },
   flow: {
     autoAdvance: false,
@@ -177,6 +189,12 @@ export function mergeSettings(loaded: unknown): OpSettings {
     const a = l.agents as Partial<AgentsSettings>;
     if (typeof a.enforceWorktree === "boolean") {
       base.agents.enforceWorktree = a.enforceWorktree;
+    }
+  }
+  if (l.developer && typeof l.developer === "object") {
+    const d = l.developer as Partial<DeveloperSettings>;
+    if (typeof d.showDevCommands === "boolean") {
+      base.developer.showDevCommands = d.showDevCommands;
     }
   }
   if (Array.isArray((l as { projectOrder?: unknown }).projectOrder)) {

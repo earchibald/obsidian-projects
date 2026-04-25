@@ -389,19 +389,19 @@ export default class OpPlugin extends Plugin {
 
     this.addCommand({
       id: "op-open-agent-pick",
-      name: "op: open agent (pick at runtime)",
+      name: "op: open agent (pick)",
       callback: () => this.runOpenAgentCommand(true),
     });
 
     this.addCommand({
       id: "op-open-agent-plan",
-      name: "op: open agent for issue in PLAN MODE",
+      name: "op: open agent (plan mode)",
       callback: () => this.runOpenAgentCommand(false, "plan"),
     });
 
     this.addCommand({
       id: "op-open-agent-plan-pick",
-      name: "op: open agent in PLAN MODE (pick at runtime)",
+      name: "op: open agent (plan mode, pick)",
       callback: () => this.runOpenAgentCommand(true, "plan"),
     });
 
@@ -437,39 +437,45 @@ export default class OpPlugin extends Plugin {
 
     this.addCommand({
       id: "op-migrate-links",
-      name: "op: migrate legacy parent_issue/subissues to parent/children",
+      name: "op: migrate legacy issue links",
       callback: () => void this.runMigrateLinksCommand(),
     });
 
-    this.addCommand({
-      id: "op-debug-agent-launch",
-      name: "op-dev: open agent to debug agent launch",
-      callback: () => void this.runDebugAgentLaunch(),
-    });
+    // op-dev:* commands are gated by settings.developer.showDevCommands so
+    // end-user palettes aren't crowded with plugin-author diagnostics. The
+    // toggle takes effect on next plugin reload — Obsidian's addCommand has
+    // no removeCommand companion.
+    if (this.settings.developer.showDevCommands) {
+      this.addCommand({
+        id: "op-debug-agent-launch",
+        name: "op-dev: open agent to debug agent launch",
+        callback: () => void this.runDebugAgentLaunch(),
+      });
 
-    this.addCommand({
-      id: "op-dump-store",
-      name: "op-dev: dump IssueStore to console",
-      callback: () => {
-        const issues = this.store.issues();
-        const tasks = this.store.tasks();
-        console.log("[op-obsidian] IssueStore dump", {
-          issues: issues.length,
-          tasks: tasks.length,
-          entries: [...issues, ...tasks],
-        });
-        new Notice(`op: ${issues.length} issues, ${tasks.length} tasks (see console)`);
-      },
-    });
+      this.addCommand({
+        id: "op-dump-store",
+        name: "op-dev: dump IssueStore to console",
+        callback: () => {
+          const issues = this.store.issues();
+          const tasks = this.store.tasks();
+          console.log("[op-obsidian] IssueStore dump", {
+            issues: issues.length,
+            tasks: tasks.length,
+            entries: [...issues, ...tasks],
+          });
+          new Notice(`op: ${issues.length} issues, ${tasks.length} tasks (see console)`);
+        },
+      });
 
-    this.addCommand({
-      id: "op-rebuild-store",
-      name: "op-dev: rebuild IssueStore",
-      callback: () => {
-        this.store.rebuild();
-        new Notice("op: store rebuilt");
-      },
-    });
+      this.addCommand({
+        id: "op-rebuild-store",
+        name: "op-dev: rebuild IssueStore",
+        callback: () => {
+          this.store.rebuild();
+          new Notice("op: store rebuilt");
+        },
+      });
+    }
 
     this.registerObsidianProtocolHandler("op-scaffold", (params) => {
       this.runUri("op-scaffold", normalizeUriParams(params), (p) => this.handleOpScaffoldUri(p));
@@ -588,13 +594,15 @@ export default class OpPlugin extends Plugin {
       );
     });
 
-    this.addCommand({
-      id: "op-install-agent-hooks",
-      name: "op-dev: install SessionEnd hooks for agents",
-      callback: () => {
-        void this.runInstallAgentHooks(true);
-      },
-    });
+    if (this.settings.developer.showDevCommands) {
+      this.addCommand({
+        id: "op-install-agent-hooks",
+        name: "op-dev: install SessionEnd hooks for agents",
+        callback: () => {
+          void this.runInstallAgentHooks(true);
+        },
+      });
+    }
 
     // Install hooks in the background so SessionEnd reports land reliably.
     void this.runInstallAgentHooks(false);

@@ -13,6 +13,7 @@ describe("mergeSettings", () => {
       expect(out.view).not.toBe(DEFAULT_SETTINGS.view);
       expect(out.github).not.toBe(DEFAULT_SETTINGS.github);
       expect(out.agents).not.toBe(DEFAULT_SETTINGS.agents);
+      expect(out.developer).not.toBe(DEFAULT_SETTINGS.developer);
       expect(out.flow).not.toBe(DEFAULT_SETTINGS.flow);
       expect(out.orchestrator).not.toBe(DEFAULT_SETTINGS.orchestrator);
       expect(out.workingDirs).not.toBe(DEFAULT_SETTINGS.workingDirs);
@@ -155,6 +156,20 @@ describe("mergeSettings", () => {
   it("projectOrder defaults to [] and accepts a sanitised string array", () => {
     expect(mergeSettings({}).projectOrder).toEqual([]);
     expect(mergeSettings({ projectOrder: ["foo", "bar"] }).projectOrder).toEqual(["foo", "bar"]);
+  });
+
+  it("developer.showDevCommands defaults to false; accepts boolean override; rejects non-boolean", () => {
+    expect(mergeSettings({}).developer.showDevCommands).toBe(false);
+    expect(mergeSettings({ developer: { showDevCommands: true } }).developer.showDevCommands).toBe(
+      true,
+    );
+    expect(
+      mergeSettings({ developer: { showDevCommands: "yes" as unknown as boolean } }).developer
+        .showDevCommands,
+    ).toBe(false);
+    expect(mergeSettings({ developer: "garbage" as unknown as object }).developer.showDevCommands).toBe(
+      false,
+    );
   });
 
   it("projectOrder rejects non-array, drops non-string / blank / duplicate entries", () => {
