@@ -3,6 +3,7 @@ import type { ITermPlacement } from "./terminalLaunch";
 import { LAYOUT_IDS, type LayoutId } from "./layout/layouts";
 import { type RegistryData, emptyRegistry, mergeRegistry } from "./layout/registry";
 import type { OrchestratorSettings } from "./orchestrator";
+import { type RecencyEntry, sanitizeRecency } from "./recencyLog";
 
 export const EXTRA_PREAMBLE_MAX = 4000;
 
@@ -79,6 +80,10 @@ export interface OpSettings {
   // list (e.g. newly-discovered projects) sort lexically at the tail. Empty
   // array ⇒ pure lexical sort (the historical default).
   projectOrder: string[];
+  // Recency log of issues touched via op-work / op-open-agent / sidebar row
+  // click. Most-recent first, capped at RECENCY_CAP, dedup by issue id.
+  // Drives `op: resume last` and the sidebar Last-touched chip (OP-150).
+  recent: RecencyEntry[];
 }
 
 export const DEFAULT_SETTINGS: OpSettings = {
@@ -126,6 +131,7 @@ export const DEFAULT_SETTINGS: OpSettings = {
   },
   orchestratorState: emptyRegistry(),
   projectOrder: [],
+  recent: [],
 };
 
 const SIDEBAR_TABS: ReadonlySet<SidebarTab> = new Set(["issues", "in-flight", "resolved"]);
@@ -209,6 +215,7 @@ export function mergeSettings(loaded: unknown): OpSettings {
     }
     base.projectOrder = out;
   }
+  base.recent = sanitizeRecency((l as { recent?: unknown }).recent);
   if (l.flow && typeof l.flow === "object") {
     const f = l.flow as Partial<FlowSettings>;
     if (typeof f.autoAdvance === "boolean") base.flow.autoAdvance = f.autoAdvance;
