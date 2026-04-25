@@ -34,6 +34,7 @@ import {
   filterEntries,
   OpResolveConfirmModal,
   OpSidebarView,
+  prNumber,
   shouldShowProjectChip,
   TMUX_PROBE_INTERVAL_MS,
   type OpSidebarHooks,
@@ -98,6 +99,27 @@ describe("filterEntries", () => {
   it("preserves input order", () => {
     const out = filterEntries(items, "op", subseqMatcher);
     expect(out.map((e) => e.id)).toEqual(["OP-1", "OP-2"]);
+  });
+});
+
+describe("prNumber", () => {
+  it("parses /pull/N", () => {
+    expect(prNumber("https://github.com/owner/repo/pull/42")).toBe(42);
+  });
+  it("parses /pulls/N (gh's older form)", () => {
+    expect(prNumber("https://github.com/owner/repo/pulls/7")).toBe(7);
+  });
+  it("ignores trailing path segments", () => {
+    expect(prNumber("https://github.com/owner/repo/pull/12/files")).toBe(12);
+    expect(prNumber("https://github.com/owner/repo/pull/12#issuecomment-1")).toBe(12);
+    expect(prNumber("https://github.com/owner/repo/pull/12?diff=split")).toBe(12);
+  });
+  it("returns undefined for issue URLs", () => {
+    expect(prNumber("https://github.com/owner/repo/issues/12")).toBeUndefined();
+  });
+  it("returns undefined when no number is present", () => {
+    expect(prNumber("https://github.com/owner/repo/pull/")).toBeUndefined();
+    expect(prNumber("https://example.com")).toBeUndefined();
   });
 });
 

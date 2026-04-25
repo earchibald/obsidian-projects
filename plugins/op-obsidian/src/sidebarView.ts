@@ -388,6 +388,25 @@ export class OpSidebarView extends ItemView {
           });
         }
       }
+      if (e.pr) {
+        const n = prNumber(e.pr);
+        if (n !== undefined) {
+          const url = e.pr;
+          const pr = meta.createEl("a", {
+            cls: "op-sidebar__pr",
+            text: `PR #${n}`,
+          });
+          pr.setAttr("href", url);
+          pr.setAttr("target", "_blank");
+          pr.setAttr("rel", "noopener");
+          pr.setAttr("aria-label", `Pull request ${url}`);
+          pr.addEventListener("click", (ev) => {
+            ev.preventDefault();
+            ev.stopPropagation();
+            window.open(url, "_blank");
+          });
+        }
+      }
     }
   }
 
@@ -834,6 +853,13 @@ export function filterEntries(
 
 function ghIssueNumber(url: string): number | undefined {
   const m = url.match(/\/issues\/(\d+)(?:[/?#]|$)/);
+  if (!m) return undefined;
+  const n = Number(m[1]);
+  return Number.isFinite(n) ? n : undefined;
+}
+
+export function prNumber(url: string): number | undefined {
+  const m = url.match(/\/pulls?\/(\d+)(?:[/?#]|$)/);
   if (!m) return undefined;
   const n = Number(m[1]);
   return Number.isFinite(n) ? n : undefined;
