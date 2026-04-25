@@ -31,7 +31,21 @@ export interface ViewSettings {
    * by 4px and hides the project chip when the rendered list spans only one
    * project. */
   density: SidebarDensity;
+  /** When true, hovering an agent badge in the sidebar shows a tmux pane
+   * preview after `agentHoverDelayMs`. Default true. */
+  agentHoverPreview: boolean;
+  /** Lines captured from the agent's tmux pane for the hover preview.
+   * Clamped to [1, 500]. Default 30. */
+  agentHoverLines: number;
+  /** Delay (ms) between mouseenter and the tmux capture call. Clamped to
+   * [0, 2000]. Default 400. */
+  agentHoverDelayMs: number;
 }
+
+export const AGENT_HOVER_LINES_MIN = 1;
+export const AGENT_HOVER_LINES_MAX = 500;
+export const AGENT_HOVER_DELAY_MIN = 0;
+export const AGENT_HOVER_DELAY_MAX = 2000;
 
 export interface GithubSettings {
   autoCreateGithubIssue: boolean;
@@ -113,6 +127,9 @@ export const DEFAULT_SETTINGS: OpSettings = {
     recentResolvedLimit: 20,
     openOnStartup: false,
     density: "comfortable",
+    agentHoverPreview: true,
+    agentHoverLines: 30,
+    agentHoverDelayMs: 400,
   },
   github: {
     autoCreateGithubIssue: false,
@@ -175,6 +192,21 @@ export function mergeSettings(loaded: unknown): OpSettings {
     }
     if (typeof v.openOnStartup === "boolean") base.view.openOnStartup = v.openOnStartup;
     if (v.density && SIDEBAR_DENSITIES.has(v.density)) base.view.density = v.density;
+    if (typeof v.agentHoverPreview === "boolean") {
+      base.view.agentHoverPreview = v.agentHoverPreview;
+    }
+    if (typeof v.agentHoverLines === "number" && Number.isFinite(v.agentHoverLines)) {
+      const n = Math.floor(v.agentHoverLines);
+      if (n >= AGENT_HOVER_LINES_MIN && n <= AGENT_HOVER_LINES_MAX) {
+        base.view.agentHoverLines = n;
+      }
+    }
+    if (typeof v.agentHoverDelayMs === "number" && Number.isFinite(v.agentHoverDelayMs)) {
+      const n = Math.floor(v.agentHoverDelayMs);
+      if (n >= AGENT_HOVER_DELAY_MIN && n <= AGENT_HOVER_DELAY_MAX) {
+        base.view.agentHoverDelayMs = n;
+      }
+    }
   }
   if (l.orchestrator && typeof l.orchestrator === "object") {
     const o = l.orchestrator as Partial<OrchestratorSettings>;
