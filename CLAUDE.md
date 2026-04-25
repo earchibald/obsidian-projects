@@ -40,6 +40,16 @@ Always, in order:
    ```
    Also spot-check the plugin instance: `obsidian eval code='app.plugins.plugins["op-obsidian"]'` should return a live object with your commands registered.
 
+5. **Smoke-test Settings UIs.** When the change touches the op-obsidian Settings tab — Project order, working dirs, agent overlays, flow chaining, GitHub integration — `executeCommandById` won't reach it. Use `app.setting.openTabById` to render the tab synchronously and assert against the live DOM:
+
+   ```bash
+   obsidian eval code='(()=>{ app.setting.open(); app.setting.openTabById("op-obsidian"); return document.querySelectorAll(".op-project-order__item").length; })()'
+   ```
+
+   Returns synchronously — no `await` needed. Use it to verify drag-row count, `draggable=true` flags, prefix badges, reset-button presence, etc. without touching the GUI. Worked example: after a change to the "Project order" section, the count above should equal the number of discovered projects (one `.op-project-order__item` per project). Swap the selector for the section you actually changed.
+
+   Cross-reference: OPD-8 captures the generic obsidian-plugin-creator skill update for this recipe (also covers the async-modal-probe hang). The snippet here is the OP-side mirror so agents working op tasks aren't blocked on the OPD skill being updated first.
+
 Never skip these steps, even for "trivial" changes — untested plugin builds ship silently broken.
 
 ## Merging a PR from a delegated worktree
