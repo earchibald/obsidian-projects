@@ -35,7 +35,11 @@ export class OpSidebarView extends ItemView {
     private bus: EventBus,
     private getSettings: () => ViewSettings,
     private revealAgent?: (entry: IssueEntry) => void | Promise<void>,
-    private launchAgent?: (entry: IssueEntry, mode: AgentLaunchMode) => void | Promise<void>,
+    private launchAgent?: (
+      entry: IssueEntry,
+      mode: AgentLaunchMode,
+      forcePick: boolean,
+    ) => void | Promise<void>,
   ) {
     super(leaf);
   }
@@ -141,22 +145,22 @@ export class OpSidebarView extends ItemView {
         });
         setIcon(launchBtn, "play");
         launchBtn.setAttr("aria-label", `Launch agent for ${e.id}`);
-        launchBtn.setAttr("title", "Launch agent");
+        launchBtn.setAttr("title", "Launch agent (cmd/ctrl-click to pick agent)");
         launchBtn.addEventListener("click", (ev) => {
           ev.preventDefault();
           ev.stopPropagation();
-          void this.launchAgent?.(e, "implement");
+          void this.launchAgent?.(e, "implement", ev.metaKey || ev.ctrlKey);
         });
         const planBtn = actions.createEl("button", {
           cls: "op-sidebar__action op-sidebar__action--plan",
         });
         setIcon(planBtn, "clipboard-list");
         planBtn.setAttr("aria-label", `Launch agent in plan mode for ${e.id}`);
-        planBtn.setAttr("title", "Launch agent (plan mode)");
+        planBtn.setAttr("title", "Launch agent (plan mode) (cmd/ctrl-click to pick agent)");
         planBtn.addEventListener("click", (ev) => {
           ev.preventDefault();
           ev.stopPropagation();
-          void this.launchAgent?.(e, "plan");
+          void this.launchAgent?.(e, "plan", ev.metaKey || ev.ctrlKey);
         });
       }
       const meta = li.createDiv({ cls: "op-sidebar__meta" });
