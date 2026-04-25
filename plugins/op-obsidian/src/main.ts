@@ -1091,21 +1091,45 @@ export default class OpPlugin extends Plugin {
    * entry from the recency log, opens its issue note, and (on darwin only)
    * re-attaches to the agent's tmux window if it's still alive.
    *
+   * Stale entries (issue files deleted from the vault) are pruned eagerly in a
+   * single pass so that one invocation always lands on the first surviving entry
+   * rather than requiring repeated invocations to clear tombstones one at a time.
+   *
    * On non-macOS platforms, falls through to "open the note" — the recency
    * log still works as a navigation aid even when terminal launch isn't
    * supported.
    */
   private async runResumeLastCommand(): Promise<void> {
-    const head = mostRecent(this.settings.recent);
+    // Prune all leading tombstones in one O(n) pass so a single invocation
+    // always reaches the first surviving entry (§8 adversarial: multiple
+    // deleted heads — would otherwise require one invocation per stale entry).
+    let cursor = 0;
+    while (cursor < this.settings.recent.length) {
+      const candidate = this.settings.recent[cursor];
+      const e = this.store.byId(candidate.id);
+      if (e && e.type === "issue") break;
+      cursor++;
+    }
+    const staleCount = cursor;
+    if (staleCount > 0) {
+      const staleIds = this.settings.recent.slice(0, staleCount).map((e) => e.id);
+      this.settings.recent = this.settings.recent.slice(staleCount);
+      await this.saveSettings();
+      if (staleCount === 1) {
+        new Notice(`op: ${staleIds[0]} is no longer in the vault — cleared from recency log.`);
+      } else {
+        new Notice(`op: cleared ${staleCount} stale entries from recency log.`);
+      }
+    }
+    const head = this.settings.recent[0] as (typeof this.settings.recent)[number] | undefined;
     if (!head) {
       new Notice("op: no recent issues to resume — touch one via op:work or op:open-agent first.");
       return;
     }
     const entry = this.store.byId(head.id);
     if (!entry || entry.type !== "issue") {
-      new Notice(`op: ${head.id} is no longer in the vault — clearing from recency log.`);
-      this.settings.recent = this.settings.recent.filter((e) => e.id !== head.id);
-      await this.saveSettings();
+      // Shouldn't be reachable — the loop above would have advanced cursor past
+      // this entry — but guard defensively.
       return;
     }
     await this.openIssue(entry);

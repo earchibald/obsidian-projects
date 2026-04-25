@@ -1,5 +1,16 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, vi, beforeAll, beforeEach, afterEach } from "vitest";
 import type { IssueEntry } from "./types";
+
+// `requestAnimationFrame` is a browser/Electron global absent in Node.js / Vitest.
+// Without it, `scheduleRender()` throws inside `tickTmuxProbe`'s try block, which
+// incorrectly triggers the catch path (marking liveTmuxWindows null) and adds
+// spurious console.debug noise. Stub it globally so the success path is exercised.
+beforeAll(() => {
+  vi.stubGlobal("requestAnimationFrame", (cb: FrameRequestCallback) => {
+    setTimeout(() => cb(0), 0);
+    return 0;
+  });
+});
 
 vi.mock("obsidian", () => ({
   ItemView: class {
