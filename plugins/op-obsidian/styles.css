@@ -171,6 +171,43 @@ a.op-sidebar__agent:hover {
 .op-sidebar__agent--gemini   { background: #1e88e5; }
 .op-sidebar__agent--copilot  { background: #6f42c1; }
 
+.op-sidebar__agent--stale,
+.op-sidebar__agent.is-stale {
+  background: var(--background-modifier-border);
+  color: var(--text-muted);
+  opacity: 0.55;
+  filter: saturate(0.3);
+  text-decoration: line-through;
+}
+
+.op-sidebar__header {
+  padding: 6px 10px 4px;
+}
+
+.op-sidebar__header.is-empty {
+  display: none;
+}
+
+.op-sidebar__last-touched {
+  display: inline-block;
+  max-width: 100%;
+  padding: 3px 8px;
+  border-radius: 999px;
+  background: var(--background-modifier-hover);
+  color: var(--text-muted);
+  font-size: var(--font-ui-smaller);
+  text-decoration: none;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.op-sidebar__last-touched:hover {
+  background: var(--background-modifier-active-hover);
+  color: var(--text-normal);
+  text-decoration: none;
+}
+
 .op-sidebar__github {
   color: var(--text-muted);
   text-decoration: none;

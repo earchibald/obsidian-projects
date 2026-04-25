@@ -91,13 +91,14 @@ import { AgentDetector } from "./agentDetect";
 import { AGENT_IDS, isAgentLaunchMode, type AgentId, type AgentLaunchMode } from "./agentProfiles";
 import { openAgent, clearAgentOnIssue, resolveProfile } from "./openAgent";
 import { editWorkflow } from "./editWorkflow";
-import { launchInTerminal } from "./terminalLaunch";
+import { launchInTerminal, SHARED_TMUX_SESSION, tmuxWindowName } from "./terminalLaunch";
 import { installAgentHooks, type HookInstallResult } from "./agentHooks";
 import { userError } from "./userError";
 import { cleanupAgentSessions, tmuxSessionsForCleanup } from "./agentSessionCleanup";
 import { detectTmux } from "./tmuxDetect";
 import { notify, notifyAction, registerApp, unregisterApp, openNotificationLog } from "./notificationLog";
 import { probeLiveTmuxWindows, selectStaleAgentBadges } from "./staleAgentBadges";
+import { appendRecency, mostRecent } from "./recencyLog";
 import { openErrorLog, writeErrorLog } from "./errorLog";
 import { configureClient } from "./iterm/client";
 import { closeWindow as itermCloseWindow } from "./iterm/driver";
@@ -322,8 +323,18 @@ export default class OpPlugin extends Plugin {
           this.store,
           this.bus,
           () => this.settings.view,
-          (entry) => revealAgentSession(this.settings, entry.id),
+          (entry) => {
+            void this.recordRecency(entry.id);
+            return revealAgentSession(this.settings, entry.id);
+          },
           (entry, mode, forcePick) => void this.doOpenAgent(entry, { mode, forcePick }),
+          {
+            getRecent: () => this.settings.recent,
+            tmuxBinary: () => this.settings.tmuxBinary,
+            tmuxSessions: () => tmuxSessionsForCleanup(this.settings.orchestratorState),
+            recordRecency: (id) => this.recordRecency(id),
+            executeResumeLast: () => void this.runResumeLastCommand(),
+          },
         ),
     );
 
@@ -464,20 +475,18 @@ export default class OpPlugin extends Plugin {
         if (checking) return !!path;
         if (!path) return false;
         const entry = this.store.byPath(path);
-        if (entry && entry.type === "issue") void revealAgentSession(this.settings, entry.id);
+        if (entry && entry.type === "issue") {
+          void this.recordRecency(entry.id);
+          void revealAgentSession(this.settings, entry.id);
+        }
         return true;
       },
     });
 
     this.addCommand({
       id: "op-resume-last",
-      name: "op: resume last (stub — OP-149 §1)",
-      callback: () => {
-        new Notice(
-          "op: resume-last is not yet implemented. Tracked under OP-149 §1.",
-          6000,
-        );
-      },
+      name: "op: resume last",
+      callback: () => void this.runResumeLastCommand(),
     });
 
     this.addCommand({
@@ -1052,6 +1061,88 @@ export default class OpPlugin extends Plugin {
     }
   }
 
+  /**
+   * Record `id` at the head of the recency log and persist. Idempotent on
+   * `id`: an existing entry is moved to the head with the new timestamp,
+   * never duplicated. Capped at {@link RECENCY_CAP} entries via
+   * {@link appendRecency}.
+   *
+   * Called from every dispatch point that "touches" an issue — palette
+   * `op-work`, `op-open-agent` and its variants, the URI handlers for both,
+   * the CLI handlers, and the sidebar row click. Centralizing the call is
+   * what keeps the cap-25 invariant in one place (OP-150).
+   */
+  async recordRecency(issueId: string): Promise<void> {
+    if (!issueId) return;
+    this.settings.recent = appendRecency(this.settings.recent, issueId, new Date().toISOString());
+    await this.saveSettings();
+    // Tell the sidebar to re-render its Last-touched chip without forcing a
+    // full reload. We piggy-back on the lifecycle bus rather than introducing
+    // a dedicated event — the chip cares about *anything* that flipped the
+    // recency log, and `issue:updated` is the closest existing signal.
+    const entry = this.store.byId(issueId);
+    if (entry && entry.type === "issue") {
+      this.bus.emit({ kind: "issue:updated", path: entry.path, issueId });
+    }
+  }
+
+  /**
+   * Implements the `op: resume last` palette command. Reads the most-recent
+   * entry from the recency log, opens its issue note, and (on darwin only)
+   * re-attaches to the agent's tmux window if it's still alive.
+   *
+   * Stale entries (issue files deleted from the vault) are pruned eagerly in a
+   * single pass so that one invocation always lands on the first surviving entry
+   * rather than requiring repeated invocations to clear tombstones one at a time.
+   *
+   * On non-macOS platforms, falls through to "open the note" — the recency
+   * log still works as a navigation aid even when terminal launch isn't
+   * supported.
+   */
+  private async runResumeLastCommand(): Promise<void> {
+    // Prune all leading tombstones in one O(n) pass so a single invocation
+    // always reaches the first surviving entry (§8 adversarial: multiple
+    // deleted heads — would otherwise require one invocation per stale entry).
+    let cursor = 0;
+    while (cursor < this.settings.recent.length) {
+      const candidate = this.settings.recent[cursor];
+      const e = this.store.byId(candidate.id);
+      if (e && e.type === "issue") break;
+      cursor++;
+    }
+    const staleCount = cursor;
+    if (staleCount > 0) {
+      const staleIds = this.settings.recent.slice(0, staleCount).map((e) => e.id);
+      this.settings.recent = this.settings.recent.slice(staleCount);
+      await this.saveSettings();
+      if (staleCount === 1) {
+        new Notice(`op: ${staleIds[0]} is no longer in the vault — cleared from recency log.`);
+      } else {
+        new Notice(`op: cleared ${staleCount} stale entries from recency log.`);
+      }
+    }
+    const head = this.settings.recent[0] as (typeof this.settings.recent)[number] | undefined;
+    if (!head) {
+      new Notice("op: no recent issues to resume — touch one via op:work or op:open-agent first.");
+      return;
+    }
+    const entry = this.store.byId(head.id);
+    if (!entry || entry.type !== "issue") {
+      // Shouldn't be reachable — the loop above would have advanced cursor past
+      // this entry — but guard defensively.
+      return;
+    }
+    await this.openIssue(entry);
+    if (process.platform !== "darwin") return;
+    const probe = await probeLiveTmuxWindows(
+      this.settings.tmuxBinary,
+      tmuxSessionsForCleanup(this.settings.orchestratorState),
+    );
+    if (probe.ok && probe.live.has(tmuxWindowName(head.id))) {
+      await revealAgentSession(this.settings, head.id);
+    }
+  }
+
   private async revealSidebar(): Promise<void> {
     const existing = this.app.workspace.getLeavesOfType(OP_SIDEBAR_VIEW_TYPE);
     let leaf: WorkspaceLeaf | null = existing[0] ?? null;
@@ -1234,6 +1325,7 @@ export default class OpPlugin extends Plugin {
         const res = await workIssue(this.app, this.store, entry);
         const extra = res.createdTaskPath ? ` · created ${res.createdTaskPath.split("/").pop()}` : "";
         notify(`op-work: ${res.issueId} → in-progress${extra}`);
+        await this.recordRecency(res.issueId);
         await this.openIssue(entry);
       } catch (err: any) {
         console.error("[op-obsidian] op-work failed", err);
@@ -1500,8 +1592,16 @@ export default class OpPlugin extends Plugin {
       });
   }
 
-  private handleOpWorkUri(params: Record<string, string>): Promise<UriResponsePayload> {
-    return handleOpWorkUriPure(this.uriDeps(), params);
+  private async handleOpWorkUri(params: Record<string, string>): Promise<UriResponsePayload> {
+    const payload = await handleOpWorkUriPure(this.uriDeps(), params);
+    if (payload.ok) {
+      const id =
+        typeof (payload as { issueId?: unknown }).issueId === "string"
+          ? (payload as { issueId: string }).issueId
+          : undefined;
+      if (id) await this.recordRecency(id);
+    }
+    return payload;
   }
 
   private handleOpAppendCommitUri(
@@ -1872,6 +1972,7 @@ export default class OpPlugin extends Plugin {
         alreadyHeld: res.alreadyHeld,
         conflict: res.conflict,
       });
+      await this.recordRecency(res.issueId);
       const extra = res.createdTaskPath ? ` · created ${res.createdTaskPath.split("/").pop()}` : "";
       const regNote = formatRegistrationNote(res);
       return `${command}: ${res.issueId} → in-progress${extra}${regNote}`;
@@ -2460,6 +2561,7 @@ export default class OpPlugin extends Plugin {
         },
       );
       if (res) {
+        await this.recordRecency(res.issueId);
         const modeLabel =
           res.mode === "work" || res.mode === "implement"
             ? ""
@@ -2495,6 +2597,7 @@ export default class OpPlugin extends Plugin {
       { entry, agentOverride, forcePick, mode },
     );
     if (!res) throw new Error("op-open-agent was cancelled or no agent available");
+    await this.recordRecency(res.issueId);
     return {
       ok: true,
       command: "op-open-agent",

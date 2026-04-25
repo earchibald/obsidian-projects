@@ -4,6 +4,10 @@ import type { EventBus } from "./eventBus";
 import type { IssueEntry, LifecycleEvent } from "./types";
 import type { ViewSettings } from "./settings";
 import type { AgentLaunchMode } from "./agentProfiles";
+import type { RecencyEntry } from "./recencyLog";
+import { mostRecent, relativeTime } from "./recencyLog";
+import { probeLiveTmuxWindows } from "./staleAgentBadges";
+import { tmuxWindowName } from "./terminalLaunch";
 
 export const OP_SIDEBAR_VIEW_TYPE = "op-sidebar";
 
@@ -22,14 +26,44 @@ const RELEVANT: ReadonlySet<LifecycleEvent["kind"]> = new Set([
   "issue:deleted",
 ]);
 
+/** How often the sidebar re-checks tmux for live agent windows, in ms. */
+export const TMUX_PROBE_INTERVAL_MS = 5_000;
+
+/**
+ * Adapter wired in from `main.ts` so the sidebar can read the recency log,
+ * record a fresh touch when the user clicks a row, and call `op: resume last`
+ * (the chip's click handler) without depending on the plugin class directly.
+ *
+ * Optional in the constructor so existing tests that don't exercise this
+ * surface keep working unchanged.
+ */
+export interface OpSidebarHooks {
+  getRecent: () => ReadonlyArray<RecencyEntry>;
+  tmuxBinary: () => string;
+  /** Sessions to probe — typically the shared session plus per-iTerm-window
+   * derivatives from the orchestrator registry. Mirrors what the cleanup
+   * path passes around. */
+  tmuxSessions: () => string[];
+  recordRecency: (issueId: string) => Promise<void>;
+  executeResumeLast: () => void;
+}
+
 export class OpSidebarView extends ItemView {
   private active: TabId = "issues";
   private unsubscribe?: () => void;
+  private headerEl!: HTMLElement;
   private bodyEl!: HTMLElement;
   private filterInput!: HTMLInputElement;
   private filterQuery = "";
   private tabButtons = new Map<TabId, HTMLElement>();
   private rafPending = false;
+  private probeTimer: ReturnType<typeof setInterval> | undefined;
+  /** `undefined` means "not yet probed" — render renders all badges as
+   * normal until the first tick lands. `null` means "tmux unavailable",
+   * which also keeps badges as-is (no false-positive demotion). A `Set`
+   * means we know which windows are live and any agent: that points
+   * elsewhere is rendered with the muted "stale" class. */
+  private liveTmuxWindows: Set<string> | null | undefined = undefined;
 
   constructor(
     leaf: WorkspaceLeaf,
@@ -42,6 +76,7 @@ export class OpSidebarView extends ItemView {
       mode: AgentLaunchMode,
       forcePick: boolean,
     ) => void | Promise<void>,
+    private hooks?: OpSidebarHooks,
   ) {
     super(leaf);
   }
@@ -63,6 +98,8 @@ export class OpSidebarView extends ItemView {
     const root = this.contentEl;
     root.empty();
     root.addClass("op-sidebar");
+
+    this.headerEl = root.createDiv({ cls: "op-sidebar__header" });
 
     const tabsEl = root.createDiv({ cls: "op-sidebar__tabs" });
     for (const t of TABS) {
@@ -97,13 +134,64 @@ export class OpSidebarView extends ItemView {
       if (RELEVANT.has(ev.kind)) this.scheduleRender();
     });
 
+    this.startTmuxProbe();
     this.render();
   }
 
   async onClose(): Promise<void> {
     this.unsubscribe?.();
     this.unsubscribe = undefined;
+    this.stopTmuxProbe();
     this.tabButtons.clear();
+  }
+
+  /**
+   * Public hook so tests (and future commands) can force a refresh without
+   * waiting for the 5s timer or for an event-bus message.
+   */
+  refresh(): void {
+    this.scheduleRender();
+  }
+
+  /** Visible for tests: are we currently running the periodic probe? */
+  isProbeRunning(): boolean {
+    return this.probeTimer !== undefined;
+  }
+
+  private startTmuxProbe(): void {
+    if (this.probeTimer !== undefined) return; // no double-start
+    if (!this.hooks) return; // legacy callers (tests) don't supply hooks
+    if (process.platform !== "darwin") return; // macOS-only per OP-150 spec
+    // Kick off an immediate first probe so the initial render reflects
+    // reality instead of waiting up to 5s for the first interval tick.
+    void this.tickTmuxProbe();
+    this.probeTimer = setInterval(() => void this.tickTmuxProbe(), TMUX_PROBE_INTERVAL_MS);
+  }
+
+  private stopTmuxProbe(): void {
+    if (this.probeTimer === undefined) return;
+    clearInterval(this.probeTimer);
+    this.probeTimer = undefined;
+  }
+
+  private async tickTmuxProbe(): Promise<void> {
+    if (!this.hooks) return;
+    try {
+      const probe = await probeLiveTmuxWindows(this.hooks.tmuxBinary(), this.hooks.tmuxSessions());
+      const next = probe.ok ? probe.live : null;
+      if (sameLiveSet(this.liveTmuxWindows, next)) return;
+      this.liveTmuxWindows = next;
+      this.scheduleRender();
+    } catch (err) {
+      // probeLiveTmuxWindows already swallows ENOENT/timeout; anything that
+      // bubbles here is a real bug (e.g. invalid binary path), so log and
+      // fall through to "tmux unavailable".
+      console.debug("[op-obsidian] sidebar tmux probe threw", err);
+      if (this.liveTmuxWindows !== null) {
+        this.liveTmuxWindows = null;
+        this.scheduleRender();
+      }
+    }
   }
 
   private scheduleRender(): void {
@@ -116,6 +204,7 @@ export class OpSidebarView extends ItemView {
   }
 
   private render(): void {
+    this.renderHeader();
     for (const [id, btn] of this.tabButtons) {
       btn.toggleClass("is-active", id === this.active);
     }
@@ -139,17 +228,32 @@ export class OpSidebarView extends ItemView {
       setTooltip(link, linkText, { delay: 250 });
       link.addEventListener("click", (ev) => {
         ev.preventDefault();
+        if (this.hooks) void this.hooks.recordRecency(e.id);
         void this.openEntry(e);
       });
       const actions = headerRow.createDiv({ cls: "op-sidebar__actions" });
       if (e.agent) {
+        const stale = this.isAgentBadgeStale(e);
+        const classes = [
+          "op-sidebar__agent",
+          `op-sidebar__agent--${e.agent}`,
+          stale ? "op-sidebar__agent--stale is-stale" : "",
+        ]
+          .filter(Boolean)
+          .join(" ");
         const badge = actions.createEl("a", {
           text: e.agent,
-          cls: `op-sidebar__agent op-sidebar__agent--${e.agent}`,
+          cls: classes,
         });
+        if (stale) {
+          badge.setAttr("aria-label", `Stale agent badge for ${e.id} — tmux window not found`);
+          setTooltip(badge, "Stale: no live tmux window", { delay: 250 });
+        }
         if (this.revealAgent) {
           badge.setAttr("href", "#");
-          badge.setAttr("aria-label", `Reveal ${e.agent} session for ${e.id}`);
+          if (!stale) {
+            badge.setAttr("aria-label", `Reveal ${e.agent} session for ${e.id}`);
+          }
           badge.addEventListener("click", (ev) => {
             ev.preventDefault();
             ev.stopPropagation();
@@ -212,6 +316,59 @@ export class OpSidebarView extends ItemView {
     }
   }
 
+  private renderHeader(): void {
+    if (!this.headerEl) return;
+    this.headerEl.empty();
+    const head = this.hooks ? mostRecent(this.hooks.getRecent()) : undefined;
+    if (!head) {
+      this.headerEl.toggleClass("is-empty", true);
+      return;
+    }
+    this.headerEl.toggleClass("is-empty", false);
+    const entry = this.store.byId(head.id);
+    const isIssue = entry && entry.type === "issue";
+    const agentLabel = isIssue && (entry as IssueEntry).agent
+      ? this.agentLabelForChip(entry as IssueEntry)
+      : "no agent";
+    const rel = relativeTime(head.at);
+    const text = `Last touched: ${head.id} · ${agentLabel}${rel ? ` · ${rel}` : ""}`;
+    const chip = this.headerEl.createEl("a", {
+      cls: "op-sidebar__last-touched",
+      text,
+      attr: {
+        href: "#",
+        "aria-label": `Resume ${head.id}`,
+      },
+    });
+    chip.addEventListener("click", (ev) => {
+      ev.preventDefault();
+      this.hooks?.executeResumeLast();
+    });
+  }
+
+  private agentLabelForChip(entry: IssueEntry): string {
+    const stale = this.isAgentBadgeStale(entry);
+    if (stale) return `${entry.agent} (stale)`;
+    if (this.liveTmuxWindows && this.liveTmuxWindows.has(tmuxWindowName(entry.id))) {
+      return `${entry.agent} attached`;
+    }
+    return entry.agent ?? "no agent";
+  }
+
+  /**
+   * Pure-ish: does this issue's `agent:` badge claim a live session that
+   * tmux actually doesn't have? Returns false when we have no idea
+   * (initial state, tmux unavailable, no tmux info yet) so we never
+   * surface a false-positive "stale" indicator.
+   */
+  private isAgentBadgeStale(entry: IssueEntry): boolean {
+    if (!entry.agent) return false;
+    if (entry.resolvedFolder) return false;
+    if (entry.status === "resolved" || entry.status === "wontfix") return false;
+    if (!this.liveTmuxWindows) return false; // unknown → don't demote
+    return !this.liveTmuxWindows.has(tmuxWindowName(entry.id));
+  }
+
   private pickFor(tab: TabId): IssueEntry[] {
     const all = this.store.issues();
     if (tab === "in-flight") {
@@ -237,6 +394,18 @@ export class OpSidebarView extends ItemView {
       await this.app.workspace.getLeaf(false).openFile(f);
     }
   }
+}
+
+function sameLiveSet(
+  prev: Set<string> | null | undefined,
+  next: Set<string> | null,
+): boolean {
+  if (prev === undefined) return false;
+  if (prev === null && next === null) return true;
+  if (prev === null || next === null) return false;
+  if (prev.size !== next.size) return false;
+  for (const v of prev) if (!next.has(v)) return false;
+  return true;
 }
 
 function byId(a: IssueEntry, b: IssueEntry): number {
