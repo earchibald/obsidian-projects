@@ -9,6 +9,7 @@ export interface ScaffoldProjectInput {
   seedTitle?: string;
   seedPriority?: Priority;
   seedScope?: string[];
+  seedScopeBody?: string;
 }
 
 export interface ScaffoldProjectResult {
@@ -78,6 +79,7 @@ export async function scaffoldProject(
       title: seedTitle,
       priority: input.seedPriority ?? "med",
       scope: input.seedScope ?? [],
+      scopeBody: input.seedScopeBody,
     });
   }
 
@@ -87,7 +89,13 @@ export async function scaffoldProject(
 async function retryCreateSeed(
   app: App,
   store: IssueStore,
-  input: { slug: string; title: string; priority: Priority; scope: string[] },
+  input: {
+    slug: string;
+    title: string;
+    priority: Priority;
+    scope: string[];
+    scopeBody?: string;
+  },
 ): Promise<CreateIssueResult> {
   const deadline = Date.now() + 2000;
   let lastErr: unknown;

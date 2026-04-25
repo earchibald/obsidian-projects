@@ -19,6 +19,9 @@ export interface CreateIssueInput {
   title: string;
   priority?: Priority;
   scope?: string[];
+  // When set, the renderer writes this verbatim under `## Scope` instead of
+  // wrapping `scope` bullets. Use for multi-paragraph / structured scope.
+  scopeBody?: string;
   assignee?: string;
   githubIssue?: string;
 }
@@ -75,6 +78,7 @@ export async function createIssue(
     title: input.title,
     priority: input.priority ?? "med",
     scope: input.scope ?? [],
+    scopeBody: input.scopeBody,
     assignee: input.assignee ?? "earchibald",
     githubIssue: input.githubIssue?.trim() || undefined,
   });

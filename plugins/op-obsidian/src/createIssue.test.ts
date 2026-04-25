@@ -87,6 +87,26 @@ describe("renderIssueNote", () => {
     );
   });
 
+  it("scopeBody renders verbatim under ## Scope (no - [ ] wrapping)", () => {
+    const out = render({
+      scope: [],
+      // @ts-expect-error — exercise the new field
+      scopeBody: "Para one.\n\n- a sub-bullet\n- another",
+    });
+    expect(out).toContain("\n## Scope\n\nPara one.\n\n- a sub-bullet\n- another\n");
+    expect(out).not.toContain("- [ ] Para one");
+  });
+
+  it("scopeBody takes precedence over bullets when both supplied", () => {
+    const out = render({
+      scope: ["bullet"],
+      // @ts-expect-error — exercise the new field
+      scopeBody: "verbatim text",
+    });
+    expect(out).toContain("\n## Scope\n\nverbatim text\n");
+    expect(out).not.toContain("- [ ] bullet");
+  });
+
   it("Plan/Initial Evaluation/Notes/Summary appear even when no scope is supplied", () => {
     const out = render({ scope: [] });
     const planIdx = out.indexOf("## Plan");
