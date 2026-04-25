@@ -167,6 +167,44 @@ describe("cleanupAgentSessions: empty-window closure (OP-110)", () => {
     expect(r.windowOrder).toEqual([]);
   });
 
+  it("closes both windows when two windows are simultaneously empty", async () => {
+    const r = emptyRegistry();
+    addWindow(r, win("w1", "op-agents-1"));
+    addWindow(r, win("w2", "op-agents-2"));
+    assignSurface(r, "OP-50", {
+      sessionId: "s0",
+      windowId: "w1",
+      cellIndex: 0,
+      layoutId: "2x2",
+      tmuxWindow: "OP-50",
+    });
+    assignSurface(r, "OP-51", {
+      sessionId: "s1",
+      windowId: "w2",
+      cellIndex: 0,
+      layoutId: "2x2",
+      tmuxWindow: "OP-51",
+    });
+
+    const close = vi.fn().mockResolvedValue(undefined);
+    const res = await cleanupAgentSessions({
+      tmuxBinary: "/bin/true",
+      reg: r,
+      issueIds: ["OP-50", "OP-51"],
+      closeITermWindow: close,
+    });
+
+    expect(close).toHaveBeenCalledTimes(2);
+    expect(close).toHaveBeenCalledWith("w1");
+    expect(close).toHaveBeenCalledWith("w2");
+    expect(res.closedWindows).toHaveLength(2);
+    expect(res.closedWindows).toContain("w1");
+    expect(res.closedWindows).toContain("w2");
+    expect(r.windows["w1"]).toBeUndefined();
+    expect(r.windows["w2"]).toBeUndefined();
+    expect(r.windowOrder).toEqual([]);
+  });
+
   it("swallows closer errors and still drops the WindowState", async () => {
     const r = emptyRegistry();
     addWindow(r, win("w1", "op-agents-1"));
