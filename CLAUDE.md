@@ -36,3 +36,30 @@ Always, in order:
    Also spot-check the plugin instance: `obsidian eval code='app.plugins.plugins["op-obsidian"]'` should return a live object with your commands registered.
 
 Never skip these steps, even for "trivial" changes — untested plugin builds ship silently broken.
+
+## Merging a PR from a delegated worktree
+
+When you ran `EnterWorktree` (or otherwise work in `.claude/worktrees/<name>/`) and another checkout — typically the delegating agent — still holds `main`, `gh pr merge <#> --squash --delete-branch` will **fail locally** with:
+
+```
+failed to run git: fatal: 'main' is already used by worktree at '/Users/.../obsidian-projects'
+```
+
+This is not a bug in `gh` or in op. It's an interaction with git's invariant that a branch can only be checked out in one worktree. After the squash lands on origin, `gh` tries to fast-forward your local `main` and aborts because `main` is held elsewhere; `--delete-branch` is gated on that step, so the remote branch is also left alive. Net result: **PR is merged on GitHub, but the local fast-forward is skipped and the remote/local branches are still alive.** Every worktree-per-issue flow with a delegating agent on main will hit this.
+
+**Recognize and recover.** Don't re-merge or panic — verify, then clean up:
+
+1. **Verify the merge actually landed.**
+   ```bash
+   gh pr view <#> --json state,mergedAt,mergeCommit
+   ```
+   Expect `"state": "MERGED"` with a non-null `mergedAt` and `mergeCommit.oid`. If state is still `OPEN`, the merge genuinely failed — investigate before retrying.
+
+2. **Delete the remote branch manually.**
+   ```bash
+   git push origin --delete <branch-name>
+   ```
+
+3. **Tear down the local worktree.** Use `ExitWorktree action=remove discard_changes=true`. Safe even though the worktree's tip differs from `main` after the squash — origin's squash commit is content-equivalent to the worktree's pre-squash work.
+
+**Avoiding the failure entirely.** `gh pr merge --auto` and `--merge-queue` defer the actual merge to GitHub server-side and skip local cleanup at invocation time, so they likely sidestep this failure — not verified in this repo, but worth trying first if you have permission to enable auto-merge on the PR. The delegating agent (the one holding `main`) can always run `gh pr merge --delete-branch` cleanly because its checkout *is* `main`.
