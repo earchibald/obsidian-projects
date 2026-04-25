@@ -2001,6 +2001,24 @@ export default class OpPlugin extends Plugin {
     }
   }
 
+  /**
+   * Look up an issue by id with a brief retry to absorb the metadataCache
+   * refresh window after `op-resolve` renames a file. Up to 5×50ms = 250ms.
+   * Returns the entry or `undefined` if it never appears (genuinely unknown id).
+   */
+  private async findIssueByIdWithRetry(
+    id: string,
+    retries = 5,
+    delayMs = 50,
+  ): Promise<IssueEntry | undefined> {
+    for (let i = 0; i < retries; i++) {
+      const found = this.store.issues().find((e) => e.id === id);
+      if (found) return found;
+      if (i < retries - 1) await new Promise((r) => setTimeout(r, delayMs));
+    }
+    return undefined;
+  }
+
   private async handleOpDetachAgentUri(
     params: Record<string, string>,
   ): Promise<UriResponsePayload> {
@@ -2884,7 +2902,14 @@ export default class OpPlugin extends Plugin {
   ): Promise<UriResponsePayload> {
     const id = params.id ?? params.issue;
     if (!id) throw new Error("op-agent-ended URI requires id");
-    const entry = this.store.issues().find((e) => e.id === id);
+    // OP-156 Q1 follow-up: when SessionEnd fires immediately after a resolve
+    // that retained `agent:` (live tmux at probe time), the file has just been
+    // renamed into RESOLVED ISSUES/. The IssueStore refreshes on the
+    // metadataCache `changed` event, which is async; in the gap the store has
+    // no entry for the moved file and this lookup misses, leaving `agent:`
+    // permanently pinned on the resolved note. Brief retry closes the gap
+    // without blocking the URI handler.
+    const entry = await this.findIssueByIdWithRetry(id);
     if (!entry) {
       return { ok: true, command: "op-agent-ended", issueId: id, cleared: false };
     }
