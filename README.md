@@ -47,8 +47,8 @@ This provides the AI-side logic and slash commands.
     /plugin install op@obsidian-projects
     ```
 
-#### 3. Setup Vault Symlinks
-Obsidian needs to index the schema and template files. These are installed in the Claude plugin cache.
+#### 3. Setup Vault Symlink
+Obsidian needs to index the schema file shipped with the Claude plugin so it shows up under `Projects/`.
 
 1.  **Find the installed version path:**
     List the contents of the cache directory to find the latest version number:
@@ -57,17 +57,15 @@ Obsidian needs to index the schema and template files. These are installed in th
     ```
     Pick the highest version folder (e.g., `0.3.0`).
 
-2.  **Create symlinks:**
+2.  **Create the symlink:**
     Replace `<version>` with the folder name you found above.
     ```bash
     # Schema — the file Obsidian surfaces in Projects/
     ln -s ~/.claude/plugins/cache/obsidian-projects/op/<version>/plugins/op/skills/op/reference/schema.md \
           <vault>/Projects/"Projects schema.md"
-
-    # Templater template — only if you use the Templater plugin
-    ln -s ~/.claude/plugins/cache/obsidian-projects/op/<version>/plugins/op/reference/issue-template.md \
-          <vault>/Templates/issue.md
     ```
+
+`op-obsidian` is the only required plugin; no Templater, sidekick, or other companion plugin is needed.
 
 ---
 
@@ -126,11 +124,9 @@ If you previously used this repo's old layout (`commands/`, `schema/`, `template
    ln -s <repo>/plugins/op/skills/op/reference/schema.md \
          <vault>/Projects/"Projects schema.md"
    ```
-4. Update your vault template symlink:
+4. If you previously symlinked `<vault>/Templates/issue.md` to a `plugins/op/reference/issue-template.md` from this repo, delete the symlink — `op-obsidian` renders issue notes itself, so the Templater template is no longer shipped:
    ```bash
    rm <vault>/Templates/issue.md
-   ln -s <repo>/plugins/op/reference/issue-template.md \
-         <vault>/Templates/issue.md
    ```
 5. Command renames: `/project` → `/op:scaffold`, `/create-issue` → `/op:new`, `/issue` → `/op:issue`, plus the new `/op:resolve`.
 
@@ -146,8 +142,6 @@ plugins/op/               ← The "op" skill (Claude)
     SKILL.md              ← workflow logic
     reference/
       schema.md           ← vault schema (symlink target)
-  reference/
-    issue-template.md     ← Templater template (symlink target)
   commands/               ← slash commands
 plugins/op-obsidian/      ← The Obsidian plugin
   src/                    ← TypeScript source
