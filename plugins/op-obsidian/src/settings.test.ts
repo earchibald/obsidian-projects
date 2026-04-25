@@ -13,6 +13,7 @@ describe("mergeSettings", () => {
       expect(out.view).not.toBe(DEFAULT_SETTINGS.view);
       expect(out.github).not.toBe(DEFAULT_SETTINGS.github);
       expect(out.agents).not.toBe(DEFAULT_SETTINGS.agents);
+      expect(out.flow).not.toBe(DEFAULT_SETTINGS.flow);
       expect(out.orchestrator).not.toBe(DEFAULT_SETTINGS.orchestrator);
       expect(out.workingDirs).not.toBe(DEFAULT_SETTINGS.workingDirs);
     }
@@ -36,6 +37,23 @@ describe("mergeSettings", () => {
     expect(out.github.autoCreateGithubIssue).toBe(true);
     expect(out.github.closeGithubIssueOnResolve).toBe(DEFAULT_SETTINGS.github.closeGithubIssueOnResolve);
     expect(out.agents.enforceWorktree).toBe(true);
+  });
+
+  it("flow settings default to off / 10min, accept partial overrides", () => {
+    expect(mergeSettings({}).flow).toEqual(DEFAULT_SETTINGS.flow);
+    const out = mergeSettings({
+      flow: { autoAdvance: true, headlessTimeoutMs: 30_000 },
+    });
+    expect(out.flow.autoAdvance).toBe(true);
+    expect(out.flow.headlessTimeoutMs).toBe(30_000);
+    expect(out.flow.autoMerge).toBe(DEFAULT_SETTINGS.flow.autoMerge);
+  });
+
+  it("rejects invalid flow.headlessTimeoutMs (non-positive / non-numeric)", () => {
+    for (const bad of [0, -1, "300" as unknown as number, NaN]) {
+      const out = mergeSettings({ flow: { headlessTimeoutMs: bad } });
+      expect(out.flow.headlessTimeoutMs).toBe(DEFAULT_SETTINGS.flow.headlessTimeoutMs);
+    }
   });
 
   it("copies workingDirs into a fresh object", () => {

@@ -31,6 +31,21 @@ export interface AgentsSettings {
   enforceWorktree: boolean;
 }
 
+export interface FlowSettings {
+  // When true, the SessionEnd hook auto-launches the next stage per the
+  // flowOrchestrator transition matrix. Default false so the v1 ship doesn't
+  // surprise users — opt-in via Settings → op → Flow chaining.
+  autoAdvance: boolean;
+  // When true, the finalize-mode agent is allowed to run `gh pr merge` itself.
+  // Default false keeps the destructive merge gated behind explicit user opt-in.
+  autoMerge: boolean;
+  // Timeout (ms) applied to headless `claude -p` invocations driven by the
+  // flow (e.g. evaluator). Default 10 minutes — matches HEADLESS_DEFAULT_TIMEOUT_MS.
+  headlessTimeoutMs: number;
+}
+
+export const FLOW_HEADLESS_TIMEOUT_DEFAULT_MS = 10 * 60 * 1000;
+
 export interface OpSettings {
   defaultAgent: AgentId;
   alwaysPick: boolean;
@@ -43,6 +58,7 @@ export interface OpSettings {
   view: ViewSettings;
   github: GithubSettings;
   agents: AgentsSettings;
+  flow: FlowSettings;
   orchestrator: OrchestratorSettings;
   orchestratorState: RegistryData;
 }
@@ -73,6 +89,11 @@ export const DEFAULT_SETTINGS: OpSettings = {
   },
   agents: {
     enforceWorktree: false,
+  },
+  flow: {
+    autoAdvance: false,
+    autoMerge: false,
+    headlessTimeoutMs: FLOW_HEADLESS_TIMEOUT_DEFAULT_MS,
   },
   orchestrator: {
     enabled: false,
@@ -144,6 +165,14 @@ export function mergeSettings(loaded: unknown): OpSettings {
     const a = l.agents as Partial<AgentsSettings>;
     if (typeof a.enforceWorktree === "boolean") {
       base.agents.enforceWorktree = a.enforceWorktree;
+    }
+  }
+  if (l.flow && typeof l.flow === "object") {
+    const f = l.flow as Partial<FlowSettings>;
+    if (typeof f.autoAdvance === "boolean") base.flow.autoAdvance = f.autoAdvance;
+    if (typeof f.autoMerge === "boolean") base.flow.autoMerge = f.autoMerge;
+    if (typeof f.headlessTimeoutMs === "number" && f.headlessTimeoutMs > 0) {
+      base.flow.headlessTimeoutMs = Math.floor(f.headlessTimeoutMs);
     }
   }
   return base;
