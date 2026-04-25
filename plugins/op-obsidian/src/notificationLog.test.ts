@@ -130,6 +130,14 @@ describe("formatLine", () => {
     expect(line).toBe("- 2026-04-25T00:00:00.000Z · ERROR: build failed");
   });
 
+  it("strips non-CSI ESC sequences (e.g. ESC M cursor-up)", () => {
+    const line = formatLine({
+      timestamp: new Date("2026-04-25T00:00:00.000Z"),
+      text: "\x1bMsome text",
+    });
+    expect(line).toBe("- 2026-04-25T00:00:00.000Z · some text");
+  });
+
   it("embedded '\\n- bullet' becomes continuation text, not a new entry", () => {
     // After sanitisation the embedded newline collapses to a space, so the
     // resulting text stays within one bullet line — no phantom entries.

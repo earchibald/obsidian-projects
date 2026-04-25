@@ -22,13 +22,14 @@ export function formatLine(entry: NotificationEntry): string {
   const cat = entry.category ? ` [${entry.category}]` : "";
   // Each entry is a single bullet line.
   // 1. Strip null bytes — they corrupt vault files.
-  // 2. Strip ANSI CSI / escape sequences — agent output can include colour codes.
-  // 3. Collapse internal whitespace so multi-line Notice text (newlines, tabs,
+  // 2. Strip ANSI CSI sequences (e.g. colour codes: ESC [ … m).
+  // 3. Strip other single-char ESC sequences (e.g. ESC M, ESC =).
+  // 4. Collapse internal whitespace so multi-line Notice text (newlines, tabs,
   //    embedded "- bullets") doesn't fragment the log structure.
   const safe = entry.text
     .replace(/\0/g, "")
     .replace(/\x1b\[[0-9;]*[A-Za-z]/g, "")
-    .replace(/\x1b./gs, "")
+    .replace(/\x1b[^[]/g, "")
     .replace(/\s+/g, " ")
     .trim();
   return `- ${iso}${cat} · ${safe}`;
