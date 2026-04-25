@@ -14,7 +14,7 @@ op-obsidian works. It has 27+ palette commands, a sidebar with launch/plan butto
 
 This spec proposes a coherent set of UX changes whose collective goal is one sentence: **a power user should be able to drive a full issue from "thought" to "merged" without taking their hands off the keyboard, and never feel a jerk between Obsidian and the agent terminal.** Everything below is judged against that bar.
 
-The seed prompt named themes (buttons in notes, sidebar, hotkeys, terminal transitions, badge persistence). The adversarial pass surfaced a missing one — **resumability** — which turns out to be the single biggest "feels great" lever and now leads the spec. Status-bar widgets, animated leaf transitions, a custom dashboard view, and a second fuzzy-launcher are explicitly out of scope (rationale in §13).
+The seed prompt named themes (buttons in notes, sidebar, hotkeys, terminal transitions, badge persistence). The adversarial pass surfaced a missing one — **resumability** — which turns out to be the single biggest "feels great" lever and now leads the spec. A late addition is **Settings tab cleanup** (§13) — 11 H2 sections in one scroll is its own felt-bad. Status-bar widgets, animated leaf transitions, a custom dashboard view, and a second fuzzy-launcher are explicitly out of scope (rationale in §14).
 
 ## At a glance — the felt difference
 
@@ -457,7 +457,63 @@ The right answer is **right-click context menus on sidebar rows** with the legit
 
 ---
 
-## 13. Explicit no-pile
+## 13. Settings tab UX cleanup
+
+**Today.** `settings.ts` is 771 lines and renders **11 H2 sections** in one long scroll: *Agents, Injection, Working directories, Project order, Terminal, iTerm layout orchestrator, Sidebar view, GitHub integration, Agent worktree enforcement, Flow chaining,* plus an unheaded "General" block at top. There's a glossary `<details>` at the top defining tmux / orchestrator / overlay / worktree — useful, but it carries the weight of a UX problem (many settings are too jargon-laden to stand alone). Mixed in with daily knobs ("Default agent", "Sidebar default tab") are deeply technical ones ("Profile overlay JSON", "Layout orchestrator", "Agent worktree enforcement") with no visual hierarchy separating them.
+
+Pain points the structure causes:
+- New users hit the kitchen sink. There's no "you mostly only need these three things" landing.
+- Power-user knobs (orchestrator, profile overlays, worktree enforcement) are intermingled with daily ones — every save-and-redisplay re-renders the whole tree, so changing a default agent re-paints 700px of unrelated UI.
+- No search — only Cmd-F-on-the-page works, and Obsidian's settings already have a built-in search box that op doesn't participate in.
+- Wordy `setDesc` strings (some > 200 chars). The glossary exists *because* the descriptions had to be terse; the result is two places to read for one setting.
+- "Reset to alphabetical" hangs at the bottom of the *project-order* renderer instead of inside the Project order H2 — easy to miss.
+
+**Proposed.**
+
+1. **Two-tier organization.** Split the tab into a top **"Daily"** group and a collapsed-by-default **"Advanced"** group. Daily: Default agent, Terminal app, Sidebar default tab, Onboarding (§10), Hotkey preset apply button (§3). Advanced (each its own collapsible `<details>` inside the Advanced group): Injection, Working directories, Project order, iTerm layout orchestrator, Profile overlays, Agent worktree enforcement, Flow chaining, GitHub integration, Developer commands toggle (§7).
+2. **Lift the glossary into per-section `<details>` headers**, not a top-level dump. Each Advanced section gets a 1–2 line "what is this?" expandable directly under the H2, so the description shrinks but context is one click away. Top-level glossary stays as a fallback.
+3. **Search box at the top.** Type-to-filter that hides settings whose name + setDesc don't match. Uses the same `prepareFuzzySearch` we already use in the sidebar. ~25 LoC.
+4. **Don't re-render the whole tab on every save.** Today, several settings call `this.display()` to refresh dependent UI (e.g. project order list, working-dir defaults). Replace with targeted re-renders of the affected section only — each section becomes a `renderSection(containerEl)` function that can be called in isolation. This eliminates the 700px scroll-jump on every toggle.
+5. **Inline validation, not silent acceptance.** Profile-overlay JSON shows the validator's findings beneath the textarea immediately on edit (already partly there via `validateOverlay` — surface it inline rather than only on save). tmux binary path checks `existsSync` on blur and shows a green check or red ✗.
+6. **Group "Project order" inside "Working directories"** — they both operate on the same project list and the visual disconnect (two H2s with different concerns) is confusing. Fold the order list into the Working directories section.
+7. **Remove the orphan "Reset to alphabetical" button** from outside the Project order H2; bind it inside the renderer.
+
+**Settings tab — proposed shape:**
+
+```
+┌─ op settings ────────────────────────────────────────┐
+│ 🔍 Search settings…                                  │
+│                                                      │
+│ ── Daily ──────────────────────────────────────────  │
+│ Default agent          [claude ▾]                    │
+│ Terminal               [iTerm ▾]                     │
+│ Sidebar default tab    [In flight ▾]                 │
+│ Hotkey preset          [Apply op default]            │
+│ Onboarding README      [Recreate]                    │
+│                                                      │
+│ ── Advanced ──────────────────────────────────────── │
+│ ▸ Injection                                          │
+│ ▸ Working directories & project order                │
+│ ▸ iTerm layout orchestrator                          │
+│ ▸ Profile overlays (per-agent JSON)                  │
+│ ▸ Agent worktree enforcement                         │
+│ ▸ Flow chaining                                      │
+│ ▸ GitHub integration                                 │
+│ ▸ Developer commands                                 │
+│                                                      │
+│ ▸ Glossary                                           │
+└──────────────────────────────────────────────────────┘
+```
+
+**Why it feels better.** A new user sees five settings, not thirty. A returning user types in the search and finds the toggle in one second. The "I changed one thing and the page jumped 600px" annoyance disappears. Power-user surface is still all there, just one fold-down away.
+
+**Cost / risk.** Medium — a refactor of 771 LoC into ~10 `renderSection(el)` functions, plus the search filter, plus the two-tier wrapper. Low behavioral risk: setting semantics don't change, only their layout. Bigger risk is breaking the existing settings tab smoke-test recipe in CLAUDE.md (`app.setting.openTabById("op-obsidian")`); the recipe still works, but assertions counting `.op-project-order__item` need to account for the section being inside a `<details>` (still in the DOM, just nested).
+
+**Verdict.** `RECOMMEND`. Lands as its own follow-up issue — the spec's biggest single PR by LoC, but pure restructure with ~zero new behavior to test.
+
+---
+
+## 14. Explicit no-pile
 
 These have surface appeal and are not in scope. Naming them prevents drift.
 
@@ -477,7 +533,7 @@ These have surface appeal and are not in scope. Naming them prevents drift.
 
 ---
 
-## 14. Architecture — what's new vs. existing
+## 15. Architecture — what's new vs. existing
 
 ```mermaid
 flowchart LR
@@ -522,7 +578,7 @@ flowchart LR
 
 No existing module is gutted; new code clusters into single-purpose files. `main.ts` only gains command registrations + extension wiring (~80 LoC added).
 
-## 15. Implementation order if all `RECOMMEND`s are accepted
+## 16. Implementation order if all `RECOMMEND`s are accepted
 
 Each section becomes its own follow-up issue, sized for one PR. Suggested sequence (smaller → larger, builds on infrastructure introduced earlier):
 
@@ -535,10 +591,11 @@ Each section becomes its own follow-up issue, sized for one PR. Suggested sequen
 7. **§2 Note-level primary chip + §11 status strip + §10 onboarding README** (1 PR, ~300 LoC). Shares the CM6 widget infrastructure — bundle.
 8. **§4 Terminal transition fixes** (1 PR, ~80 LoC). macOS-only; opt-in setting.
 9. **§8 Quick-capture** (1 PR, ~80 LoC). Standalone; can ship anywhere in the sequence.
+10. **§13 Settings tab restructure** (1 PR, ~400 LoC moved + ~80 new). Biggest single PR but pure restructure; ship after the chip+onboarding bundle so the new "Onboarding" daily setting has somewhere to live.
 
-Total: 9 PRs, roughly 1,200 LoC of additions, no breaking changes. Each PR ships independently.
+Total: 10 PRs, roughly 1,600 LoC touched (1,200 new + 400 moved), no breaking changes to setting semantics. Each PR ships independently.
 
-## 16. Open questions for first review pass
+## 17. Open questions for first review pass
 
 These are deliberate ambiguities for the user / Copilot review to push back on:
 
