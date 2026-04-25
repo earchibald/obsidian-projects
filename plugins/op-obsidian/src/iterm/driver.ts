@@ -16,6 +16,10 @@ export async function sessionExists(sessionId: string): Promise<boolean> {
   return wsClient.sessionExists(sessionId);
 }
 
+export async function closeWindow(windowId: string): Promise<void> {
+  return wsClient.closeWindow(windowId);
+}
+
 export async function createWindow(command: string): Promise<CreateWindowResult> {
   return wsClient.createWindow(command);
 }

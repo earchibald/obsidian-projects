@@ -1,5 +1,6 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
+  cleanupAgentSessions,
   pruneRegistryForIssue,
   pruneRegistryMissingIssues,
   tmuxSessionsForCleanup,
@@ -80,6 +81,115 @@ describe("pruneRegistryMissingIssues", () => {
     expect(Object.keys(removed)).toEqual(["OP-2"]);
     expect(r.surfaces["OP-1"]).toBeDefined();
     expect(r.surfaces["OP-2"]).toBeUndefined();
+  });
+});
+
+describe("cleanupAgentSessions: empty-window closure (OP-110)", () => {
+  it("closes and removes the iTerm window when the last cell is freed", async () => {
+    const r = emptyRegistry();
+    addWindow(r, win("w1", "op-agents-1"));
+    assignSurface(r, "OP-50", {
+      sessionId: "s0",
+      windowId: "w1",
+      cellIndex: 0,
+      layoutId: "2x2",
+      tmuxWindow: "OP-50",
+    });
+
+    const close = vi.fn().mockResolvedValue(undefined);
+    const res = await cleanupAgentSessions({
+      // /bin/true exits 0 with any args; killTmuxWindow returns true and
+      // moves on. Avoids touching a real tmux server during the test.
+      tmuxBinary: "/bin/true",
+      reg: r,
+      issueIds: ["OP-50"],
+      closeITermWindow: close,
+    });
+
+    expect(close).toHaveBeenCalledTimes(1);
+    expect(close).toHaveBeenCalledWith("w1");
+    expect(res.closedWindows).toEqual(["w1"]);
+    expect(r.windows["w1"]).toBeUndefined();
+    expect(r.windowOrder).toEqual([]);
+  });
+
+  it("leaves windows with surviving cells alone", async () => {
+    const r = emptyRegistry();
+    addWindow(r, win("w1", "op-agents-1"));
+    assignSurface(r, "OP-50", {
+      sessionId: "s0",
+      windowId: "w1",
+      cellIndex: 0,
+      layoutId: "2x2",
+      tmuxWindow: "OP-50",
+    });
+    assignSurface(r, "OP-51", {
+      sessionId: "s1",
+      windowId: "w1",
+      cellIndex: 1,
+      layoutId: "2x2",
+      tmuxWindow: "OP-51",
+    });
+
+    const close = vi.fn().mockResolvedValue(undefined);
+    const res = await cleanupAgentSessions({
+      tmuxBinary: "/bin/true",
+      reg: r,
+      issueIds: ["OP-50"],
+      closeITermWindow: close,
+    });
+
+    expect(close).not.toHaveBeenCalled();
+    expect(res.closedWindows).toEqual([]);
+    expect(r.windows["w1"]).toBeDefined();
+    expect(r.windows["w1"].sessionIds[1]).toBe("s1");
+  });
+
+  it("removes the empty WindowState even when the closer is omitted", async () => {
+    const r = emptyRegistry();
+    addWindow(r, win("w1", "op-agents-1"));
+    assignSurface(r, "OP-50", {
+      sessionId: "s0",
+      windowId: "w1",
+      cellIndex: 0,
+      layoutId: "2x2",
+      tmuxWindow: "OP-50",
+    });
+
+    const res = await cleanupAgentSessions({
+      tmuxBinary: "/bin/true",
+      reg: r,
+      issueIds: ["OP-50"],
+    });
+
+    expect(res.closedWindows).toEqual([]);
+    expect(r.windows["w1"]).toBeUndefined();
+    expect(r.windowOrder).toEqual([]);
+  });
+
+  it("swallows closer errors and still drops the WindowState", async () => {
+    const r = emptyRegistry();
+    addWindow(r, win("w1", "op-agents-1"));
+    assignSurface(r, "OP-50", {
+      sessionId: "s0",
+      windowId: "w1",
+      cellIndex: 0,
+      layoutId: "2x2",
+      tmuxWindow: "OP-50",
+    });
+
+    const close = vi.fn().mockRejectedValue(new Error("iTerm not connected"));
+    const res = await cleanupAgentSessions({
+      tmuxBinary: "/bin/true",
+      reg: r,
+      issueIds: ["OP-50"],
+      closeITermWindow: close,
+    });
+
+    expect(close).toHaveBeenCalledTimes(1);
+    expect(res.closedWindows).toEqual([]);
+    expect(r.windows["w1"]).toBeUndefined();
+    expect(r.windowOrder).toEqual([]);
   });
 });
 
