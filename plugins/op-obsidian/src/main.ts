@@ -334,6 +334,7 @@ export default class OpPlugin extends Plugin {
             tmuxSessions: () => tmuxSessionsForCleanup(this.settings.orchestratorState),
             recordRecency: (id) => this.recordRecency(id),
             executeResumeLast: () => void this.runResumeLastCommand(),
+            resolveIssue: (entry) => this.runResolveCommand({ path: entry.path }),
           },
         ),
     );

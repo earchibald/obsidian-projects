@@ -120,6 +120,18 @@ describe("mergeSettings", () => {
     ).toBe(DEFAULT_SETTINGS.view.defaultTab);
   });
 
+  it("view.density accepts the two literals; rejects anything else", () => {
+    expect(DEFAULT_SETTINGS.view.density).toBe("comfortable");
+    expect(mergeSettings({ view: { density: "compact" } }).view.density).toBe("compact");
+    expect(mergeSettings({ view: { density: "comfortable" } }).view.density).toBe("comfortable");
+    expect(
+      mergeSettings({ view: { density: "tight" as unknown as "compact" } }).view.density,
+    ).toBe(DEFAULT_SETTINGS.view.density);
+    expect(
+      mergeSettings({ view: { density: 1 as unknown as "compact" } }).view.density,
+    ).toBe(DEFAULT_SETTINGS.view.density);
+  });
+
   it("only accepts terminal === 'Terminal' | 'iTerm'", () => {
     expect(mergeSettings({ terminal: "iTerm" }).terminal).toBe("iTerm");
     expect(mergeSettings({ terminal: "Terminal" }).terminal).toBe("Terminal");

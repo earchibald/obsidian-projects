@@ -1,8 +1,8 @@
-import { ItemView, TFile, WorkspaceLeaf, prepareFuzzySearch, setIcon, setTooltip } from "obsidian";
+import { App, ItemView, Modal, TFile, WorkspaceLeaf, prepareFuzzySearch, setIcon, setTooltip } from "obsidian";
 import type { IssueStore } from "./issueStore";
 import type { EventBus } from "./eventBus";
 import type { IssueEntry, LifecycleEvent } from "./types";
-import type { ViewSettings } from "./settings";
+import type { SidebarDensity, ViewSettings } from "./settings";
 import type { AgentLaunchMode } from "./agentProfiles";
 import type { RecencyEntry } from "./recencyLog";
 import { mostRecent, relativeTime } from "./recencyLog";
@@ -46,6 +46,10 @@ export interface OpSidebarHooks {
   tmuxSessions: () => string[];
   recordRecency: (issueId: string) => Promise<void>;
   executeResumeLast: () => void;
+  /** Trigger the same code path as `op-resolve` (Notice + post-move chip
+   * included). Called from the `r` keyboard shortcut after the user confirms
+   * via {@link OpResolveConfirmModal}. Optional so tests can omit it. */
+  resolveIssue?: (entry: IssueEntry) => void | Promise<void>;
 }
 
 export class OpSidebarView extends ItemView {
@@ -58,6 +62,18 @@ export class OpSidebarView extends ItemView {
   private tabButtons = new Map<TabId, HTMLElement>();
   private rafPending = false;
   private probeTimer: ReturnType<typeof setInterval> | undefined;
+  /** Guard against `r` auto-repeat (or rapid double-tap) stacking multiple
+   * resolve modals on top of each other. Set when a modal opens, cleared via
+   * the `onDismiss` callback when it closes (Cancel OR Resolve). */
+  private resolveModalOpen = false;
+  /** Last list rendered into the body — keyed by index so j/k can map cleanly
+   * onto a row without re-running the filter. */
+  private displayedIssues: IssueEntry[] = [];
+  /** -1 ⇒ no row selected (empty list). Otherwise an index into
+   * {@link displayedIssues}. Clamped on every render. */
+  private selectedIndex = -1;
+  private rowEls: HTMLElement[] = [];
+  private keydownHandler?: (ev: KeyboardEvent) => void;
   /** `undefined` means "not yet probed" — render renders all badges as
    * normal until the first tick lands. `null` means "tmux unavailable",
    * which also keeps badges as-is (no false-positive demotion). A `Set`
@@ -98,6 +114,11 @@ export class OpSidebarView extends ItemView {
     const root = this.contentEl;
     root.empty();
     root.addClass("op-sidebar");
+    // Make the leaf focusable so j/k/Enter/r work without first clicking a
+    // row. tabindex=0 keeps the leaf in the natural Tab order so users can
+    // also reach it via keyboard from elsewhere in Obsidian; we additionally
+    // focus it programmatically in onOpen.
+    root.setAttr("tabindex", "0");
 
     this.headerEl = root.createDiv({ cls: "op-sidebar__header" });
 
@@ -134,8 +155,14 @@ export class OpSidebarView extends ItemView {
       if (RELEVANT.has(ev.kind)) this.scheduleRender();
     });
 
+    this.keydownHandler = (ev) => this.handleKeydown(ev);
+    root.addEventListener("keydown", this.keydownHandler);
+
     this.startTmuxProbe();
     this.render();
+    // Defer the focus until after Obsidian finishes its layout pass, otherwise
+    // the workspace re-grabs focus and the keydown listener never sees keys.
+    queueMicrotask(() => root.focus({ preventScroll: true }));
   }
 
   async onClose(): Promise<void> {
@@ -143,6 +170,13 @@ export class OpSidebarView extends ItemView {
     this.unsubscribe = undefined;
     this.stopTmuxProbe();
     this.tabButtons.clear();
+    if (this.keydownHandler) {
+      this.contentEl.removeEventListener("keydown", this.keydownHandler);
+      this.keydownHandler = undefined;
+    }
+    this.rowEls = [];
+    this.displayedIssues = [];
+    this.selectedIndex = -1;
   }
 
   /**
@@ -208,7 +242,26 @@ export class OpSidebarView extends ItemView {
     for (const [id, btn] of this.tabButtons) {
       btn.toggleClass("is-active", id === this.active);
     }
+    const density = this.getSettings().density;
+    this.contentEl.toggleClass("op-sidebar--density-compact", density === "compact");
+    this.contentEl.toggleClass("op-sidebar--density-comfortable", density !== "compact");
+
     const issues = filterEntries(this.pickFor(this.active), this.filterQuery);
+    // Preserve selection identity across re-renders by id. Without this, a new
+    // issue that sorts before the current selection (e.g. OP-001 arriving
+    // while OP-100 is highlighted at index 0) silently shifts the highlight
+    // to a different row mid-keypress. O(n) findIndex is fine — renders are
+    // RAF-debounced and project-vault issue lists are small.
+    const selectedId = this.displayedIssues[this.selectedIndex]?.id;
+    this.displayedIssues = issues;
+    this.rowEls = [];
+    const identityIdx = selectedId !== undefined ? issues.findIndex((e) => e.id === selectedId) : -1;
+    if (issues.length === 0) this.selectedIndex = -1;
+    else if (identityIdx >= 0) this.selectedIndex = identityIdx;
+    else if (this.selectedIndex < 0 || this.selectedIndex >= issues.length) this.selectedIndex = 0;
+
+    const showProjectChip = shouldShowProjectChip(density, issues);
+
     this.bodyEl.empty();
     if (issues.length === 0) {
       const emptyText = this.filterQuery.trim() ? "(no matches)" : "(none)";
@@ -216,9 +269,12 @@ export class OpSidebarView extends ItemView {
       return;
     }
     const ul = this.bodyEl.createEl("ul", { cls: "op-sidebar__list" });
-    for (const e of issues) {
+    for (let idx = 0; idx < issues.length; idx++) {
+      const e = issues[idx];
       const li = ul.createEl("li", { cls: "op-sidebar__item" });
       const headerRow = li.createDiv({ cls: "op-sidebar__row" });
+      if (idx === this.selectedIndex) headerRow.addClass("is-selected");
+      this.rowEls.push(headerRow);
       const linkText = `${e.id} · ${stripIdPrefix(e.title, e.id)}`;
       const link = headerRow.createEl("a", {
         cls: "op-sidebar__link",
@@ -226,8 +282,10 @@ export class OpSidebarView extends ItemView {
       });
       link.setAttr("href", "#");
       setTooltip(link, linkText, { delay: 250 });
+      const itemIndex = idx;
       link.addEventListener("click", (ev) => {
         ev.preventDefault();
+        this.setSelectedIndex(itemIndex, { scroll: false });
         if (this.hooks) void this.hooks.recordRecency(e.id);
         void this.openEntry(e);
       });
@@ -285,7 +343,9 @@ export class OpSidebarView extends ItemView {
         });
       }
       const meta = li.createDiv({ cls: "op-sidebar__meta" });
-      meta.createSpan({ text: e.project, cls: "op-sidebar__project" });
+      if (showProjectChip) {
+        meta.createSpan({ text: e.project, cls: "op-sidebar__project" });
+      }
       if (e.priority) {
         meta.createSpan({ text: e.priority, cls: `op-sidebar__prio op-sidebar__prio--${e.priority}` });
       }
@@ -394,6 +454,223 @@ export class OpSidebarView extends ItemView {
       await this.app.workspace.getLeaf(false).openFile(f);
     }
   }
+
+  /**
+   * Single source of truth for selection state. Updates the rendered
+   * `.is-selected` class on the row elements without re-running render(),
+   * scrolls the new row into view (default), and clamps to the visible range.
+   */
+  private setSelectedIndex(next: number, opts: { scroll?: boolean } = {}): void {
+    const last = this.displayedIssues.length - 1;
+    if (last < 0) {
+      this.selectedIndex = -1;
+      return;
+    }
+    const clamped = Math.max(0, Math.min(last, next));
+    if (clamped === this.selectedIndex) return;
+    if (this.selectedIndex >= 0 && this.rowEls[this.selectedIndex]) {
+      this.rowEls[this.selectedIndex].removeClass("is-selected");
+    }
+    this.selectedIndex = clamped;
+    const el = this.rowEls[this.selectedIndex];
+    if (el) {
+      el.addClass("is-selected");
+      if (opts.scroll !== false) el.scrollIntoView({ block: "nearest" });
+    }
+  }
+
+  /**
+   * Keyboard router. Two contexts in priority order:
+   *
+   *   1. Filter input focused — only navigation/open/launch keys (Arrows,
+   *      Enter, Cmd/Ctrl+Enter); letter keys (`j`/`k`/`r`) fall through
+   *      so typing a query stays unobstructed.
+   *   2. Anywhere else inside the sidebar — full set including `j`/`k`/`r`.
+   *
+   * Modifier rule: only the bare modifier set documented per binding triggers
+   * the action. `Cmd+J` is a global Obsidian shortcut so we never claim it;
+   * `Shift+J` falls through too. The handler uses `preventDefault()` only
+   * after deciding to act, so unknown keys propagate normally.
+   */
+  private handleKeydown(ev: KeyboardEvent): void {
+    if (ev.isComposing) return;
+    const action = decideKeyAction(ev, { inFilter: ev.target === this.filterInput });
+    if (action === "ignore") return;
+    ev.preventDefault();
+    // For Cmd/Ctrl+Enter we additionally stopPropagation so Obsidian's global
+    // "Open link in new pane" handler doesn't double-fire on the same chord.
+    if (action === "launch") ev.stopPropagation();
+    switch (action) {
+      case "next":
+        this.setSelectedIndex(this.selectedIndex + 1);
+        return;
+      case "prev":
+        this.setSelectedIndex(this.selectedIndex - 1);
+        return;
+      case "open":
+        void this.activateSelected();
+        return;
+      case "launch":
+        void this.launchSelected();
+        return;
+      case "resolve":
+        void this.resolveSelected();
+        return;
+    }
+  }
+
+  private currentSelection(): IssueEntry | undefined {
+    if (this.selectedIndex < 0) return undefined;
+    return this.displayedIssues[this.selectedIndex];
+  }
+
+  private async activateSelected(): Promise<void> {
+    const entry = this.currentSelection();
+    if (!entry) return;
+    if (this.hooks) await this.hooks.recordRecency(entry.id);
+    await this.openEntry(entry);
+  }
+
+  private async launchSelected(): Promise<void> {
+    const entry = this.currentSelection();
+    if (!entry || !this.launchAgent) return;
+    if (entry.agent) return; // a live agent already exists; don't double-launch
+    await this.launchAgent(entry, "implement", false);
+  }
+
+  private async resolveSelected(): Promise<void> {
+    // Guard against `r` auto-repeat (or rapid double-tap) stacking modals.
+    // Cleared via the modal's onDismiss callback below.
+    if (this.resolveModalOpen) return;
+    const entry = this.currentSelection();
+    if (!entry || !this.hooks?.resolveIssue) return;
+    if (entry.resolvedFolder || entry.status === "resolved" || entry.status === "wontfix") {
+      return;
+    }
+    this.resolveModalOpen = true;
+    const hook = this.hooks.resolveIssue;
+    const modal = new OpResolveConfirmModal(
+      this.app,
+      entry,
+      async () => {
+        await hook(entry);
+      },
+      () => {
+        this.resolveModalOpen = false;
+      },
+    );
+    modal.open();
+  }
+}
+
+/**
+ * Confirmation gate for the `r` keyboard shortcut. Tiny on purpose — the real
+ * resolve work happens in `runResolveCommand` via the wired hook. We only
+ * stand between an accidental keypress and the irreversible move-to-RESOLVED.
+ */
+export class OpResolveConfirmModal extends Modal {
+  constructor(
+    app: App,
+    private entry: IssueEntry,
+    private onConfirm: () => void | Promise<void>,
+    /** Called when the modal closes for any reason (Cancel, Resolve, or
+     * Esc/click-outside). The sidebar uses it to clear the auto-repeat
+     * stacking guard so the next `r` keypress works normally. */
+    private onDismiss?: () => void,
+  ) {
+    super(app);
+  }
+
+  onOpen(): void {
+    const { contentEl } = this;
+    contentEl.empty();
+    contentEl.createEl("h2", { text: `Resolve ${this.entry.id}?` });
+    const title = stripIdPrefix(this.entry.title, this.entry.id);
+    contentEl.createEl("p", {
+      text: title,
+      cls: "setting-item-description",
+    });
+    contentEl.createEl("p", {
+      text: "This moves the note to RESOLVED ISSUES/, sets status to resolved, trashes linked TASKS, and (if configured) closes the linked GitHub issue.",
+      cls: "setting-item-description",
+    });
+
+    const buttons = contentEl.createDiv({ cls: "op-resolve-confirm__buttons" });
+    const cancel = buttons.createEl("button", { text: "Cancel" });
+    cancel.addEventListener("click", () => this.close());
+    const resolve = buttons.createEl("button", { text: "Resolve", cls: "mod-cta" });
+    resolve.addEventListener("click", () => {
+      this.close();
+      void this.onConfirm();
+    });
+    // Default focus on Resolve so Enter inside the modal confirms.
+    queueMicrotask(() => resolve.focus());
+  }
+
+  onClose(): void {
+    this.contentEl.empty();
+    this.onDismiss?.();
+  }
+}
+
+export type SidebarKeyAction =
+  | "ignore"
+  | "next"
+  | "prev"
+  | "open"
+  | "launch"
+  | "resolve";
+
+/**
+ * Pure key-router decision. Inputs: the keyboard event and whether the filter
+ * input owns focus. Output: the action label the view should perform, or
+ * `"ignore"` to let the key propagate untouched.
+ *
+ * Lifted out of the class so the binding map is unit-testable without a DOM.
+ */
+export function decideKeyAction(
+  ev: Pick<KeyboardEvent, "key" | "altKey" | "shiftKey" | "metaKey" | "ctrlKey">,
+  opts: { inFilter: boolean },
+): SidebarKeyAction {
+  const { key, altKey, shiftKey, metaKey, ctrlKey } = ev;
+  const meta = metaKey || ctrlKey;
+  const plain = !altKey && !shiftKey && !metaKey && !ctrlKey;
+
+  if (key === "ArrowDown" && plain) return "next";
+  if (key === "ArrowUp" && plain) return "prev";
+  if (key === "Enter" && plain) return "open";
+  if (key === "Enter" && meta && !altKey && !shiftKey) return "launch";
+
+  // Letter shortcuts: skipped when the filter input owns focus so typing a
+  // query stays unobstructed.
+  if (opts.inFilter) return "ignore";
+  if (key === "j" && plain) return "next";
+  if (key === "k" && plain) return "prev";
+  if (key === "r" && plain) return "resolve";
+
+  return "ignore";
+}
+
+/**
+ * Decide whether to render the per-row project chip given the current density
+ * preference and the rendered list. Pure helper for unit tests; the sidebar
+ * caches the result per render and skips the chip when this returns false.
+ *
+ * The chip stays visible in `comfortable` regardless. In `compact`, it's only
+ * suppressed when every rendered row is from the same project — repeating it
+ * down a single-project list is the noise we're trying to remove.
+ */
+export function shouldShowProjectChip(
+  density: SidebarDensity,
+  entries: ReadonlyArray<IssueEntry>,
+): boolean {
+  if (density !== "compact") return true;
+  if (entries.length === 0) return true;
+  const first = entries[0].project;
+  for (let i = 1; i < entries.length; i++) {
+    if (entries[i].project !== first) return true;
+  }
+  return false;
 }
 
 function sameLiveSet(

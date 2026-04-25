@@ -13,9 +13,11 @@ beforeAll(() => {
 });
 
 vi.mock("obsidian", () => ({
+  App: class {},
   ItemView: class {
     contentEl: any = makeFakeEl();
   },
+  Modal: class {},
   TFile: class {},
   WorkspaceLeaf: class {},
   setIcon: () => {},
@@ -27,7 +29,15 @@ vi.mock("./staleAgentBadges", () => ({
   probeLiveTmuxWindows: vi.fn(async () => ({ live: new Set<string>(), ok: true })),
 }));
 
-import { filterEntries, OpSidebarView, TMUX_PROBE_INTERVAL_MS, type OpSidebarHooks } from "./sidebarView";
+import {
+  decideKeyAction,
+  filterEntries,
+  OpResolveConfirmModal,
+  OpSidebarView,
+  shouldShowProjectChip,
+  TMUX_PROBE_INTERVAL_MS,
+  type OpSidebarHooks,
+} from "./sidebarView";
 import { probeLiveTmuxWindows } from "./staleAgentBadges";
 
 function entry(over: Partial<IssueEntry>): IssueEntry {
@@ -91,6 +101,95 @@ describe("filterEntries", () => {
   });
 });
 
+describe("shouldShowProjectChip", () => {
+  const op1 = entry({ id: "OP-1", project: "obsidian-projects" });
+  const op2 = entry({ id: "OP-2", project: "obsidian-projects" });
+  const jb1 = entry({ id: "JB-1", project: "jira-bases" });
+
+  it("always shows the chip in comfortable density, even single-project", () => {
+    expect(shouldShowProjectChip("comfortable", [])).toBe(true);
+    expect(shouldShowProjectChip("comfortable", [op1])).toBe(true);
+    expect(shouldShowProjectChip("comfortable", [op1, op2])).toBe(true);
+    expect(shouldShowProjectChip("comfortable", [op1, jb1])).toBe(true);
+  });
+
+  it("hides the chip in compact density when every entry shares one project", () => {
+    expect(shouldShowProjectChip("compact", [op1])).toBe(false);
+    expect(shouldShowProjectChip("compact", [op1, op2])).toBe(false);
+  });
+
+  it("keeps the chip in compact density when projects differ", () => {
+    expect(shouldShowProjectChip("compact", [op1, jb1])).toBe(true);
+    expect(shouldShowProjectChip("compact", [jb1, op1, op2])).toBe(true);
+  });
+
+  it("treats an empty list as 'show' so the empty-state placeholder isn't rare-cased", () => {
+    expect(shouldShowProjectChip("compact", [])).toBe(true);
+  });
+});
+
+describe("decideKeyAction", () => {
+  const k = (
+    key: string,
+    mods: Partial<{ alt: boolean; shift: boolean; meta: boolean; ctrl: boolean }> = {},
+  ) => ({
+    key,
+    altKey: !!mods.alt,
+    shiftKey: !!mods.shift,
+    metaKey: !!mods.meta,
+    ctrlKey: !!mods.ctrl,
+  });
+
+  it("plain ArrowDown / ArrowUp / Enter map to next / prev / open in both contexts", () => {
+    for (const inFilter of [false, true]) {
+      expect(decideKeyAction(k("ArrowDown"), { inFilter })).toBe("next");
+      expect(decideKeyAction(k("ArrowUp"), { inFilter })).toBe("prev");
+      expect(decideKeyAction(k("Enter"), { inFilter })).toBe("open");
+    }
+  });
+
+  it("Cmd+Enter and Ctrl+Enter both map to launch in both contexts", () => {
+    for (const inFilter of [false, true]) {
+      expect(decideKeyAction(k("Enter", { meta: true }), { inFilter })).toBe("launch");
+      expect(decideKeyAction(k("Enter", { ctrl: true }), { inFilter })).toBe("launch");
+    }
+  });
+
+  it("plain j / k / r map to next / prev / resolve when the filter input is unfocused", () => {
+    expect(decideKeyAction(k("j"), { inFilter: false })).toBe("next");
+    expect(decideKeyAction(k("k"), { inFilter: false })).toBe("prev");
+    expect(decideKeyAction(k("r"), { inFilter: false })).toBe("resolve");
+  });
+
+  it("ignores letter shortcuts when the filter input is focused so users can type", () => {
+    expect(decideKeyAction(k("j"), { inFilter: true })).toBe("ignore");
+    expect(decideKeyAction(k("k"), { inFilter: true })).toBe("ignore");
+    expect(decideKeyAction(k("r"), { inFilter: true })).toBe("ignore");
+  });
+
+  it("ignores modifier-laden letter keys to avoid hijacking Cmd-J / Shift-K / etc.", () => {
+    expect(decideKeyAction(k("j", { meta: true }), { inFilter: false })).toBe("ignore");
+    expect(decideKeyAction(k("j", { shift: true }), { inFilter: false })).toBe("ignore");
+    expect(decideKeyAction(k("k", { ctrl: true }), { inFilter: false })).toBe("ignore");
+    expect(decideKeyAction(k("r", { alt: true }), { inFilter: false })).toBe("ignore");
+  });
+
+  it("ignores unrelated keys (letters, function keys, punctuation)", () => {
+    expect(decideKeyAction(k("a"), { inFilter: false })).toBe("ignore");
+    expect(decideKeyAction(k("Escape"), { inFilter: false })).toBe("ignore");
+    expect(decideKeyAction(k("F1"), { inFilter: false })).toBe("ignore");
+    expect(decideKeyAction(k("/"), { inFilter: false })).toBe("ignore");
+  });
+
+  it("ignores Shift+Enter and Alt+Enter (only plain or Cmd/Ctrl+Enter trigger an action)", () => {
+    expect(decideKeyAction(k("Enter", { shift: true }), { inFilter: false })).toBe("ignore");
+    expect(decideKeyAction(k("Enter", { alt: true }), { inFilter: false })).toBe("ignore");
+    expect(decideKeyAction(k("Enter", { meta: true, alt: true }), { inFilter: false })).toBe(
+      "ignore",
+    );
+  });
+});
+
 function makeFakeEl(): any {
   const el: any = {
     children: [] as any[],
@@ -122,6 +221,10 @@ function makeFakeEl(): any {
     },
     setAttr() {},
     addEventListener() {},
+    removeEventListener() {},
+    removeClass() {},
+    focus() {},
+    scrollIntoView() {},
   };
   return el;
 }
@@ -149,7 +252,13 @@ function makeView(hooks?: OpSidebarHooks): any {
     {} as any,
     store as any,
     bus as any,
-    () => ({ defaultTab: "issues", recentResolvedLimit: 20, openOnStartup: false } as any),
+    () =>
+      ({
+        defaultTab: "issues",
+        recentResolvedLimit: 20,
+        openOnStartup: false,
+        density: "comfortable",
+      } as any),
     undefined,
     undefined,
     hooks,
@@ -252,5 +361,94 @@ describe("OpSidebarView visibility-gated tmux probe", () => {
       expect(view.isProbeRunning()).toBe(false);
       await view.onClose();
     });
+  });
+});
+
+// ─── OpResolveConfirmModal ────────────────────────────────────────────────────
+
+describe("OpResolveConfirmModal", () => {
+  it("calls onDismiss when closed (Cancel / Resolve / Esc all hit onClose)", () => {
+    const onConfirm = vi.fn();
+    const onDismiss = vi.fn();
+    const modal = new OpResolveConfirmModal(
+      {} as any,
+      entry({ id: "OP-42", title: "OP-42 example" }),
+      onConfirm,
+      onDismiss,
+    );
+    (modal as any).contentEl = makeFakeEl();
+    modal.onClose();
+    expect(onDismiss).toHaveBeenCalledTimes(1);
+    expect(onConfirm).not.toHaveBeenCalled();
+  });
+
+  it("does not throw when onDismiss is omitted", () => {
+    const modal = new OpResolveConfirmModal(
+      {} as any,
+      entry({ id: "OP-1", title: "OP-1 placeholder" }),
+      vi.fn(),
+    );
+    (modal as any).contentEl = makeFakeEl();
+    expect(() => modal.onClose()).not.toThrow();
+  });
+});
+
+// ─── render() selection identity preservation ────────────────────────────────
+
+describe("render() selection identity", () => {
+  function makeViewWithIssues(issues: IssueEntry[]): any {
+    const bus = new FakeBus();
+    const store = {
+      byId: () => undefined,
+      issues: () => issues,
+    };
+    return new OpSidebarView(
+      {} as any,
+      store as any,
+      bus as any,
+      () =>
+        ({
+          defaultTab: "issues",
+          recentResolvedLimit: 20,
+          openOnStartup: false,
+          density: "comfortable",
+        } as any),
+      undefined,
+      undefined,
+      undefined,
+    );
+  }
+
+  it("preserves the selected row by id when a new issue inserts before it", async () => {
+    const op100 = entry({ id: "OP-100", title: "OP-100 original" });
+    const issues: IssueEntry[] = [op100];
+    const view = makeViewWithIssues(issues);
+    await view.onOpen();
+    expect((view as any).selectedIndex).toBe(0);
+    expect((view as any).displayedIssues[0].id).toBe("OP-100");
+
+    // OP-001 sorts before OP-100 numerically — the selection must stay on OP-100.
+    issues.unshift(entry({ id: "OP-001", title: "OP-001 new" }));
+    (view as any).render();
+    expect((view as any).selectedIndex).toBe(1);
+    expect((view as any).displayedIssues[(view as any).selectedIndex].id).toBe("OP-100");
+
+    await view.onClose();
+  });
+
+  it("falls back to index 0 when the previously selected issue leaves the list", async () => {
+    const op1 = entry({ id: "OP-1" });
+    const op2 = entry({ id: "OP-2" });
+    const issues: IssueEntry[] = [op1, op2];
+    const view = makeViewWithIssues(issues);
+    await view.onOpen();
+    (view as any).selectedIndex = 1;
+
+    issues.splice(1, 1); // OP-2 leaves the rendered list
+    (view as any).render();
+    expect((view as any).selectedIndex).toBe(0);
+    expect((view as any).displayedIssues[0].id).toBe("OP-1");
+
+    await view.onClose();
   });
 });

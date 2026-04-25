@@ -21,11 +21,16 @@ export interface InjectionSettings {
 }
 
 export type SidebarTab = "issues" | "in-flight" | "resolved";
+export type SidebarDensity = "comfortable" | "compact";
 
 export interface ViewSettings {
   defaultTab: SidebarTab;
   recentResolvedLimit: number;
   openOnStartup: boolean;
+  /** Visual density of the sidebar list. `compact` tightens vertical padding
+   * by 4px and hides the project chip when the rendered list spans only one
+   * project. */
+  density: SidebarDensity;
 }
 
 export interface GithubSettings {
@@ -107,6 +112,7 @@ export const DEFAULT_SETTINGS: OpSettings = {
     defaultTab: "issues",
     recentResolvedLimit: 20,
     openOnStartup: false,
+    density: "comfortable",
   },
   github: {
     autoCreateGithubIssue: false,
@@ -135,6 +141,7 @@ export const DEFAULT_SETTINGS: OpSettings = {
 };
 
 const SIDEBAR_TABS: ReadonlySet<SidebarTab> = new Set(["issues", "in-flight", "resolved"]);
+const SIDEBAR_DENSITIES: ReadonlySet<SidebarDensity> = new Set(["comfortable", "compact"]);
 
 export function mergeSettings(loaded: unknown): OpSettings {
   const base: OpSettings = JSON.parse(JSON.stringify(DEFAULT_SETTINGS));
@@ -167,6 +174,7 @@ export function mergeSettings(loaded: unknown): OpSettings {
       base.view.recentResolvedLimit = Math.floor(v.recentResolvedLimit);
     }
     if (typeof v.openOnStartup === "boolean") base.view.openOnStartup = v.openOnStartup;
+    if (v.density && SIDEBAR_DENSITIES.has(v.density)) base.view.density = v.density;
   }
   if (l.orchestrator && typeof l.orchestrator === "object") {
     const o = l.orchestrator as Partial<OrchestratorSettings>;
