@@ -41,6 +41,7 @@ import {
   filterEntries,
   OpResolveConfirmModal,
   OpSidebarView,
+  pickIssuesForTab,
   prNumber,
   shouldShowProjectChip,
   TMUX_PROBE_INTERVAL_MS,
@@ -127,6 +128,80 @@ describe("prNumber", () => {
   it("returns undefined when no number is present", () => {
     expect(prNumber("https://github.com/owner/repo/pull/")).toBeUndefined();
     expect(prNumber("https://example.com")).toBeUndefined();
+  });
+});
+
+describe("pickIssuesForTab", () => {
+  const open1 = entry({ id: "OP-1", status: "open" });
+  const inProg = entry({ id: "OP-2", status: "in-progress" });
+  const blocked = entry({ id: "OP-3", status: "blocked" });
+  const resolvedNoAgent = entry({
+    id: "OP-4",
+    status: "resolved",
+    resolvedFolder: true,
+    resolved: "2026-04-20",
+  });
+  const resolvedAlive = entry({
+    id: "OP-5",
+    status: "resolved",
+    resolvedFolder: true,
+    agent: "claude",
+    resolved: "2026-04-21",
+  });
+  const resolvedDead = entry({
+    id: "OP-6",
+    status: "resolved",
+    resolvedFolder: true,
+    agent: "claude",
+    resolved: "2026-04-22",
+  });
+  const all = [open1, inProg, blocked, resolvedNoAgent, resolvedAlive, resolvedDead];
+
+  it("'issues' tab excludes resolved/wontfix entries", () => {
+    const out = pickIssuesForTab(all, "in-flight" as any, {
+      liveTmuxWindows: new Set(["OP-5", "OP-6"]),
+      recentResolvedLimit: 20,
+    } as any);
+    expect(out.map((e) => e.id).sort()).toEqual(["OP-2", "OP-3", "OP-5", "OP-6"]);
+  });
+
+  it("'in-flight' keeps resolved-with-agent rows whose tmux window is live (OP-156 §5)", () => {
+    const out = pickIssuesForTab(all, "in-flight" as any, {
+      liveTmuxWindows: new Set(["OP-5"]),
+      recentResolvedLimit: 20,
+    } as any);
+    // OP-5 is resolved+alive → kept; OP-6 is resolved+dead → hidden;
+    // OP-4 is resolved+no agent → hidden; in-progress / blocked → kept.
+    expect(out.map((e) => e.id).sort()).toEqual(["OP-2", "OP-3", "OP-5"]);
+  });
+
+  it("'in-flight' hides resolved-with-agent rows when no live windows reported", () => {
+    const out = pickIssuesForTab(all, "in-flight" as any, {
+      liveTmuxWindows: new Set<string>(),
+      recentResolvedLimit: 20,
+    } as any);
+    expect(out.map((e) => e.id).sort()).toEqual(["OP-2", "OP-3"]);
+  });
+
+  it("'in-flight' DOES NOT hide resolved-with-agent rows when probe is unknown (undefined/null)", () => {
+    const undef = pickIssuesForTab(all, "in-flight" as any, {
+      liveTmuxWindows: undefined,
+      recentResolvedLimit: 20,
+    } as any);
+    expect(undef.map((e) => e.id).sort()).toEqual(["OP-2", "OP-3", "OP-5", "OP-6"]);
+    const tmuxDown = pickIssuesForTab(all, "in-flight" as any, {
+      liveTmuxWindows: null,
+      recentResolvedLimit: 20,
+    } as any);
+    expect(tmuxDown.map((e) => e.id).sort()).toEqual(["OP-2", "OP-3", "OP-5", "OP-6"]);
+  });
+
+  it("'resolved' tab returns resolved entries sorted by resolved-date desc", () => {
+    const out = pickIssuesForTab(all, "resolved" as any, {
+      liveTmuxWindows: new Set(),
+      recentResolvedLimit: 20,
+    } as any);
+    expect(out.map((e) => e.id)).toEqual(["OP-6", "OP-5", "OP-4"]);
   });
 });
 

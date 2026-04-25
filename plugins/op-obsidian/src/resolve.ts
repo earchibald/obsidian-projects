@@ -6,12 +6,33 @@ import { listProjects } from "./projects";
 
 export type ResolveStatus = "resolved" | "wontfix";
 
+/**
+ * Outcome of the optional pre-resolve liveness probe (§5 of OP-149).
+ *
+ *  - `{ ok: true, alive: true }`  → tmux window for the issue is live; keep `agent:`
+ *  - `{ ok: true, alive: false }` → tmux window absent; clear `agent:` (legacy behavior)
+ *  - `{ ok: false }`              → probe failed (tmux missing / timeout); keep + warn
+ */
+export type AgentLivenessResult =
+  | { ok: true; alive: boolean }
+  | { ok: false };
+
 export interface ResolveArgs {
   issue?: string;
   path?: string;
   status?: ResolveStatus;
   confirmed?: boolean;
   onAfterMove?: (entry: IssueEntry) => Promise<void>;
+  /**
+   * Single-shot, TOCTOU-safe liveness check for the issue's tmux window.
+   * Called once before the frontmatter rewrite when `agent:` is set on the
+   * issue. The result decides whether `agent:` and `agent_session:` are
+   * deleted (legacy behavior) or kept on the moved file.
+   *
+   * Optional so unit tests and the CLI handler that have no tmux context
+   * can opt out — when omitted, the legacy unconditional clear runs.
+   */
+  probeAgentLive?: (issueId: string) => Promise<AgentLivenessResult>;
 }
 
 export interface ResolveResult {
@@ -24,6 +45,19 @@ export interface ResolveResult {
   error?: string;
   githubClosed?: boolean;
   githubCloseError?: string;
+  /**
+   * `true` when the issue had `agent:` set AND the probe was wired AND we
+   * decided to keep it (alive, or probe failed). Callers use this to surface
+   * the §5 actionable Notice. `undefined` when no agent was set or no probe
+   * was wired (legacy callers).
+   */
+  agentKept?: boolean;
+  /**
+   * Mirrors `probeAgentLive`'s `ok` field when the probe ran. `false` means
+   * tmux was unreachable — callers warn the user. `undefined` when no probe
+   * ran (no agent set on the issue, or the legacy no-probe path).
+   */
+  agentProbeOk?: boolean;
 }
 
 export async function runResolve(
@@ -64,12 +98,41 @@ export async function runResolve(
     await app.vault.createFolder(targetDir).catch(() => {});
   }
 
+  // §5: probe tmux liveness BEFORE the frontmatter rewrite so the decision
+  // and the write happen in one read-then-write step. The probe itself is
+  // TOCTOU-safe (single `tmux list-windows` call) — see `probeLiveTmuxWindows`.
+  // SessionEnd-wins: if the agent's session ends after this read but before
+  // we write, the SessionEnd hook will subsequently `clearAgentOnIssue` on the
+  // moved file. The final state is always correct regardless of race order.
+  let agentKept: boolean | undefined;
+  let agentProbeOk: boolean | undefined;
+  const hadAgent = !!entry.agent;
+  if (hadAgent && args.probeAgentLive) {
+    try {
+      const probe = await args.probeAgentLive(entry.id);
+      agentProbeOk = probe.ok;
+      // Keep when alive OR when the probe failed (tmux unreachable). Clearing
+      // a live agent is the bug we're fixing; clearing on a tmux outage would
+      // be the same bug with a different trigger.
+      agentKept = probe.ok ? probe.alive : true;
+    } catch (err) {
+      // Defensive — `probeLiveTmuxWindows` already swallows ENOENT/timeout, so
+      // any throw here is a programmer error. Match the "tmux unreachable"
+      // semantics rather than dropping the agent silently.
+      console.warn("[op-obsidian] resolve probeAgentLive threw", err);
+      agentProbeOk = false;
+      agentKept = true;
+    }
+  }
+
   const today = new Date().toISOString().slice(0, 10);
   await app.fileManager.processFrontMatter(file, (fm) => {
     fm.status = targetStatus;
     fm.resolved = today;
-    delete fm.agent;
-    delete fm.agent_session;
+    if (!agentKept) {
+      delete fm.agent;
+      delete fm.agent_session;
+    }
   });
 
   await app.fileManager.renameFile(file, targetPath);
@@ -103,6 +166,8 @@ export async function runResolve(
     status: targetStatus,
     githubClosed,
     githubCloseError,
+    agentKept,
+    agentProbeOk,
   };
 }
 
