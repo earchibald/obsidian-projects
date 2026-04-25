@@ -13,6 +13,7 @@ import type { SetScopeResult } from "./setScope";
 import type { SetEvaluationResult } from "./setEvaluation";
 import type { SetFlowResult, Flow, Complexity } from "./setFlow";
 import type { ResolveArgs, ResolveStatus } from "./resolve";
+import type { ApplyLinkResult, LinkCheckResult, MigrateLinksResult } from "./links";
 
 export interface UriHandlerDeps {
   store: { issues(): IssueEntry[] };
@@ -29,6 +30,18 @@ export interface UriHandlerDeps {
     entry: IssueEntry,
     input: { flow?: Flow | null; complexity?: Complexity | null },
   ) => Promise<SetFlowResult>;
+  applyLink?: (args: {
+    srcId: string;
+    dstId: string;
+    relation: string;
+  }) => Promise<ApplyLinkResult>;
+  removeLink?: (args: {
+    srcId: string;
+    dstId: string;
+    relation: string;
+  }) => Promise<ApplyLinkResult>;
+  linkCheck?: (opts: { repair?: boolean }) => Promise<LinkCheckResult>;
+  migrateLinks?: () => Promise<MigrateLinksResult>;
 }
 
 export function findIssueById(store: { issues(): IssueEntry[] }, id: string): IssueEntry {
@@ -180,6 +193,55 @@ export async function handleOpSetFlowUri(
     flow: res.flow ?? undefined,
     complexity: res.complexity ?? undefined,
   };
+}
+
+export async function handleOpSetLinkUri(
+  deps: UriHandlerDeps,
+  params: Record<string, string>,
+): Promise<UriResponsePayload> {
+  if (!deps.applyLink) throw new Error("op-set-link not wired");
+  const srcId = params.issue ?? params.id ?? params.src;
+  const dstId = params.target ?? params.dst;
+  const relation = params.relation;
+  if (!srcId || !dstId || !relation) {
+    throw new Error("op-set-link URI requires issue, relation, target");
+  }
+  const res = await deps.applyLink({ srcId, dstId, relation });
+  return { ...res };
+}
+
+export async function handleOpRemoveLinkUri(
+  deps: UriHandlerDeps,
+  params: Record<string, string>,
+): Promise<UriResponsePayload> {
+  if (!deps.removeLink) throw new Error("op-remove-link not wired");
+  const srcId = params.issue ?? params.id ?? params.src;
+  const dstId = params.target ?? params.dst;
+  const relation = params.relation;
+  if (!srcId || !dstId || !relation) {
+    throw new Error("op-remove-link URI requires issue, relation, target");
+  }
+  const res = await deps.removeLink({ srcId, dstId, relation });
+  return { ...res };
+}
+
+export async function handleOpLinkCheckUri(
+  deps: UriHandlerDeps,
+  params: Record<string, string>,
+): Promise<UriResponsePayload> {
+  if (!deps.linkCheck) throw new Error("op-link-check not wired");
+  const repair = params.repair === "1" || params.repair === "true";
+  const res = await deps.linkCheck({ repair });
+  return { ...res };
+}
+
+export async function handleOpMigrateLinksUri(
+  deps: UriHandlerDeps,
+  _params: Record<string, string>,
+): Promise<UriResponsePayload> {
+  if (!deps.migrateLinks) throw new Error("op-migrate-links not wired");
+  const res = await deps.migrateLinks();
+  return { ...res };
 }
 
 export async function handleOpSetScopeUri(

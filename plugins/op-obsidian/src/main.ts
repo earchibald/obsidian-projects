@@ -22,6 +22,8 @@ import { appendCommit, setPr } from "./commits";
 import { setScope } from "./setScope";
 import { setEvaluation } from "./setEvaluation";
 import { setFlow, type Complexity, type Flow } from "./setFlow";
+import { applyLink, removeLink, linkCheck, migrateLinks } from "./links";
+import { RELATION_NAMES } from "./relations";
 import { runEvaluatorFlow } from "./evaluator";
 import { launchHeadless } from "./launchHeadless";
 import {
@@ -48,6 +50,10 @@ import {
   handleOpSetScopeUri as handleOpSetScopeUriPure,
   handleOpSetEvaluationUri as handleOpSetEvaluationUriPure,
   handleOpSetFlowUri as handleOpSetFlowUriPure,
+  handleOpSetLinkUri as handleOpSetLinkUriPure,
+  handleOpRemoveLinkUri as handleOpRemoveLinkUriPure,
+  handleOpLinkCheckUri as handleOpLinkCheckUriPure,
+  handleOpMigrateLinksUri as handleOpMigrateLinksUriPure,
   type UriHandlerDeps,
 } from "./uriHandlers";
 import {
@@ -58,6 +64,9 @@ import {
   parseSetEvaluationParams,
   parseSetFlowParams,
   parseNewParams,
+  parseSetLinkParams,
+  parseRemoveLinkParams,
+  parseLinkCheckParams,
 } from "./cliHandlers";
 import type { IssueEntry, LifecycleEvent } from "./types";
 import { DEFAULT_SETTINGS, mergeSettings, OpSettingsTab, type OpSettings } from "./settings";
@@ -395,6 +404,24 @@ export default class OpPlugin extends Plugin {
     });
 
     this.addCommand({
+      id: "op-link-check",
+      name: "op: check issue link drift",
+      callback: () => void this.runLinkCheckCommand(false),
+    });
+
+    this.addCommand({
+      id: "op-link-check-repair",
+      name: "op: check issue link drift (repair)",
+      callback: () => void this.runLinkCheckCommand(true),
+    });
+
+    this.addCommand({
+      id: "op-migrate-links",
+      name: "op: migrate legacy parent_issue/subissues to parent/children",
+      callback: () => void this.runMigrateLinksCommand(),
+    });
+
+    this.addCommand({
       id: "op-debug-agent-launch",
       name: "op-dev: open agent to debug agent launch",
       callback: () => void this.runDebugAgentLaunch(),
@@ -461,6 +488,30 @@ export default class OpPlugin extends Plugin {
 
     this.registerObsidianProtocolHandler("op-set-flow", (params) => {
       this.runUri("op-set-flow", normalizeUriParams(params), (p) => this.handleOpSetFlowUri(p));
+    });
+
+    this.registerObsidianProtocolHandler("op-set-link", (params) => {
+      this.runUri("op-set-link", normalizeUriParams(params), (p) =>
+        handleOpSetLinkUriPure(this.uriDeps(), p),
+      );
+    });
+
+    this.registerObsidianProtocolHandler("op-remove-link", (params) => {
+      this.runUri("op-remove-link", normalizeUriParams(params), (p) =>
+        handleOpRemoveLinkUriPure(this.uriDeps(), p),
+      );
+    });
+
+    this.registerObsidianProtocolHandler("op-link-check", (params) => {
+      this.runUri("op-link-check", normalizeUriParams(params), (p) =>
+        handleOpLinkCheckUriPure(this.uriDeps(), p),
+      );
+    });
+
+    this.registerObsidianProtocolHandler("op-migrate-links", (params) => {
+      this.runUri("op-migrate-links", normalizeUriParams(params), (p) =>
+        handleOpMigrateLinksUriPure(this.uriDeps(), p),
+      );
     });
 
     this.registerObsidianProtocolHandler("op-resolve", (params) => {
@@ -634,6 +685,48 @@ export default class OpPlugin extends Plugin {
         issue: { value: "<id>", description: "Issue id (e.g. OP-34)" },
       },
       (params) => this.handleOpResetFlowCli(params),
+    );
+
+    const linkRelationsHelp = `Relation name (one of: ${RELATION_NAMES.join("|")})`;
+    this.registerCliHandler(
+      "op-set-link",
+      "Set a two-way issue link. Plugin writes both sides atomically.",
+      {
+        issue: { value: "<id>", description: "Source issue id (e.g. OP-34)" },
+        relation: { value: "<rel>", description: linkRelationsHelp },
+        target: { value: "<id>", description: "Target issue id" },
+      },
+      (params) => this.handleOpSetLinkCli(params),
+    );
+
+    this.registerCliHandler(
+      "op-remove-link",
+      "Remove a two-way issue link. Plugin updates both sides atomically.",
+      {
+        issue: { value: "<id>", description: "Source issue id (e.g. OP-34)" },
+        relation: { value: "<rel>", description: linkRelationsHelp },
+        target: { value: "<id>", description: "Target issue id" },
+      },
+      (params) => this.handleOpRemoveLinkCli(params),
+    );
+
+    this.registerCliHandler(
+      "op-link-check",
+      "Walk every issue and report any one-sided link drift across the vault.",
+      {
+        repair: {
+          description:
+            "Pass repair=true to reconcile drift by re-applying links (dangling targets are reported, not fixed).",
+        },
+      },
+      (params) => this.handleOpLinkCheckCli(params),
+    );
+
+    this.registerCliHandler(
+      "op-migrate-links",
+      "Rewrite legacy parent_issue/subissues to canonical parent/children. Idempotent.",
+      {},
+      (params) => this.handleOpMigrateLinksCli(params),
     );
 
     this.registerCliHandler(
@@ -1014,6 +1107,10 @@ export default class OpPlugin extends Plugin {
       setScope: (entry, scope, options) => setScope(this.app, entry, scope, options),
       setEvaluation: (entry, evaluation) => setEvaluation(this.app, entry, evaluation),
       setFlow: (entry, input) => setFlow(this.app, entry, input),
+      applyLink: (args) => applyLink(this.app, this.store, args),
+      removeLink: (args) => removeLink(this.app, this.store, args),
+      linkCheck: (opts) => linkCheck(this.app, this.store, opts),
+      migrateLinks: () => migrateLinks(this.app, this.store),
     };
   }
 
@@ -1395,6 +1492,112 @@ export default class OpPlugin extends Plugin {
       console.error("[op-obsidian]", command, err);
       await writeUriResponse(this.app, { ok: false, command, error: msg });
       return `${command} failed: ${msg}`;
+    }
+  }
+
+  private async handleOpSetLinkCli(params: Record<string, string>): Promise<string> {
+    const command = "op-set-link";
+    try {
+      const parsed = parseSetLinkParams(params);
+      if (!parsed.ok) return parsed.error;
+      const { srcId, dstId, relation } = parsed.value;
+      const res = await applyLink(this.app, this.store, { srcId, dstId, relation });
+      await writeUriResponse(this.app, { ...res });
+      const cleanedNote =
+        res.cleaned.length > 0 ? ` · cleaned ${res.cleaned.join(", ")}` : "";
+      const changedNote = res.changed ? "linked" : "already linked";
+      return `${command}: ${res.srcId} ${res.relation}=${res.dstId} (${changedNote})${cleanedNote}`;
+    } catch (err: any) {
+      const msg = err?.message ?? String(err);
+      console.error("[op-obsidian]", command, err);
+      await writeUriResponse(this.app, { ok: false, command, error: msg });
+      return `${command} failed: ${msg}`;
+    }
+  }
+
+  private async handleOpRemoveLinkCli(params: Record<string, string>): Promise<string> {
+    const command = "op-remove-link";
+    try {
+      const parsed = parseRemoveLinkParams(params);
+      if (!parsed.ok) return parsed.error;
+      const { srcId, dstId, relation } = parsed.value;
+      const res = await removeLink(this.app, this.store, { srcId, dstId, relation });
+      await writeUriResponse(this.app, { ...res });
+      const changedNote = res.changed ? "removed" : "no-op";
+      return `${command}: ${res.srcId} ${res.relation}=${res.dstId} (${changedNote})`;
+    } catch (err: any) {
+      const msg = err?.message ?? String(err);
+      console.error("[op-obsidian]", command, err);
+      await writeUriResponse(this.app, { ok: false, command, error: msg });
+      return `${command} failed: ${msg}`;
+    }
+  }
+
+  private async handleOpLinkCheckCli(params: Record<string, string>): Promise<string> {
+    const command = "op-link-check";
+    try {
+      const parsed = parseLinkCheckParams(params);
+      if (!parsed.ok) return parsed.error;
+      const res = await linkCheck(this.app, this.store, { repair: parsed.value.repair });
+      await writeUriResponse(this.app, { ...res });
+      const driftCount = res.drift.length;
+      const repairedCount = res.repaired.length;
+      const danglingCount = res.unrepaired.filter(
+        (d) => d.problem === "dangling-target",
+      ).length;
+      const parts = [`scanned ${res.scanned}`, `drift ${driftCount}`];
+      if (parsed.value.repair) parts.push(`repaired ${repairedCount}`);
+      if (danglingCount > 0) parts.push(`dangling ${danglingCount}`);
+      return `${command}: ${parts.join(" · ")}`;
+    } catch (err: any) {
+      const msg = err?.message ?? String(err);
+      console.error("[op-obsidian]", command, err);
+      await writeUriResponse(this.app, { ok: false, command, error: msg });
+      return `${command} failed: ${msg}`;
+    }
+  }
+
+  private async handleOpMigrateLinksCli(_params: Record<string, string>): Promise<string> {
+    const command = "op-migrate-links";
+    try {
+      const res = await migrateLinks(this.app, this.store);
+      await writeUriResponse(this.app, { ...res });
+      return `${command}: scanned ${res.scanned} · rewrote ${res.rewrites.length}`;
+    } catch (err: any) {
+      const msg = err?.message ?? String(err);
+      console.error("[op-obsidian]", command, err);
+      await writeUriResponse(this.app, { ok: false, command, error: msg });
+      return `${command} failed: ${msg}`;
+    }
+  }
+
+  private async runLinkCheckCommand(repair: boolean): Promise<void> {
+    try {
+      const res = await linkCheck(this.app, this.store, { repair });
+      await writeUriResponse(this.app, { ...res });
+      const dangling = res.unrepaired.filter(
+        (d) => d.problem === "dangling-target",
+      ).length;
+      const parts = [`drift ${res.drift.length}`];
+      if (repair) parts.push(`repaired ${res.repaired.length}`);
+      if (dangling > 0) parts.push(`dangling ${dangling}`);
+      new Notice(`op-link-check: scanned ${res.scanned} · ${parts.join(" · ")}`);
+    } catch (err: any) {
+      console.error("[op-obsidian] op-link-check failed", err);
+      new Notice(`op-link-check failed: ${err?.message ?? err}`);
+    }
+  }
+
+  private async runMigrateLinksCommand(): Promise<void> {
+    try {
+      const res = await migrateLinks(this.app, this.store);
+      await writeUriResponse(this.app, { ...res });
+      new Notice(
+        `op-migrate-links: scanned ${res.scanned} · rewrote ${res.rewrites.length}`,
+      );
+    } catch (err: any) {
+      console.error("[op-obsidian] op-migrate-links failed", err);
+      new Notice(`op-migrate-links failed: ${err?.message ?? err}`);
     }
   }
 
