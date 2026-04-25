@@ -235,13 +235,15 @@ a.op-sidebar__agent:hover {
   text-decoration: none;
 }
 
-.op-sidebar__github {
+.op-sidebar__github,
+.op-sidebar__pr {
   color: var(--text-muted);
   text-decoration: none;
   font-variant-numeric: tabular-nums;
 }
 
-.op-sidebar__github:hover {
+.op-sidebar__github:hover,
+.op-sidebar__pr:hover {
   color: var(--text-accent);
   text-decoration: underline;
 }
