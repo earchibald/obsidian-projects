@@ -30,6 +30,7 @@ export type {
   ViewSettings,
   GithubSettings,
   AgentsSettings,
+  DeveloperSettings,
   FlowSettings,
   OpSettings,
 } from "./settingsPure";
@@ -752,6 +753,21 @@ export class OpSettingsTab extends PluginSettingTab {
             s.flow.headlessTimeoutMs = n;
             await this.plugin.saveSettings();
           }
+        }),
+      );
+
+    containerEl.createEl("h2", { text: "Advanced" });
+
+    new Setting(containerEl)
+      .setName("Show developer commands in palette")
+      .setDesc(
+        "Show op-dev:* debugging commands (dump-store, rebuild-store, install-agent-hooks, debug agent launch) in the command palette. Reload the plugin after changing — Obsidian only registers commands at plugin load.",
+      )
+      .addToggle((t) =>
+        t.setValue(s.developer.showDevCommands).onChange(async (v) => {
+          s.developer.showDevCommands = v;
+          await this.plugin.saveSettings();
+          new Notice("Reload the plugin to apply — Settings → Community plugins → op-obsidian → toggle off then on.", 8000);
         }),
       );
   }
