@@ -20,6 +20,10 @@ Full form: `obsidian move path=<src> to=<dst>`.
 
 `obsidian <subcommand> --help` creates `Untitled N.md` — the CLI treats `--help` as content. Use `obsidian help` at the top level only.
 
+## There is no `property:get` — use `property:read`
+
+To read a frontmatter field, use `obsidian property:read name=<key> path=<vault-relative-path>`. Typing `property:get` fails with `Did you mean: property:set, property:read?` — the read verb is `:read`, not `:get`.
+
 ## There is no `property:add` / `property:append`
 
 The CLI exposes only `property:read`, `property:set`, and `property:remove`. To append to a list-valued property (e.g. `commits:`) without the plugin, you have to read → append-in-memory → rewrite:
