@@ -151,6 +151,27 @@ describe("workIssue — agent registration", () => {
     expect(res.registration).toEqual({ agent: "claude", session: "sess-1" });
   });
 
+  it("force=true with agent-only clears the stale session from the previous agent", async () => {
+    // Regression: before the fix, force-taking over with only agent= left the
+    // previous agent's session in fm.agent_session, producing inconsistent
+    // frontmatter like {agent: "claude", agent_session: "codex-sess"}.
+    const { app, store, entry, fm } = makeEnv({
+      status: "in-progress",
+      agent: "codex",
+      agent_session: "codex-sess",
+    });
+    const res = await workIssue(app, store, entry, {
+      agent: "claude",
+      // no agentSession
+      force: true,
+    });
+    expect(res.registered).toBe(true);
+    expect(res.conflict).toBeUndefined();
+    expect(fm.agent).toBe("claude");
+    expect(fm.agent_session).toBeUndefined(); // stale session must be cleared
+    expect(res.registration).toEqual({ agent: "claude" }); // no session
+  });
+
   it("treats different session of same agent as a conflict", async () => {
     const { app, store, entry, fm } = makeEnv({
       status: "in-progress",

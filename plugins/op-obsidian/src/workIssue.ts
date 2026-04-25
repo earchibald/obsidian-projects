@@ -113,6 +113,12 @@ export async function workIssue(
     if (wantSession !== undefined) {
       fm.agent_session = wantSession;
       finalSession = wantSession;
+    } else if (!agentMatches) {
+      // Force-taking over from a different agent without supplying a new session:
+      // clear the stale session that belonged to the previous agent so the issue
+      // doesn't end up with mismatched agent/agent_session fields.
+      delete fm.agent_session;
+      finalSession = undefined;
     }
 
     if (
