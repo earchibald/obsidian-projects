@@ -12,6 +12,11 @@ export interface InjectionSettings {
   includeTasksList: boolean;
   includeRecentCommits: number;
   extraPreamble: string;
+  /** When true and `Projects/<slug>/WORKFLOW.md` exists, the kickoff prompt
+   * inlines that file's content (capped at {@link maxWorkflowChars}) so the
+   * agent can follow the project's SDLC policy without a separate read. */
+  includeWorkflow: boolean;
+  maxWorkflowChars: number;
 }
 
 export type SidebarTab = "issues" | "in-flight" | "resolved";
@@ -77,6 +82,8 @@ export const DEFAULT_SETTINGS: OpSettings = {
     includeTasksList: true,
     includeRecentCommits: 5,
     extraPreamble: "",
+    includeWorkflow: true,
+    maxWorkflowChars: 2000,
   },
   workingDirs: {},
   terminal: "Terminal",

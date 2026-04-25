@@ -7,6 +7,12 @@ description: Run the Obsidian Projects workflow — scaffold new projects, creat
 
 You are operating on an Obsidian vault that uses the **Projects schema** — a Jira-lite issue tracker where each project is a folder under `Projects/` and each issue/task/doc is a markdown note with structured frontmatter. Schema details live in [`reference/schema.md`](reference/schema.md); read it on first use or when frontmatter shape comes up.
 
+## Scope of this skill
+
+This skill manages **vault state and the issue schema** only — folder layout, frontmatter shape, ID numbering, status transitions, atomic resolve, the `op-*` command surface as capabilities. **It does not define a development workflow.** Whether you work straight to main, require PRs, run a multi-stage feature → integration → dev → main pipeline, use git worktrees, bump versions on every issue, or never bump versions at all is the **project's** decision, documented in that project's own `CLAUDE.md` (or equivalent). The skill stays out of the way.
+
+The frontmatter fields `commits:`, `pr:`, `version:`, and `github_issue:` are **optional capabilities** the skill exposes for projects that want them. Whether and when to populate them is project policy. If your project's `CLAUDE.md` says nothing about commit tracking, branching, or release cadence, treat those concerns as out of scope for the skill — do what the project tells you, and if the project says nothing, ask the user rather than inventing a convention.
+
 All vault mutations go through the **`op-obsidian`** plugin. Probe once per session and cache the result:
 
 ```bash
@@ -36,12 +42,6 @@ Whenever you surface a vault path to the user — post-action summaries, the "ma
 
 Example: `obsidian://open?vault=Agent-Vault&file=Projects%2Fobsidian-projects%2FISSUES%2FOP-102%20Update%20agent%20guidance%20…`
 
-## Work in a git worktree for non-trivial issues
-
-Default to an isolated git worktree (`EnterWorktree`, or the `superpowers:using-git-worktrees` skill) for any issue that touches more than a single file or spans more than one trivial edit. Keeping the main checkout clean lets parallel work, PR review, and vault sync coexist without branch-swap churn — and it matters more when you were **delegated** the issue by another agent, because the delegating agent may still be holding the main checkout open.
-
-Skip the worktree only for the simplest issues: a one-line doc tweak, a single-field schema comment, or a typo fix. If in doubt, create the worktree — the cost is low and it's easy to exit cleanly at the end.
-
 ---
 
 ## Plugin commands
@@ -55,6 +55,8 @@ All `op-*` commands take `key=value` arguments (not `--flag`). Each prints a one
 | `op-work` | `issue` | — | sets `status: in-progress`; creates the initial TASKS note |
 | `op-append-commit` | `issue`, `sha`, `subject` | — | idempotent append to issue's `commits:` list |
 | `op-set-pr` | `issue`, `url` | — | sets scalar `pr:` |
+| `op-get-workflow` | `project` | — | reads `Projects/<project>/WORKFLOW.md` (the project's SDLC policy, optional). Returns `{exists, path, content, size}`. Read-only. |
+| `op-edit-workflow` | `project` | — | launches an agent in tmux to interview the user and author/refine `Projects/<project>/WORKFLOW.md`. Window naming `op-workflow-<slug>` keeps it distinct from issue sessions. The session has full edit capability but is bounded to writing the workflow file (no `op-work` / `op-resolve` / version bump). |
 | `op-set-scope` | `issue`, `scope` | `mode=scope\|body` | default `mode=scope` replaces the issue body's `## Scope` section (appends it if missing); payload is markdown without H2 headings. `mode=body` replaces the entire body content after the optional `# Title` heading; payload may include H2s. This is the one mutation the plan-mode agent is allowed, so it can persist a refined plan back to the issue note. |
 | `op-set-link` | `issue`, `relation`, `target` | — | writes both sides of an inter-issue link atomically. Plugin owns the inverse — agents MUST NOT touch link frontmatter directly. Relations: `parent` / `children` (many-to-one), `depends_on` / `depended_on_by` (many-to-many), `related_to` (symmetric). |
 | `op-remove-link` | `issue`, `relation`, `target` | — | removes both sides of a link. Idempotent. |
@@ -108,11 +110,12 @@ Accepts `slug N`, `slug PREFIX-N`, `PREFIX N`, `PREFIX-N`, or just `slug`/`PREFI
 ### Start
 
 1. `obsidian op-work issue=<PREFIX>-<N>`. Emit a one-line ack with the issue's `obsidian://` link so the user can open the note while you write `## Plan`.
-2. If the body is empty or one line, scope is ambiguous — state your interpretation and confirm before implementing, even in auto mode.
-3. Reconcile scope vs. current repo/vault state — skip items already done; flag drift between the schema and observed reality.
-4. **Write the `## Plan` section now** (approach, key decisions, files to touch, risks). Reconcile, don't overwrite: if the section already has user or prior-agent content, extend/refine rather than replace. Replace the italic placeholder if still present.
-5. The plugin creates the first TASKS note for you. For additional logical subtasks, create more TASKS notes (`obsidian create` is fine for these auxiliary notes — they're trashed at resolve).
-6. **Mirror every TASK note into a `## Tasks` checklist in the issue body.** After creating the TASK notes (planned upfront, or fix-up tasks discovered mid-session), append a line to the issue body's `## Tasks` section for each one:
+2. **Check for a project workflow.** Read `Projects/<slug>/WORKFLOW.md` if it exists — that's the project's authoritative SDLC policy (branching, version cadence, PR rules, commit-to-issue mapping). Programmatic access: `obsidian op-get-workflow project=<slug>` returns `{exists, path, content}`. If absent, the project has no opinion — ask the user when policy ambiguity comes up; if the user wants to author one, the **`op: edit project workflow (WORKFLOW.md)`** palette command (or `obsidian op-edit-workflow project=<slug>`) launches an agent dedicated to that. (When you're launched via `op:open-agent`, the kickoff prompt already inlines the workflow text up to a configurable cap; use the CLI when you need the full file or want to verify.)
+3. If the body is empty or one line, scope is ambiguous — state your interpretation and confirm before implementing, even in auto mode.
+4. Reconcile scope vs. current repo/vault state — skip items already done; flag drift between the schema and observed reality.
+5. **Write the `## Plan` section now** (approach, key decisions, files to touch, risks). Reconcile, don't overwrite: if the section already has user or prior-agent content, extend/refine rather than replace. Replace the italic placeholder if still present.
+6. The plugin creates the first TASKS note for you. For additional logical subtasks, create more TASKS notes (`obsidian create` is fine for these auxiliary notes — they're trashed at resolve).
+7. **Mirror every TASK note into a `## Tasks` checklist in the issue body.** After creating the TASK notes (planned upfront, or fix-up tasks discovered mid-session), append a line to the issue body's `## Tasks` section for each one:
 
    ```markdown
    ## Tasks
@@ -123,29 +126,25 @@ Accepts `slug N`, `slug PREFIX-N`, `PREFIX N`, `PREFIX-N`, or just `slug`/`PREFI
    Reconcile rather than overwrite: if the section already exists (prior session, completed task, user-authored entry), preserve existing entries (`- [completed]` / `- [x]`) and append any new tasks not already listed. Mark entries `- [completed]` when the corresponding TASK note flips to `status: completed`. The body checklist is the durable record — TASK notes are trashed at resolve, the issue body isn't.
 
    When a TASK note flips to `status: completed`, also **append a `### <ISSUE-ID>.<N> — <title>` block under `## Notes`** recording what was done and any deviations from the plan. Idempotent: if that block already exists, update it in place rather than duplicating.
-7. Confirm before any action affecting shared systems (push, release, deploy, external API).
+8. Confirm before any action affecting shared systems (push, release, deploy, external API).
 
 **Reconcile rule for legacy issues.** If the issue body is missing any of `## Plan`, `## Notes`, or `## Summary`, insert the missing sections in canonical order (`Scope → Plan → Tasks → Notes → Summary`) before writing. Never modify user-authored prose in other sections.
 
-### Track refs as work lands
+### Tracking refs (capabilities, not policy)
 
-After each commit on this issue:
+The plugin exposes two capabilities for recording git artifacts on an issue:
 
 ```bash
-sha=$(git rev-parse --short=7 HEAD)
-sub=$(git log -1 --pretty=%s)
-obsidian op-append-commit issue=<PREFIX>-<N> sha="$sha" subject="$sub"
+# Append a commit ref (idempotent; safe to call repeatedly)
+obsidian op-append-commit issue=<PREFIX>-<N> sha=<sha7> subject=<subject>
+
+# Set the PR URL on an issue
+obsidian op-set-pr issue=<PREFIX>-<N> url=<pr-url>
 ```
 
-When a PR opens: `obsidian op-set-pr issue=<PREFIX>-<N> url=<pr-url>`.
+**When and whether to call these is project policy** — the project's `CLAUDE.md` decides whether `commits:` is mirrored 1:1 to commits, batch-filled at resolve, or never populated at all; whether PRs are required or skipped; whether commit subjects must reference the issue id. If the project says nothing, ask the user rather than inventing a cadence.
 
-Skip both for meta-only projects with no git repo.
-
-**If something fails, do this:**
-
-- `git rev-parse` / `git log` errors (not a repo, detached state, empty history) → note the failure once, skip the append for that commit, and continue with the work. Do **not** retry in a loop, and do **not** synthesize a sha. Surface the skipped commits in the resolve-time back-fill step instead.
-- Missing or unknown issue id (the caller didn't pass one, or the id doesn't resolve to a file) → stop and ask the user for the `<PREFIX>-<N>`. Never append to a guessed issue — the `commits:` trail is a permanent record and wrong attribution is worse than a missing entry.
-- `obsidian op-append-commit` returns an error (vault unreachable, plugin disabled, issue file moved mid-session) → re-probe the plugin (`app.plugins.enabledPlugins.has("op-obsidian")`) and re-resolve the issue path. If it still fails, record the `<sha7> <subject>` pair in the session (or a scratch note) and batch-append at resolve time; don't block the commit cadence on vault health.
+For diagnostic detail on what to do when these calls fail (git not a repo, missing id, plugin unreachable mid-session), see [`reference/cli-gotchas.md`](reference/cli-gotchas.md).
 
 ### Linking issues
 
@@ -180,22 +179,6 @@ When you discover a parent/child relationship mid-session, set the link with `op
 
 If the issue has a `github_issue:` frontmatter field, it mirrors a GitHub issue. The URL may have been populated automatically at `op-new` time (when `autoCreateGithubIssue` is on) or set later via the plugin's "Set GitHub issue URL" command. While working, treat it as a one-way mirror: you may comment on, label, or reference the GH issue, but do **not** close it manually — the plugin closes it atomically during `op-resolve` (see below). If the user asks "is the GitHub issue still open?", check live state with `gh issue view <url>` rather than inferring from the op status.
 
-### Semver bumping (at resolve time)
-
-Every issue that ships code bumps the project's version file — one bump per issue, recorded as `version:` on the issue.
-
-**Files** (bump in lockstep if multiple ship):
-- `<repo>/plugins/<name>/.claude-plugin/plugin.json` (Claude Code plugins)
-- `<repo>/manifest.json` (Obsidian community plugins)
-- `<repo>/package.json` (node packages)
-
-**Classify**:
-- **patch** — docs, bug fixes, internal refactors, schema clarifications.
-- **minor** — new user-facing behavior (new verb, new slash command, new optional field, additive arg).
-- **major** — breaking change (removed/renamed field, removed verb, schema migration). Confirm before bumping major.
-
-Pre-`1.0.0` projects MAY treat breakage as minor; prefer explicit major once the schema stabilizes. Skip entirely for meta-only projects with no version file.
-
 ---
 
 ## Verb: resolve
@@ -208,11 +191,11 @@ Pre-`1.0.0` projects MAY treat breakage as minor; prefer explicit major once the
 
    - Frontmatter: `status` → `resolved` (or `wontfix`), `resolved` → `<today>`
    - TASKS to trash (list each path)
-   - `commits:` status: "set" / "empty — will back-fill from git log" / "empty — skipping (no repo)"
-   - Version bump: "`<file>`: `<old>` → `<new>` (`patch`/`minor`/`major`)" — or "skipping (no version file)"
+   - `commits:` status: "set" / "empty" — surface either as a fact; whether to back-fill is the project's call
+   - Any project-specific resolve actions (release, version bump, deploy) — only if the project's policy calls for them; otherwise omit
    - GitHub issue: if `github_issue:` is set and `closeGithubIssueOnResolve` is on, note that the plugin will run `gh issue close` on the URL as part of `op-resolve` — do **not** close it yourself beforehand
-3. **Back-fill `commits:` if empty.** Scan `git log` for commits referencing the issue id since the last resolved-issue date; append each via `obsidian op-append-commit`.
-4. **Bump the version file**, commit it (with the issue id in the subject), append that commit via `op-append-commit`, then `obsidian property:set name=version value=<new> path="<issue-path>"`. Skip for meta-only projects.
+3. **`commits:` back-fill is optional and project-driven.** If the project's policy is to record shipped commits on the issue and `commits:` is empty, offer to back-fill from `git log` (referencing the issue id) via `op-append-commit`. If the project doesn't track commits this way — or doesn't have a code repo — skip this step.
+4. **Project-specific release/version steps run here, if the project has any.** If the project's policy ties resolve to a release or version bump, follow the project's `CLAUDE.md` (or equivalent) for the procedure. The schema reserves `version:` on the issue for recording the release identifier shipped, but *when* and *how* to set it is the project's call. Meta-only projects with no release artifact skip this step entirely.
 5. `obsidian op-resolve issue=<PREFIX>-<N>` (or `status=wontfix`). The plugin moves the file, sets `status` and `resolved:`, and trashes linked TASKS atomically. If the issue has a `github_issue:` URL and `closeGithubIssueOnResolve` is on, the plugin also runs `gh issue close` on it — check `githubClosed` / `githubCloseError` in the JSON response. **DOCS are never touched.**
 6. Report: external changes (URLs, commands run, including the linked GH issue if it was auto-closed), vault changes (paths from the JSON response — include the `obsidian://` link for the **post-move** `RESOLVED ISSUES/…` path so the user can open the resolved note directly), and any manual follow-ups (e.g. retrying `gh issue close` manually if `githubCloseError` is set).
 

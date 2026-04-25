@@ -15,6 +15,7 @@ import type { SetSectionResult } from "./setSection";
 import type { SetFlowResult, Flow, Complexity } from "./setFlow";
 import type { ResolveArgs, ResolveStatus } from "./resolve";
 import type { ApplyLinkResult, LinkCheckResult, MigrateLinksResult } from "./links";
+import type { GetWorkflowResult } from "./workflow";
 
 export interface UriHandlerDeps {
   store: { issues(): IssueEntry[] };
@@ -49,6 +50,7 @@ export interface UriHandlerDeps {
   }) => Promise<ApplyLinkResult>;
   linkCheck?: (opts: { repair?: boolean }) => Promise<LinkCheckResult>;
   migrateLinks?: () => Promise<MigrateLinksResult>;
+  getWorkflow?: (project: string) => Promise<GetWorkflowResult>;
 }
 
 export function findIssueById(store: { issues(): IssueEntry[] }, id: string): IssueEntry {
@@ -249,6 +251,25 @@ export async function handleOpMigrateLinksUri(
   if (!deps.migrateLinks) throw new Error("op-migrate-links not wired");
   const res = await deps.migrateLinks();
   return { ...res };
+}
+
+export async function handleOpGetWorkflowUri(
+  deps: UriHandlerDeps,
+  params: Record<string, string>,
+): Promise<UriResponsePayload> {
+  if (!deps.getWorkflow) throw new Error("op-get-workflow not wired");
+  const project = params.project ?? params.slug;
+  if (!project) throw new Error("op-get-workflow URI requires project");
+  const res = await deps.getWorkflow(project);
+  return {
+    ok: true,
+    command: "op-get-workflow",
+    project: res.project,
+    path: res.path,
+    exists: res.exists,
+    content: res.content,
+    size: res.size,
+  };
 }
 
 export async function handleOpSetSectionUri(
