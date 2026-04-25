@@ -1362,8 +1362,21 @@ export default class OpPlugin extends Plugin {
         scope,
         scopeBody,
       });
+      // Persist the scratch payload + return the stdout one-liner BEFORE
+      // kicking off `gh issue create`. The gh call takes ~5s, which blew past
+      // the obsidian-cli stdout-bridge wait window (OP-137, same shape as
+      // OP-121). `autoCreateGithubIssueFor` writes the resulting URL to the
+      // issue's `github_issue:` frontmatter via `setGithubIssue` once gh
+      // returns, so async URL landing is preserved — callers needing the URL
+      // synchronously must re-read the issue file after a short delay.
+      await writeUriResponse(this.app, {
+        ok: true,
+        command,
+        issueId: res.id,
+        path: res.path,
+      });
       if (this.settings.github.autoCreateGithubIssue) {
-        await this.autoCreateGithubIssueFor(res.path, res.id, {
+        void this.autoCreateGithubIssueFor(res.path, res.id, {
           slug,
           title,
           priority,
@@ -1373,12 +1386,6 @@ export default class OpPlugin extends Plugin {
           (err) => console.error("[op-obsidian] cli auto-create github issue failed", err),
         );
       }
-      await writeUriResponse(this.app, {
-        ok: true,
-        command,
-        issueId: res.id,
-        path: res.path,
-      });
       return `${command}: created ${res.id} at ${res.path}`;
     } catch (err: any) {
       const msg = err?.message ?? String(err);
@@ -2101,8 +2108,13 @@ export default class OpPlugin extends Plugin {
       githubIssue,
     });
     new Notice(`Created ${res.id}`);
+    const file = this.app.vault.getAbstractFileByPath(res.path);
+    if (file instanceof TFile) {
+      await this.app.workspace.getLeaf(false).openFile(file);
+    }
+    // Fire-and-forget gh create — see OP-137 / handleOpNewCli for context.
     if (!githubIssue && this.settings.github.autoCreateGithubIssue) {
-      await this.autoCreateGithubIssueFor(res.path, res.id, {
+      void this.autoCreateGithubIssueFor(res.path, res.id, {
         slug,
         title,
         priority,
@@ -2111,10 +2123,6 @@ export default class OpPlugin extends Plugin {
       }).catch(
         (err) => console.error("[op-obsidian] uri auto-create failed", err),
       );
-    }
-    const file = this.app.vault.getAbstractFileByPath(res.path);
-    if (file instanceof TFile) {
-      await this.app.workspace.getLeaf(false).openFile(file);
     }
   }
 }
