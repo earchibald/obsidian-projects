@@ -92,6 +92,7 @@ import { showActionableNotice } from "./actionableNotices";
 import { probeLiveTmuxWindows, selectStaleAgentBadges } from "./staleAgentBadges";
 import { openErrorLog, writeErrorLog } from "./errorLog";
 import { configureClient } from "./iterm/client";
+import { closeWindow as itermCloseWindow } from "./iterm/driver";
 import { closeTransport } from "./iterm/connection";
 import { existsSync } from "fs";
 
@@ -894,8 +895,9 @@ export default class OpPlugin extends Plugin {
         tmuxBinary: this.settings.tmuxBinary,
         reg: this.settings.orchestratorState,
         issueIds,
+        closeITermWindow: (windowId) => itermCloseWindow(windowId),
       });
-      if (res.killed.length || res.prunedSurfaces.length) {
+      if (res.killed.length || res.prunedSurfaces.length || res.closedWindows.length) {
         console.debug("[op-obsidian] cleaned up agent state", res);
         await this.saveSettings();
       }

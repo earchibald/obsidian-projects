@@ -181,6 +181,35 @@ export async function selectSession(sessionId: string): Promise<void> {
   }
 }
 
+// Close an iTerm window by id. force=true bypasses the "process still running"
+// confirmation iTerm normally shows — needed because the window's PTYs are
+// still attached to the dead view scripts. NOT_FOUND is treated as success
+// (the window is already gone, which is the intended end state).
+// USER_DECLINED should not occur with force=true, but some iTerm builds or
+// misconfigured prefs may ignore the force flag. We treat USER_DECLINED as
+// non-fatal rather than surfacing a warning on every cleanup in those
+// environments — the window stays open, the registry still drops it, and the
+// next agent launch will allocate a fresh surface.
+export async function closeWindow(windowId: string): Promise<void> {
+  const reply = await call({
+    closeRequest: iterm2.CloseRequest.create({
+      windows: iterm2.CloseRequest.CloseWindows.create({ windowIds: [windowId] }),
+      force: true,
+    }),
+  });
+  const sub = reply.closeResponse;
+  if (!sub) throw new Error("op: iTerm closeWindow: missing closeResponse");
+  for (const status of sub.statuses ?? []) {
+    if (
+      status !== iterm2.CloseResponse.Status.OK &&
+      status !== iterm2.CloseResponse.Status.NOT_FOUND &&
+      status !== iterm2.CloseResponse.Status.USER_DECLINED
+    ) {
+      throw new Error(`op: iTerm closeWindow(${windowId}) failed with status=${status}`);
+    }
+  }
+}
+
 export async function sessionExists(sessionId: string): Promise<boolean> {
   const reply = await call({
     listSessionsRequest: iterm2.ListSessionsRequest.create({}),

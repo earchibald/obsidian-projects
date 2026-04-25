@@ -68,11 +68,18 @@ export interface CleanupArgs {
   tmuxBinary: string;
   reg: RegistryData;
   issueIds: string[];
+  // Best-effort closer for an iTerm window when its last cell is freed.
+  // Optional so unit tests and non-iTerm code paths can opt out — when
+  // omitted, empty windows are still removed from the registry but the
+  // physical iTerm window is left alone.
+  closeITermWindow?: (windowId: string) => Promise<void>;
 }
 
 export interface CleanupResult {
   killed: Array<{ issueId: string; session: string; window: string }>;
   prunedSurfaces: string[];
+  // iTerm windowIds that were emptied by this cleanup and (best-effort) closed.
+  closedWindows: string[];
 }
 
 // Kill every tmux window whose name derives from one of the given issueIds,
@@ -94,5 +101,35 @@ export async function cleanupAgentSessions(args: CleanupArgs): Promise<CleanupRe
     const { removed } = pruneRegistryForIssue(args.reg, issueId);
     prunedSurfaces.push(...Object.keys(removed));
   }
-  return { killed, prunedSurfaces };
+
+  // Any window whose last cell was just freed becomes an orphan: its tmux
+  // session died with its last window, leaving iTerm panes attached to a dead
+  // session. Close the iTerm window so the user doesn't see clutter, then
+  // drop the WindowState so the next launch isn't tempted to reuse the dead
+  // surface. OP-110.
+  const closedWindows: string[] = [];
+  const emptyWindowIds = Object.values(args.reg.windows)
+    .filter((w) => w.sessionIds.every((s) => !s))
+    .map((w) => w.windowId);
+  for (const windowId of emptyWindowIds) {
+    if (args.closeITermWindow) {
+      try {
+        await args.closeITermWindow(windowId);
+        closedWindows.push(windowId);
+      } catch (err) {
+        console.warn(
+          `[op-obsidian] closeITermWindow best-effort failed (window=${windowId}): ${
+            err instanceof Error ? err.message.split("\n")[0] : String(err)
+          }`,
+        );
+      }
+    }
+    delete args.reg.windows[windowId];
+    args.reg.windowOrder = args.reg.windowOrder.filter((id) => id !== windowId);
+    for (const [issueId, ref] of Object.entries(args.reg.surfaces)) {
+      if (ref.windowId === windowId) delete args.reg.surfaces[issueId];
+    }
+  }
+
+  return { killed, prunedSurfaces, closedWindows };
 }
