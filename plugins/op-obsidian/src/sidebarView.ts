@@ -1,4 +1,4 @@
-import { ItemView, TFile, WorkspaceLeaf } from "obsidian";
+import { ItemView, setTooltip, TFile, WorkspaceLeaf } from "obsidian";
 import type { IssueStore } from "./issueStore";
 import type { EventBus } from "./eventBus";
 import type { IssueEntry, LifecycleEvent } from "./types";
@@ -112,7 +112,7 @@ export class OpSidebarView extends ItemView {
         text: linkText,
       });
       link.setAttr("href", "#");
-      link.setTooltip(linkText, { delay: 250 });
+      setTooltip(link, linkText, { delay: 250 });
       link.addEventListener("click", (ev) => {
         ev.preventDefault();
         void this.openEntry(e);
