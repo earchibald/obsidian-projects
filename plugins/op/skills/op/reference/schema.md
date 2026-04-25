@@ -43,6 +43,8 @@ commits:                 # optional; short-sha + subject, appended during work
   - <sha7> <subject>
 pr:                      # optional; PR or MR URL if one exists
 github_issue:            # optional; direct mapping to a GitHub issue URL
+agent:                   # optional; agent runtime currently working the issue (e.g. claude, codex, gemini, copilot)
+agent_session:           # optional; opaque per-session id paired with `agent:` — used by op-work for conflict detection
 version:                 # optional; semver string of the release that shipped this issue, set at resolve
 flow:                    # optional; current stage of the multi-mode workflow (evaluate → planning → implementation → review → finalization → done)
 complexity:              # optional; simple | complex — simple issues may skip evaluate/review modes
@@ -73,6 +75,8 @@ Why: keeps the project key visible in file lists and makes wikilinks from TASKS 
 **Git refs.** `commits:` and `pr:` are the canonical trail of *what shipped* for the issue. They live on the issue (not on TASKS) because TASKS are trashed on resolve; the issue and its refs persist in `RESOLVED ISSUES/` forever. Both fields are optional — meta-only projects without a code repo leave them unset.
 
 **GitHub issue mapping.** `github_issue:` is an optional URL pointing at a GitHub issue that mirrors this op issue. Set manually via the plugin's "Set GitHub issue URL" command, auto-populated at creation time when the `autoCreateGithubIssue` plugin setting is on (runs `gh issue create` in the project's repo), or passed in at creation. When `closeGithubIssueOnResolve` is on, resolving the op issue runs `gh issue close` on the linked URL.
+
+**Agent registration.** `agent:` records the runtime currently working the issue (`claude`, `codex`, `gemini`, `copilot`, …); `agent_session:` is an opaque per-session id the agent passes to `op-work` (e.g. `$CLAUDE_SESSION_ID`). Both are written by `obsidian op-work agent=<id> agent_session=<sid>` and act as a soft lock — if another agent or session is already registered, `op-work` returns a `conflict` in its JSON payload and refuses to overwrite unless `force=true`. Skill agents must surface a conflict to the user rather than auto-forcing. The fields are also written by the plugin's `op:open-agent` UI when launching, and cleared by `op-resolve`.
 
 **Version.** `version:` is **optional**. It records the release identifier (e.g. `0.1.7`) that shipped this issue, when the project tracks releases on issues. *When* and *how* to set it — patch/minor/major classification, lockstep across multiple version files, whether to bump per issue at all — is owned by the project, not by this skill. See the project's own `CLAUDE.md` (or equivalent) for the policy. Meta-only projects without a release artifact leave the field unset.
 

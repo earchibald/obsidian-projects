@@ -69,6 +69,7 @@ export async function runResolve(
     fm.status = targetStatus;
     fm.resolved = today;
     delete fm.agent;
+    delete fm.agent_session;
   });
 
   await app.fileManager.renameFile(file, targetPath);

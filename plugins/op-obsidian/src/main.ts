@@ -17,7 +17,7 @@ import {
   SetPrModal,
 } from "./modals";
 import { scaffoldProject, type ScaffoldProjectResult } from "./scaffoldProject";
-import { workIssue } from "./workIssue";
+import { workIssue, type WorkIssueResult } from "./workIssue";
 import { appendCommit, setPr } from "./commits";
 import { getWorkflow } from "./workflow";
 import { setScope } from "./setScope";
@@ -1178,7 +1178,7 @@ export default class OpPlugin extends Plugin {
   private uriDeps(): UriHandlerDeps {
     return {
       store: this.store,
-      workIssue: (entry) => workIssue(this.app, this.store, entry),
+      workIssue: (entry, args) => workIssue(this.app, this.store, entry, args),
       appendCommit: (entry, input) => appendCommit(this.app, entry, input),
       setPr: (entry, url) => setPr(this.app, entry, url),
       setScope: (entry, scope, options) => setScope(this.app, entry, scope, options),
@@ -1454,7 +1454,11 @@ export default class OpPlugin extends Plugin {
       const parsed = parseWorkParams(params);
       if (!parsed.ok) return parsed.error;
       const entry = this.resolveByIdOrThrow(parsed.value.id);
-      const res = await workIssue(this.app, this.store, entry);
+      const res = await workIssue(this.app, this.store, entry, {
+        agent: parsed.value.agent,
+        agentSession: parsed.value.agentSession,
+        force: parsed.value.force,
+      });
       await writeUriResponse(this.app, {
         ok: true,
         command,
@@ -1462,9 +1466,14 @@ export default class OpPlugin extends Plugin {
         path: res.path,
         previousStatus: res.previousStatus,
         createdTaskPath: res.createdTaskPath,
+        registered: res.registered,
+        registration: res.registration,
+        alreadyHeld: res.alreadyHeld,
+        conflict: res.conflict,
       });
       const extra = res.createdTaskPath ? ` · created ${res.createdTaskPath.split("/").pop()}` : "";
-      return `${command}: ${res.issueId} → in-progress${extra}`;
+      const regNote = formatRegistrationNote(res);
+      return `${command}: ${res.issueId} → in-progress${extra}${regNote}`;
     } catch (err: any) {
       const msg = err?.message ?? String(err);
       console.error("[op-obsidian]", command, err);
@@ -2300,6 +2309,18 @@ export default class OpPlugin extends Plugin {
       );
     }
   }
+}
+
+function formatRegistrationNote(res: WorkIssueResult): string {
+  if (res.conflict) {
+    const parts: string[] = [];
+    if (res.conflict.agent) parts.push(`agent=${res.conflict.agent}`);
+    if (res.conflict.session) parts.push(`session=${res.conflict.session}`);
+    return ` · registration conflict (${parts.join(", ")}; pass force=true to override)`;
+  }
+  if (res.alreadyHeld) return " · registration unchanged";
+  if (res.registration) return ` · registered as ${res.registration.agent}`;
+  return "";
 }
 
 function defaultBinaryFor(id: AgentId): string {

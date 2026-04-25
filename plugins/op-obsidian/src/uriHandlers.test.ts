@@ -30,11 +30,13 @@ function makeDeps(overrides: Partial<UriHandlerDeps> = {}): UriHandlerDeps {
   const store = { issues: () => [entry] };
   return {
     store,
-    workIssue: async (e) => ({
+    workIssue: async (e, args) => ({
       issueId: e.id,
       path: e.path,
       previousStatus: "open",
       createdTaskPath: "Projects/x/TASKS/OP-1.1 t.md",
+      registered: true,
+      ...(args?.agent ? { registration: { agent: args.agent } } : {}),
     }),
     appendCommit: async (e, input) => ({
       issueId: e.id,

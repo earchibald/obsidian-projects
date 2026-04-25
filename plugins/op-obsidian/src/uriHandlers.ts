@@ -6,7 +6,7 @@
 
 import type { IssueEntry } from "./types";
 import type { UriResponsePayload } from "./uriResponse";
-import type { WorkIssueResult } from "./workIssue";
+import type { WorkIssueArgs, WorkIssueResult } from "./workIssue";
 import type { AppendCommitResult } from "./commits";
 import type { SetPrResult } from "./commits";
 import type { SetScopeResult } from "./setScope";
@@ -19,7 +19,7 @@ import type { GetWorkflowResult } from "./workflow";
 
 export interface UriHandlerDeps {
   store: { issues(): IssueEntry[] };
-  workIssue: (entry: IssueEntry) => Promise<WorkIssueResult>;
+  workIssue: (entry: IssueEntry, args?: WorkIssueArgs) => Promise<WorkIssueResult>;
   appendCommit: (entry: IssueEntry, input: { sha: string; subject: string }) => Promise<AppendCommitResult>;
   setPr: (entry: IssueEntry, url: string) => Promise<SetPrResult>;
   setScope: (
@@ -81,7 +81,8 @@ export async function handleOpWorkUri(
   const id = params.id ?? params.issue;
   if (!id) throw new Error("op-work URI requires id");
   const entry = findIssueById(deps.store, id);
-  const res = await deps.workIssue(entry);
+  const args = parseWorkArgsFromUri(params);
+  const res = await deps.workIssue(entry, args);
   return {
     ok: true,
     command: "op-work",
@@ -89,7 +90,27 @@ export async function handleOpWorkUri(
     path: res.path,
     previousStatus: res.previousStatus,
     createdTaskPath: res.createdTaskPath,
+    registered: res.registered,
+    registration: res.registration,
+    alreadyHeld: res.alreadyHeld,
+    conflict: res.conflict,
   };
+}
+
+function parseWorkArgsFromUri(params: Record<string, string>): WorkIssueArgs {
+  const out: WorkIssueArgs = {};
+  const agent = trimOrUndef(params.agent);
+  const session = trimOrUndef(params.agent_session ?? params.session);
+  if (agent) out.agent = agent;
+  if (session) out.agentSession = session;
+  if (params.force === "1" || params.force === "true") out.force = true;
+  return out;
+}
+
+function trimOrUndef(v: unknown): string | undefined {
+  if (typeof v !== "string") return undefined;
+  const t = v.trim();
+  return t.length > 0 ? t : undefined;
 }
 
 export async function handleOpAppendCommitUri(
