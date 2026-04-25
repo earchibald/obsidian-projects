@@ -1,7 +1,8 @@
-import { App, ItemView, Modal, TFile, WorkspaceLeaf, prepareFuzzySearch, setIcon, setTooltip } from "obsidian";
+import { App, ItemView, Menu, Modal, TFile, WorkspaceLeaf, prepareFuzzySearch, setIcon, setTooltip } from "obsidian";
 import type { IssueStore } from "./issueStore";
 import type { EventBus } from "./eventBus";
 import type { IssueEntry, LifecycleEvent } from "./types";
+import type { ResolveStatus } from "./resolve";
 import type { SidebarDensity, ViewSettings } from "./settings";
 import type { AgentLaunchMode } from "./agentProfiles";
 import type { RecencyEntry } from "./recencyLog";
@@ -47,9 +48,24 @@ export interface OpSidebarHooks {
   recordRecency: (issueId: string) => Promise<void>;
   executeResumeLast: () => void;
   /** Trigger the same code path as `op-resolve` (Notice + post-move chip
-   * included). Called from the `r` keyboard shortcut after the user confirms
-   * via {@link OpResolveConfirmModal}. Optional so tests can omit it. */
-  resolveIssue?: (entry: IssueEntry) => void | Promise<void>;
+   * included). Called from the `r` keyboard shortcut and the row context
+   * menu. The optional `status` selects between the default `resolved` and
+   * `wontfix` — both flow through `runResolve`'s confirmation modal, so the
+   * caller never bypasses confirmation. Optional so tests can omit it. */
+  resolveIssue?: (entry: IssueEntry, status?: ResolveStatus) => void | Promise<void>;
+  /** Reopen a resolved/wontfix issue. The backing `op-reopen-issue` command
+   * does not exist yet — main.ts leaves this `undefined` so the contextmenu
+   * builder omits the item. A future PR wires the command and lights it up
+   * automatically. */
+  reopenIssue?: (entry: IssueEntry) => void | Promise<void>;
+  /** Detach an attached agent from a row (kill its tmux window, clear
+   * `agent:`). Backed by §5's pending `op: detach agent` command — left
+   * `undefined` until that lands. */
+  detachAgent?: (entry: IssueEntry) => void | Promise<void>;
+  /** Open the row's `github_issue:` URL in the system browser. Wired through
+   * a hook (rather than touching `window` directly) so the sidebar stays
+   * testable and the menu builder stays pure. */
+  openGithubIssue?: (entry: IssueEntry) => void;
 }
 
 export class OpSidebarView extends ItemView {
@@ -289,6 +305,13 @@ export class OpSidebarView extends ItemView {
       const headerRow = li.createDiv({ cls: "op-sidebar__row" });
       if (idx === this.selectedIndex) headerRow.addClass("is-selected");
       this.rowEls.push(headerRow);
+      const ctxItemIndex = idx;
+      headerRow.addEventListener("contextmenu", (ev) => {
+        ev.preventDefault();
+        ev.stopPropagation();
+        this.setSelectedIndex(ctxItemIndex, { scroll: false });
+        this.openRowContextMenu(e, ev);
+      });
       const linkText = `${e.id} · ${stripIdPrefix(e.title, e.id)}`;
       const link = headerRow.createEl("a", {
         cls: "op-sidebar__link",
@@ -689,6 +712,30 @@ export class OpSidebarView extends ItemView {
       this.hoverTimer = undefined;
     }
   }
+
+  /**
+   * Build and show the right-click context menu for a sidebar row. The menu
+   * dispatches existing flows (each one opens its own confirmation modal where
+   * destructive); the menu itself never bypasses confirmation. Item visibility
+   * is decided by {@link buildSidebarMenuItems} so the conditional matrix is
+   * unit-testable without an Obsidian DOM.
+   */
+  private openRowContextMenu(entry: IssueEntry, ev: MouseEvent): void {
+    if (!this.hooks) return;
+    const items = buildSidebarMenuItems(entry, this.hooks);
+    if (items.length === 0) return;
+    const menu = new Menu();
+    for (const item of items) {
+      menu.addItem((mi) => {
+        mi.setTitle(item.title);
+        if (item.icon) mi.setIcon(item.icon);
+        mi.onClick(() => {
+          void item.run();
+        });
+      });
+    }
+    menu.showAtMouseEvent(ev);
+  }
 }
 
 /**
@@ -777,6 +824,90 @@ export function decideKeyAction(
   if (key === "r" && plain) return "resolve";
 
   return "ignore";
+}
+
+/**
+ * One menu item the sidebar's right-click handler should add. `run` is the
+ * async dispatch the menu fires when the user clicks; `icon` is an Obsidian
+ * lucide icon name (optional). Plain data so the conditional matrix can be
+ * unit-tested without an Obsidian Menu DOM.
+ */
+export interface SidebarMenuItem {
+  /** Stable key for tests — independent of the visible `title`. */
+  key:
+    | "resolve"
+    | "resolve-wontfix"
+    | "reopen"
+    | "detach-agent"
+    | "open-github-issue";
+  title: string;
+  icon?: string;
+  run: () => void | Promise<void>;
+}
+
+/**
+ * Build the ordered list of right-click menu items for a sidebar row. Each
+ * item is conditional on (a) the row's current state — e.g. no `Reopen` on an
+ * open issue, no `Open GitHub issue` when the row has no `github_issue:` —
+ * and (b) whether the matching hook is wired. `reopenIssue` and `detachAgent`
+ * are wired only when their backing commands exist (a future PR for reopen;
+ * §5 for detach agent), so today those items naturally drop off the menu.
+ */
+export function buildSidebarMenuItems(
+  entry: IssueEntry,
+  hooks: OpSidebarHooks,
+): SidebarMenuItem[] {
+  const items: SidebarMenuItem[] = [];
+  const isResolved =
+    entry.resolvedFolder || entry.status === "resolved" || entry.status === "wontfix";
+
+  if (!isResolved && hooks.resolveIssue) {
+    const resolve = hooks.resolveIssue;
+    items.push({
+      key: "resolve",
+      title: "Resolve…",
+      icon: "check-circle",
+      run: () => resolve(entry, "resolved"),
+    });
+    items.push({
+      key: "resolve-wontfix",
+      title: "Resolve as wontfix…",
+      icon: "x-circle",
+      run: () => resolve(entry, "wontfix"),
+    });
+  }
+
+  if (isResolved && hooks.reopenIssue) {
+    const reopen = hooks.reopenIssue;
+    items.push({
+      key: "reopen",
+      title: "Reopen",
+      icon: "rotate-ccw",
+      run: () => reopen(entry),
+    });
+  }
+
+  if (entry.agent && hooks.detachAgent) {
+    const detach = hooks.detachAgent;
+    items.push({
+      key: "detach-agent",
+      title: "Detach agent",
+      icon: "unplug",
+      run: () => detach(entry),
+    });
+  }
+
+  if (entry.githubIssue && hooks.openGithubIssue) {
+    const open = hooks.openGithubIssue;
+    items.push({
+      key: "open-github-issue",
+      title: "Open GitHub issue",
+      icon: "external-link",
+      run: () => open(entry),
+    });
+  }
+
+  return items;
 }
 
 /**

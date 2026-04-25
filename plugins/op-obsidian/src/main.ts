@@ -336,7 +336,11 @@ export default class OpPlugin extends Plugin {
             tmuxSessions: () => tmuxSessionsForCleanup(this.settings.orchestratorState),
             recordRecency: (id) => this.recordRecency(id),
             executeResumeLast: () => void this.runResumeLastCommand(),
-            resolveIssue: (entry) => this.runResolveCommand({ path: entry.path }),
+            resolveIssue: (entry, status) =>
+              this.runResolveCommand({ path: entry.path, status }),
+            openGithubIssue: (entry) => {
+              if (entry.githubIssue) window.open(entry.githubIssue, "_blank");
+            },
           },
           async (entry) => {
             const loc = await findAgentTmuxLocation(this.settings, entry.id);
