@@ -44,6 +44,9 @@ github_issue:            # optional; direct mapping to a GitHub issue URL
 version:                 # optional; semver string of the release that shipped this issue, set at resolve
 flow:                    # optional; current stage of the multi-mode workflow (evaluate → planning → implementation → review → finalization → done)
 complexity:              # optional; simple | complex — simple issues may skip evaluate/review modes
+parent_issue:            # optional, interim; <PARENT-ID> when this issue is a child of a tracking umbrella (see "Tracking-umbrella linking")
+subissues:               # optional, interim; list of child <ISSUE-ID>s when this issue is itself a tracking umbrella
+  - <ISSUE-ID>
 tags:
   - project/<slug>
   - issue
@@ -62,6 +65,8 @@ Why: keeps the project key visible in file lists and makes wikilinks from TASKS 
 **GitHub issue mapping.** `github_issue:` is an optional URL pointing at a GitHub issue that mirrors this op issue. Set manually via the plugin's "Set GitHub issue URL" command, auto-populated at creation time when the `autoCreateGithubIssue` plugin setting is on (runs `gh issue create` in the project's repo), or passed in at creation. When `closeGithubIssueOnResolve` is on, resolving the op issue runs `gh issue close` on the linked URL.
 
 **Version.** `version:` records the semver release that shipped the issue (e.g. `0.1.7`). Set at resolve time, in the same commit that bumps the project's version file (`plugin.json` / `manifest.json` / `package.json`). One bump per issue; classify as patch (fixes, docs, internal), minor (new user-facing behavior, additive schema), or major (breaking schema change). See the `op` skill's "Semver bumping" section for the full rules. Optional — meta-only projects without a version file leave it unset.
+
+**Tracking-umbrella linking (interim).** `parent_issue:` and `subissues:` are interim linking fields for the case where an umbrella issue is too large to ship as one PR and gets split into children. The umbrella lists its children in `subissues:`; each child carries `parent_issue: <UMBRELLA-ID>`. They are unenforced by tooling — purely for human/agent navigation between related issues. Treat them as a stopgap pending a first-class tracking concept; revisit and migrate once that feature lands. Originated with OP-92's split into OP-95/97/98/99/100.
 
 ---
 
