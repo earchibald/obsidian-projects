@@ -58,6 +58,16 @@ describe("buildPrepScript", () => {
   });
 });
 
+describe("tmuxWindowName for entry-less launches", () => {
+  it("sanitizes the workflow window form `op:workflow:<slug>` to dashes", () => {
+    expect(tmuxWindowName("op:workflow:my-project")).toBe("op-workflow-my-project");
+  });
+
+  it("keeps the dash form `op-workflow-<slug>` intact", () => {
+    expect(tmuxWindowName("op-workflow-my-project")).toBe("op-workflow-my-project");
+  });
+});
+
 describe("buildITermOsascript", () => {
   it("new-window variant always creates a new window and attaches via -CC", () => {
     const out = buildITermOsascript("new-window", "op-agents");

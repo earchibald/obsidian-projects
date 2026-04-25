@@ -323,6 +323,33 @@ export class OpSettingsTab extends PluginSettingTab {
         }),
       );
 
+    new Setting(containerEl)
+      .setName("Include project workflow")
+      .setDesc(
+        "When the issue's project has a Projects/<slug>/WORKFLOW.md, inline its content (capped below) into the kickoff prompt so the agent sees the project's SDLC policy.",
+      )
+      .addToggle((t) =>
+        t.setValue(s.injection.includeWorkflow).onChange(async (v) => {
+          s.injection.includeWorkflow = v;
+          await this.plugin.saveSettings();
+        }),
+      );
+
+    new Setting(containerEl)
+      .setName("Workflow inline cap (chars)")
+      .setDesc(
+        "If WORKFLOW.md exceeds this size, the prompt surfaces only the path with a 'read this first' hint instead of inlining. 0 disables inlining (path-only).",
+      )
+      .addText((t) =>
+        t.setValue(String(s.injection.maxWorkflowChars)).onChange(async (v) => {
+          const n = parseInt(v, 10);
+          if (Number.isFinite(n) && n >= 0) {
+            s.injection.maxWorkflowChars = n;
+            await this.plugin.saveSettings();
+          }
+        }),
+      );
+
     const preambleSetting = new Setting(containerEl)
       .setName("Extra preamble")
       .setDesc(

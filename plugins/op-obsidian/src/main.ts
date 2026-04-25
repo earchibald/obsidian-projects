@@ -19,6 +19,7 @@ import {
 import { scaffoldProject, type ScaffoldProjectResult } from "./scaffoldProject";
 import { workIssue } from "./workIssue";
 import { appendCommit, setPr } from "./commits";
+import { getWorkflow } from "./workflow";
 import { setScope } from "./setScope";
 import { parseNewScopePayload, type NewScopeMode } from "./setScopePure";
 import { setEvaluation } from "./setEvaluation";
@@ -58,6 +59,7 @@ import {
   handleOpRemoveLinkUri as handleOpRemoveLinkUriPure,
   handleOpLinkCheckUri as handleOpLinkCheckUriPure,
   handleOpMigrateLinksUri as handleOpMigrateLinksUriPure,
+  handleOpGetWorkflowUri as handleOpGetWorkflowUriPure,
   type UriHandlerDeps,
 } from "./uriHandlers";
 import {
@@ -72,12 +74,15 @@ import {
   parseSetLinkParams,
   parseRemoveLinkParams,
   parseLinkCheckParams,
+  parseGetWorkflowParams,
+  parseEditWorkflowParams,
 } from "./cliHandlers";
 import type { IssueEntry, LifecycleEvent } from "./types";
 import { DEFAULT_SETTINGS, mergeSettings, OpSettingsTab, type OpSettings } from "./settings";
 import { AgentDetector } from "./agentDetect";
 import { AGENT_IDS, isAgentLaunchMode, type AgentId, type AgentLaunchMode } from "./agentProfiles";
 import { openAgent, clearAgentOnIssue, resolveProfile } from "./openAgent";
+import { editWorkflow } from "./editWorkflow";
 import { launchInTerminal } from "./terminalLaunch";
 import { installAgentHooks, type HookInstallResult } from "./agentHooks";
 import { userError } from "./userError";
@@ -401,6 +406,12 @@ export default class OpPlugin extends Plugin {
     });
 
     this.addCommand({
+      id: "op-edit-workflow",
+      name: "op: edit project workflow (WORKFLOW.md)",
+      callback: () => this.runEditWorkflowCommand(),
+    });
+
+    this.addCommand({
       id: "op-launch-next-stage",
       name: "op: launch next flow stage",
       callback: () => this.runLaunchNextStageCommand(),
@@ -483,6 +494,18 @@ export default class OpPlugin extends Plugin {
 
     this.registerObsidianProtocolHandler("op-set-pr", (params) => {
       this.runUri("op-set-pr", normalizeUriParams(params), (p) => this.handleOpSetPrUri(p));
+    });
+
+    this.registerObsidianProtocolHandler("op-get-workflow", (params) => {
+      this.runUri("op-get-workflow", normalizeUriParams(params), (p) =>
+        this.handleOpGetWorkflowUri(p),
+      );
+    });
+
+    this.registerObsidianProtocolHandler("op-edit-workflow", (params) => {
+      this.runUri("op-edit-workflow", normalizeUriParams(params), (p) =>
+        this.handleOpEditWorkflowUri(p),
+      );
     });
 
     this.registerObsidianProtocolHandler("op-set-scope", (params) => {
@@ -656,6 +679,24 @@ export default class OpPlugin extends Plugin {
         url: { value: "<url>", description: "PR URL" },
       },
       (params) => this.handleOpSetPrCli(params),
+    );
+
+    this.registerCliHandler(
+      "op-get-workflow",
+      "Read Projects/<project>/WORKFLOW.md and return {exists, path, content}. Read-only.",
+      {
+        project: { value: "<slug>", description: "Project slug (folder name under Projects/)" },
+      },
+      (params) => this.handleOpGetWorkflowCli(params),
+    );
+
+    this.registerCliHandler(
+      "op-edit-workflow",
+      "Launch an agent in tmux to interview the user and author Projects/<project>/WORKFLOW.md.",
+      {
+        project: { value: "<slug>", description: "Project slug (folder name under Projects/)" },
+      },
+      (params) => this.handleOpEditWorkflowCli(params),
     );
 
     this.registerCliHandler(
@@ -1149,6 +1190,7 @@ export default class OpPlugin extends Plugin {
       removeLink: (args) => removeLink(this.app, this.store, args),
       linkCheck: (opts) => linkCheck(this.app, this.store, opts),
       migrateLinks: () => migrateLinks(this.app, this.store),
+      getWorkflow: (project) => getWorkflow(this.app, project),
     };
   }
 
@@ -1184,6 +1226,12 @@ export default class OpPlugin extends Plugin {
 
   private handleOpSetPrUri(params: Record<string, string>): Promise<UriResponsePayload> {
     return handleOpSetPrUriPure(this.uriDeps(), params);
+  }
+
+  private handleOpGetWorkflowUri(
+    params: Record<string, string>,
+  ): Promise<UriResponsePayload> {
+    return handleOpGetWorkflowUriPure(this.uriDeps(), params);
   }
 
   private handleOpSetScopeUri(
@@ -1469,6 +1517,69 @@ export default class OpPlugin extends Plugin {
         pr: res.pr,
       });
       return `${command}: ${res.issueId} pr=${res.pr}`;
+    } catch (err: any) {
+      const msg = err?.message ?? String(err);
+      console.error("[op-obsidian]", command, err);
+      await writeUriResponse(this.app, { ok: false, command, error: msg });
+      return `${command} failed: ${msg}`;
+    }
+  }
+
+  private async handleOpGetWorkflowCli(params: Record<string, string>): Promise<string> {
+    const command = "op-get-workflow";
+    try {
+      const parsed = parseGetWorkflowParams(params);
+      if (!parsed.ok) return parsed.error;
+      const res = await getWorkflow(this.app, parsed.value.project);
+      await writeUriResponse(this.app, {
+        ok: true,
+        command,
+        project: res.project,
+        path: res.path,
+        exists: res.exists,
+        content: res.content,
+        size: res.size,
+      });
+      return res.exists
+        ? `${command}: ${res.project} → ${res.path} (${res.size} chars)`
+        : `${command}: ${res.project} → no WORKFLOW.md (would live at ${res.path})`;
+    } catch (err: any) {
+      const msg = err?.message ?? String(err);
+      console.error("[op-obsidian]", command, err);
+      await writeUriResponse(this.app, { ok: false, command, error: msg });
+      return `${command} failed: ${msg}`;
+    }
+  }
+
+  private async handleOpEditWorkflowCli(params: Record<string, string>): Promise<string> {
+    const command = "op-edit-workflow";
+    try {
+      const parsed = parseEditWorkflowParams(params);
+      if (!parsed.ok) return parsed.error;
+      const res = await editWorkflow(
+        this.app,
+        this.settings,
+        this.detector,
+        () => this.saveSettings(),
+        parsed.value.project,
+      );
+      if (!res) {
+        const msg = "cancelled or no agent available";
+        await writeUriResponse(this.app, { ok: false, command, error: msg });
+        return `${command} failed: ${msg}`;
+      }
+      await writeUriResponse(this.app, {
+        ok: true,
+        command,
+        project: res.project,
+        agent: res.agent,
+        workingDir: res.workingDir,
+        workflowPath: res.workflowPath,
+        scriptPath: res.scriptPath,
+        tmuxSession: res.tmuxSession,
+        tmuxWindow: res.tmuxWindow,
+      });
+      return `${command}: ${res.project} → ${res.agent} (tmux: ${res.tmuxSession}:${res.tmuxWindow})`;
     } catch (err: any) {
       const msg = err?.message ?? String(err);
       console.error("[op-obsidian]", command, err);
@@ -1768,6 +1879,37 @@ export default class OpPlugin extends Plugin {
     });
   }
 
+  private runEditWorkflowCommand(): void {
+    const projects = applyProjectOrder(listProjects(this.app), this.settings.projectOrder);
+    if (projects.length === 0) {
+      new Notice("op: no projects found under Projects/");
+      return;
+    }
+    new ProjectSuggestModal(this.app, projects, (project) => {
+      void this.doEditWorkflow(project.slug);
+    }).open();
+  }
+
+  private async doEditWorkflow(slug: string): Promise<void> {
+    try {
+      const res = await editWorkflow(
+        this.app,
+        this.settings,
+        this.detector,
+        () => this.saveSettings(),
+        slug,
+      );
+      if (res) {
+        new Notice(
+          `op-edit-workflow: ${res.project} → ${res.agent} in ${res.workingDir} (tmux: ${res.tmuxSession}:${res.tmuxWindow})`,
+        );
+      }
+    } catch (err: any) {
+      console.error("[op-obsidian] op-edit-workflow failed", err);
+      new Notice(`op-edit-workflow failed: ${err?.message ?? err}`);
+    }
+  }
+
   private async runDebugAgentLaunch(): Promise<void> {
     try {
       const detection = this.detector.get() ?? (await this.detector.refresh());
@@ -1862,6 +2004,34 @@ export default class OpPlugin extends Plugin {
       agent: res.agent,
       mode: res.mode,
       workingDir: res.workingDir,
+      scriptPath: res.scriptPath,
+      tmuxSession: res.tmuxSession,
+      tmuxWindow: res.tmuxWindow,
+    };
+  }
+
+  private async handleOpEditWorkflowUri(
+    params: Record<string, string>,
+  ): Promise<UriResponsePayload> {
+    const parsed = parseEditWorkflowParams(params);
+    if (!parsed.ok) throw new Error(parsed.error);
+    const res = await editWorkflow(
+      this.app,
+      this.settings,
+      this.detector,
+      () => this.saveSettings(),
+      parsed.value.project,
+    );
+    if (!res) {
+      throw new Error("op-edit-workflow was cancelled or no agent available");
+    }
+    return {
+      ok: true,
+      command: "op-edit-workflow",
+      project: res.project,
+      agent: res.agent,
+      workingDir: res.workingDir,
+      workflowPath: res.workflowPath,
       scriptPath: res.scriptPath,
       tmuxSession: res.tmuxSession,
       tmuxWindow: res.tmuxWindow,

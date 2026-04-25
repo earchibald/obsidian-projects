@@ -19,6 +19,7 @@ Projects/<project-slug>/
   DOCS/             ← specs, plans, ADRs, runbooks
   <project>.base    ← Bases dashboard
   STATUS.md         ← embeds open-issues view for at-a-glance status
+  WORKFLOW.md       ← optional; project's SDLC policy (see "WORKFLOW.md" below)
 ```
 
 ---
@@ -210,6 +211,35 @@ repo_path: /Users/you/Projects/<slug>   # optional, absolute path
 
 **Fallback for legacy projects:** if `prefix` is missing from STATUS.md, fall back to scanning issue filenames (`Projects/<slug>/ISSUES/*.md` and `RESOLVED ISSUES/*.md`). If neither the field nor any issue exists, stop and ask the user — a freshly scaffolded project with zero issues has no implicit prefix, so the scaffolder is responsible for writing `prefix` at creation time.
 
+
+---
+
+## WORKFLOW.md
+
+`Projects/<slug>/WORKFLOW.md` is **optional** and per-project. It documents the project's SDLC policy — branching model, PR rules, version-bump cadence, commit-to-issue mapping, deploy procedure, anything that varies project-to-project. The `op` skill itself is workflow-agnostic (per OP-106); WORKFLOW.md is the seam where the project gets to express its own opinion.
+
+**Frontmatter:**
+
+```yaml
+---
+project: <slug>
+type: workflow
+updated: YYYY-MM-DD       # optional
+---
+```
+
+**Body:** freeform agent-optimized prose. There is no enforced structure — the audience is a working agent, so write terse, imperative guidance ("Always work in a worktree", "Run `npm test` before committing", etc.).
+
+**Surfacing to working agents:**
+- The `op-obsidian` plugin's `op:open-agent` kickoff prompt inlines the WORKFLOW.md content automatically (capped at the configurable `injection.maxWorkflowChars`, default 2000). Over the cap → the prompt surfaces only the path with a "read this first" hint.
+- Programmatic access for agents: `obsidian op-get-workflow project=<slug>` returns `{exists, path, content, size}`.
+
+**Authoring:**
+- Palette command **op: edit project workflow (WORKFLOW.md)** (or `obsidian op-edit-workflow project=<slug>`) launches a dedicated agent session in tmux that interviews the user about branching/version/PR/commit policy and writes the file. The session has full edit capability but is bounded to the workflow file (no `op-work` / `op-resolve` / version bump). tmux window naming: `op-workflow-<slug>` to keep it distinct from issue sessions in the shared `op-agents` session.
+
+**`type: workflow`** is a top-level type alongside `issue`, `task`, `doc`, `project-status`, and `schema`. Cross-project base aggregations should exclude it (`type != "workflow"`) so it doesn't pollute Issue/Task/Doc lists.
+
+**Optional, opinion-driven:** absent ⇒ no opinion. The skill defaults to asking the user when policy ambiguity comes up. Projects without code repos (or without a workflow-driven feel) leave the file unset.
 
 ---
 

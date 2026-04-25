@@ -55,6 +55,8 @@ All `op-*` commands take `key=value` arguments (not `--flag`). Each prints a one
 | `op-work` | `issue` | — | sets `status: in-progress`; creates the initial TASKS note |
 | `op-append-commit` | `issue`, `sha`, `subject` | — | idempotent append to issue's `commits:` list |
 | `op-set-pr` | `issue`, `url` | — | sets scalar `pr:` |
+| `op-get-workflow` | `project` | — | reads `Projects/<project>/WORKFLOW.md` (the project's SDLC policy, optional). Returns `{exists, path, content, size}`. Read-only. |
+| `op-edit-workflow` | `project` | — | launches an agent in tmux to interview the user and author/refine `Projects/<project>/WORKFLOW.md`. Window naming `op-workflow-<slug>` keeps it distinct from issue sessions. The session has full edit capability but is bounded to writing the workflow file (no `op-work` / `op-resolve` / version bump). |
 | `op-set-scope` | `issue`, `scope` | `mode=scope\|body` | default `mode=scope` replaces the issue body's `## Scope` section (appends it if missing); payload is markdown without H2 headings. `mode=body` replaces the entire body content after the optional `# Title` heading; payload may include H2s. This is the one mutation the plan-mode agent is allowed, so it can persist a refined plan back to the issue note. |
 | `op-set-link` | `issue`, `relation`, `target` | — | writes both sides of an inter-issue link atomically. Plugin owns the inverse — agents MUST NOT touch link frontmatter directly. Relations: `parent` / `children` (many-to-one), `depends_on` / `depended_on_by` (many-to-many), `related_to` (symmetric). |
 | `op-remove-link` | `issue`, `relation`, `target` | — | removes both sides of a link. Idempotent. |
@@ -108,11 +110,12 @@ Accepts `slug N`, `slug PREFIX-N`, `PREFIX N`, `PREFIX-N`, or just `slug`/`PREFI
 ### Start
 
 1. `obsidian op-work issue=<PREFIX>-<N>`. Emit a one-line ack with the issue's `obsidian://` link so the user can open the note while you write `## Plan`.
-2. If the body is empty or one line, scope is ambiguous — state your interpretation and confirm before implementing, even in auto mode.
-3. Reconcile scope vs. current repo/vault state — skip items already done; flag drift between the schema and observed reality.
-4. **Write the `## Plan` section now** (approach, key decisions, files to touch, risks). Reconcile, don't overwrite: if the section already has user or prior-agent content, extend/refine rather than replace. Replace the italic placeholder if still present.
-5. The plugin creates the first TASKS note for you. For additional logical subtasks, create more TASKS notes (`obsidian create` is fine for these auxiliary notes — they're trashed at resolve).
-6. **Mirror every TASK note into a `## Tasks` checklist in the issue body.** After creating the TASK notes (planned upfront, or fix-up tasks discovered mid-session), append a line to the issue body's `## Tasks` section for each one:
+2. **Check for a project workflow.** Read `Projects/<slug>/WORKFLOW.md` if it exists — that's the project's authoritative SDLC policy (branching, version cadence, PR rules, commit-to-issue mapping). Programmatic access: `obsidian op-get-workflow project=<slug>` returns `{exists, path, content}`. If absent, the project has no opinion — ask the user when policy ambiguity comes up; if the user wants to author one, the **`op: edit project workflow (WORKFLOW.md)`** palette command (or `obsidian op-edit-workflow project=<slug>`) launches an agent dedicated to that. (When you're launched via `op:open-agent`, the kickoff prompt already inlines the workflow text up to a configurable cap; use the CLI when you need the full file or want to verify.)
+3. If the body is empty or one line, scope is ambiguous — state your interpretation and confirm before implementing, even in auto mode.
+4. Reconcile scope vs. current repo/vault state — skip items already done; flag drift between the schema and observed reality.
+5. **Write the `## Plan` section now** (approach, key decisions, files to touch, risks). Reconcile, don't overwrite: if the section already has user or prior-agent content, extend/refine rather than replace. Replace the italic placeholder if still present.
+6. The plugin creates the first TASKS note for you. For additional logical subtasks, create more TASKS notes (`obsidian create` is fine for these auxiliary notes — they're trashed at resolve).
+7. **Mirror every TASK note into a `## Tasks` checklist in the issue body.** After creating the TASK notes (planned upfront, or fix-up tasks discovered mid-session), append a line to the issue body's `## Tasks` section for each one:
 
    ```markdown
    ## Tasks
@@ -123,7 +126,7 @@ Accepts `slug N`, `slug PREFIX-N`, `PREFIX N`, `PREFIX-N`, or just `slug`/`PREFI
    Reconcile rather than overwrite: if the section already exists (prior session, completed task, user-authored entry), preserve existing entries (`- [completed]` / `- [x]`) and append any new tasks not already listed. Mark entries `- [completed]` when the corresponding TASK note flips to `status: completed`. The body checklist is the durable record — TASK notes are trashed at resolve, the issue body isn't.
 
    When a TASK note flips to `status: completed`, also **append a `### <ISSUE-ID>.<N> — <title>` block under `## Notes`** recording what was done and any deviations from the plan. Idempotent: if that block already exists, update it in place rather than duplicating.
-7. Confirm before any action affecting shared systems (push, release, deploy, external API).
+8. Confirm before any action affecting shared systems (push, release, deploy, external API).
 
 **Reconcile rule for legacy issues.** If the issue body is missing any of `## Plan`, `## Notes`, or `## Summary`, insert the missing sections in canonical order (`Scope → Plan → Tasks → Notes → Summary`) before writing. Never modify user-authored prose in other sections.
 
