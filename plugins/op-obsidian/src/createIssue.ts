@@ -4,6 +4,7 @@ import { findProjectBySlug, type ProjectInfo } from "./projects";
 import { nextIssueNumberFromVault } from "./findIssue";
 import { issueFilename } from "./sanitize";
 import { renderIssueNote, type Priority } from "./issueTemplate";
+import type { IssueEntry } from "./types";
 
 export type { Priority };
 export {
@@ -27,6 +28,7 @@ export interface CreateIssueResult {
   id: string;
   path: string;
   project: ProjectInfo;
+  entry: IssueEntry;
 }
 
 export async function createIssue(
@@ -78,7 +80,21 @@ export async function createIssue(
   });
 
   const file = await app.vault.create(path, content);
-  return { file, id, path, project };
+  // Synthesize the IssueEntry synchronously so callers can act on the new
+  // issue without waiting for metadataCache.changed → IssueStore to catch up.
+  const entry: IssueEntry = {
+    path,
+    type: "issue",
+    id,
+    project: project.slug,
+    status: "open",
+    priority: input.priority ?? "med",
+    assignee: input.assignee ?? "earchibald",
+    githubIssue: input.githubIssue?.trim() || undefined,
+    title: file.basename,
+    resolvedFolder: false,
+  };
+  return { file, id, path, project, entry };
 }
 
 async function ensureFolder(app: App, folder: string): Promise<void> {

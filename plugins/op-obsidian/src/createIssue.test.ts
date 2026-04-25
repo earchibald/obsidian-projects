@@ -1,4 +1,17 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
+
+vi.mock("obsidian", () => {
+  class TFile {
+    path = "";
+    basename = "";
+    name = "";
+  }
+  return {
+    TFile,
+    normalizePath: (p: string) => p,
+  };
+});
+
 import {
   renderIssueNote,
   PLAN_PLACEHOLDER,
@@ -6,6 +19,8 @@ import {
   NOTES_PLACEHOLDER,
   SUMMARY_PLACEHOLDER,
 } from "./issueTemplate";
+import { createIssue } from "./createIssue";
+import { TFile } from "obsidian";
 
 function render(overrides: Partial<Parameters<typeof renderIssueNote>[0]> = {}) {
   return renderIssueNote({
@@ -84,5 +99,82 @@ describe("renderIssueNote", () => {
     expect(tasksIdx).toBeGreaterThan(evalIdx);
     expect(notesIdx).toBeGreaterThan(tasksIdx);
     expect(summaryIdx).toBeGreaterThan(notesIdx);
+  });
+});
+
+function fakeApp(slug: string, prefix: string) {
+  // Stand-in for an Obsidian STATUS.md TFile.
+  const statusFile = Object.assign(new TFile(), {
+    path: `Projects/${slug}/STATUS.md`,
+    basename: "STATUS",
+    name: "STATUS.md",
+  });
+  const folders = new Set<string>();
+  const created: Array<{ path: string; content: string; file: TFile }> = [];
+
+  const app = {
+    vault: {
+      getMarkdownFiles: () => [statusFile],
+      getAbstractFileByPath: (p: string) => {
+        if (folders.has(p)) return { children: [] };
+        const hit = created.find((c) => c.path === p);
+        return hit ? hit.file : null;
+      },
+      createFolder: async (p: string) => {
+        folders.add(p);
+      },
+      create: async (path: string, content: string) => {
+        const basename = path.split("/").pop()!.replace(/\.md$/, "");
+        const file = Object.assign(new TFile(), {
+          path,
+          basename,
+          name: `${basename}.md`,
+        });
+        created.push({ path, content, file });
+        return file;
+      },
+    },
+    metadataCache: {
+      getFileCache: (f: TFile) =>
+        f === statusFile
+          ? { frontmatter: { type: "project-status", prefix } }
+          : null,
+    },
+  };
+
+  return { app: app as any, store: { issues: () => [] } as any, created };
+}
+
+describe("createIssue", () => {
+  it("returns a populated IssueEntry that mirrors the created file", async () => {
+    const { app, store } = fakeApp("demo", "DM");
+    const result = await createIssue(app, store, {
+      slug: "demo",
+      title: "smoke test",
+      priority: "high",
+      assignee: "alice",
+    });
+
+    expect(result.entry).toBeDefined();
+    expect(result.entry.path).toBe(result.path);
+    expect(result.entry.id).toBe(result.id);
+    expect(result.entry.type).toBe("issue");
+    expect(result.entry.status).toBe("open");
+    expect(result.entry.project).toBe("demo");
+    expect(result.entry.priority).toBe("high");
+    expect(result.entry.assignee).toBe("alice");
+    expect(result.entry.title).toBe(result.file.basename);
+    expect(result.entry.resolvedFolder).toBe(false);
+    expect(result.entry.githubIssue).toBeUndefined();
+  });
+
+  it("falls back to default priority and assignee when omitted", async () => {
+    const { app, store } = fakeApp("demo", "DM");
+    const result = await createIssue(app, store, {
+      slug: "demo",
+      title: "defaults",
+    });
+    expect(result.entry.priority).toBe("med");
+    expect(result.entry.assignee).toBe("earchibald");
   });
 });

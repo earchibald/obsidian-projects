@@ -1,4 +1,4 @@
-import { ItemView, TFile, WorkspaceLeaf, setIcon } from "obsidian";
+import { ItemView, TFile, WorkspaceLeaf, setIcon, setTooltip } from "obsidian";
 import type { IssueStore } from "./issueStore";
 import type { EventBus } from "./eventBus";
 import type { IssueEntry, LifecycleEvent } from "./types";
@@ -109,11 +109,13 @@ export class OpSidebarView extends ItemView {
     for (const e of issues) {
       const li = ul.createEl("li", { cls: "op-sidebar__item" });
       const headerRow = li.createDiv({ cls: "op-sidebar__row" });
+      const linkText = `${e.id} · ${stripIdPrefix(e.title, e.id)}`;
       const link = headerRow.createEl("a", {
         cls: "op-sidebar__link",
-        text: `${e.id} · ${stripIdPrefix(e.title, e.id)}`,
+        text: linkText,
       });
       link.setAttr("href", "#");
+      setTooltip(link, linkText, { delay: 250 });
       link.addEventListener("click", (ev) => {
         ev.preventDefault();
         void this.openEntry(e);
