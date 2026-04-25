@@ -220,9 +220,12 @@ describe("decideKeyAction", () => {
 });
 
 function makeFakeEl(): any {
+  const _listeners: Record<string, Array<(ev: any) => void>> = {};
   const el: any = {
     children: [] as any[],
     classList: new Set<string>(),
+    /** Captured handlers, keyed by event name.  Used by wiring tests. */
+    _listeners,
     addClass(c: string) {
       this.classList.add(c);
     },
@@ -249,7 +252,9 @@ function makeFakeEl(): any {
       return child;
     },
     setAttr() {},
-    addEventListener() {},
+    addEventListener(event: string, handler: (ev: any) => void) {
+      (_listeners[event] ??= []).push(handler);
+    },
     removeEventListener() {},
     removeClass() {},
     focus() {},
@@ -467,6 +472,19 @@ describe("buildSidebarMenuItems", () => {
     }
   });
 
+  it("treats resolvedFolder:true as resolved even when status is 'in-progress' or 'blocked' (stale-frontmatter scenario)", () => {
+    // A file can end up in RESOLVED ISSUES/ while the frontmatter still has a
+    // work-in-progress status — e.g. the file was dragged back in Finder but
+    // the op watcher hasn't rewritten the note yet.  resolvedFolder is the
+    // ground truth; Resolve items must be suppressed to prevent a double-move.
+    for (const status of ["in-progress", "blocked"] as const) {
+      const stale = entry({ status, resolvedFolder: true });
+      const items = buildSidebarMenuItems(stale, { ...baseHooks, resolveIssue: vi.fn() });
+      expect(keys(items)).not.toContain("resolve");
+      expect(keys(items)).not.toContain("resolve-wontfix");
+    }
+  });
+
   it("offers Reopen only when the row is resolved AND the hook is wired", () => {
     const open = entry({ status: "open" });
     const resolved = entry({ status: "resolved" });
@@ -604,6 +622,62 @@ describe("render() selection identity", () => {
     (view as any).render();
     expect((view as any).selectedIndex).toBe(0);
     expect((view as any).displayedIssues[0].id).toBe("OP-1");
+
+    await view.onClose();
+  });
+});
+
+// ─── render() contextmenu wiring ────────────────────────────────────────────
+
+describe("render() contextmenu wiring", () => {
+  it("attaches a contextmenu listener that calls preventDefault/stopPropagation and selects the row", async () => {
+    const resolveIssue = vi.fn();
+    const e1 = entry({ id: "OP-1", status: "open" });
+    const e2 = entry({ id: "OP-2", status: "open" });
+    const issues = [e1, e2];
+
+    const store = { byId: () => undefined, issues: () => issues };
+    const bus = new FakeBus();
+    const view = new OpSidebarView(
+      {} as any,
+      store as any,
+      bus as any,
+      () =>
+        ({
+          defaultTab: "issues",
+          recentResolvedLimit: 20,
+          openOnStartup: false,
+          density: "comfortable",
+        } as any),
+      undefined,
+      undefined,
+      {
+        getRecent: () => [],
+        tmuxBinary: () => "tmux",
+        tmuxSessions: () => [],
+        recordRecency: async () => {},
+        executeResumeLast: () => {},
+        resolveIssue,
+      },
+    );
+
+    await view.onOpen();
+
+    const rows: any[] = (view as any).rowEls;
+    expect(rows).toHaveLength(2);
+
+    // Every rendered row must have exactly one contextmenu handler wired.
+    expect(rows[0]._listeners["contextmenu"]).toHaveLength(1);
+    expect(rows[1]._listeners["contextmenu"]).toHaveLength(1);
+
+    // Fire contextmenu on the second row (index 1).
+    const fakeEv = { preventDefault: vi.fn(), stopPropagation: vi.fn() };
+    rows[1]._listeners["contextmenu"][0](fakeEv);
+
+    expect(fakeEv.preventDefault).toHaveBeenCalled();
+    expect(fakeEv.stopPropagation).toHaveBeenCalled();
+    // Selection must have moved to the second row.
+    expect((view as any).selectedIndex).toBe(1);
 
     await view.onClose();
   });
