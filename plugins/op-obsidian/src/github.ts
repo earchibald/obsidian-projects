@@ -2,7 +2,7 @@ import { App, TFile } from "obsidian";
 import { execFile } from "child_process";
 import { promisify } from "util";
 import type { IssueEntry } from "./types";
-import { extractIssueUrl, isAlreadyClosedError } from "./githubPure";
+import { extractIssueUrl, isAlreadyClosedError, type GithubCloseReason } from "./githubPure";
 
 const pExecFile = promisify(execFile);
 
@@ -53,11 +53,15 @@ export async function getIssueState(repoPath: string, url: string): Promise<Gith
 //   2. tolerate that specific error as a no-op race — re-query state and
 //      swallow if CLOSED, else re-throw.
 // Real failures (auth, network, repo not found) still throw.
-export async function closeGithubIssue(repoPath: string, url: string): Promise<void> {
+export async function closeGithubIssue(
+  repoPath: string,
+  url: string,
+  reason: GithubCloseReason,
+): Promise<void> {
   if ((await getIssueState(repoPath, url)) === "CLOSED") return;
   const env = augmentedPathEnv();
   try {
-    await pExecFile("gh", ["issue", "close", url], { cwd: repoPath, env });
+    await pExecFile("gh", ["issue", "close", url, "--reason", reason], { cwd: repoPath, env });
   } catch (err: any) {
     const stderr = typeof err?.stderr === "string" ? err.stderr.trim() : "";
     if (isAlreadyClosedError(stderr)) {

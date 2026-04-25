@@ -22,6 +22,7 @@ import { appendCommit, setPr } from "./commits";
 import { setScope } from "./setScope";
 import { parseNewScopePayload, type NewScopeMode } from "./setScopePure";
 import { setEvaluation } from "./setEvaluation";
+import { setSection } from "./setSection";
 import { setFlow, type Complexity, type Flow } from "./setFlow";
 import { applyLink, removeLink, linkCheck, migrateLinks } from "./links";
 import { RELATION_NAMES } from "./relations";
@@ -37,6 +38,7 @@ import {
   createGithubIssue,
   setGithubIssue,
 } from "./github";
+import { closeReasonForStatus } from "./githubPure";
 import { resolveRepoPath } from "./repoPath";
 import { writeUriResponse, type UriResponsePayload } from "./uriResponse";
 import { normalizeUriParams, collectRepeated } from "./uriParams";
@@ -50,6 +52,7 @@ import {
   handleOpSetPrUri as handleOpSetPrUriPure,
   handleOpSetScopeUri as handleOpSetScopeUriPure,
   handleOpSetEvaluationUri as handleOpSetEvaluationUriPure,
+  handleOpSetSectionUri as handleOpSetSectionUriPure,
   handleOpSetFlowUri as handleOpSetFlowUriPure,
   handleOpSetLinkUri as handleOpSetLinkUriPure,
   handleOpRemoveLinkUri as handleOpRemoveLinkUriPure,
@@ -63,6 +66,7 @@ import {
   parseSetPrParams,
   parseSetScopeParams,
   parseSetEvaluationParams,
+  parseSetSectionParams,
   parseSetFlowParams,
   parseNewParams,
   parseSetLinkParams,
@@ -212,7 +216,11 @@ export default class OpPlugin extends Plugin {
         new Notice(`op: no repo_path for ${entry.project} — skipping gh issue close`);
         return;
       }
-      return closeGithubIssue(repoPath, entry.githubIssue).catch((err: any) => {
+      return closeGithubIssue(
+        repoPath,
+        entry.githubIssue,
+        closeReasonForStatus(entry.status),
+      ).catch((err: any) => {
         const msg = err?.message ?? String(err);
         console.error("[op-obsidian] gh issue close failed", msg);
         new Notice(`op: gh issue close failed — ${msg}`);
@@ -487,6 +495,12 @@ export default class OpPlugin extends Plugin {
       );
     });
 
+    this.registerObsidianProtocolHandler("op-set-section", (params) => {
+      this.runUri("op-set-section", normalizeUriParams(params), (p) =>
+        this.handleOpSetSectionUri(p),
+      );
+    });
+
     this.registerObsidianProtocolHandler("op-set-flow", (params) => {
       this.runUri("op-set-flow", normalizeUriParams(params), (p) => this.handleOpSetFlowUri(p));
     });
@@ -668,6 +682,27 @@ export default class OpPlugin extends Plugin {
         },
       },
       (params) => this.handleOpSetEvaluationCli(params),
+    );
+
+    this.registerCliHandler(
+      "op-set-section",
+      "Replace (or append to) a body section on an issue. Restricted to Plan|Notes|Summary.",
+      {
+        issue: { value: "<id>", description: "Issue id (e.g. OP-34)" },
+        name: {
+          value: "<Plan|Notes|Summary>",
+          description: "Section heading to target.",
+        },
+        content: {
+          value: "<markdown>",
+          description: "New section body. Must not contain H2 headings (`## ...`).",
+        },
+        append: {
+          description:
+            "Pass append=true to append to the existing section (with blank-line separator) instead of replacing.",
+        },
+      },
+      (params) => this.handleOpSetSectionCli(params),
     );
 
     this.registerCliHandler(
@@ -1107,6 +1142,8 @@ export default class OpPlugin extends Plugin {
       setPr: (entry, url) => setPr(this.app, entry, url),
       setScope: (entry, scope, options) => setScope(this.app, entry, scope, options),
       setEvaluation: (entry, evaluation) => setEvaluation(this.app, entry, evaluation),
+      setSection: (entry, name, content, options) =>
+        setSection(this.app, entry, name, content, options),
       setFlow: (entry, input) => setFlow(this.app, entry, input),
       applyLink: (args) => applyLink(this.app, this.store, args),
       removeLink: (args) => removeLink(this.app, this.store, args),
@@ -1161,6 +1198,12 @@ export default class OpPlugin extends Plugin {
     return handleOpSetEvaluationUriPure(this.uriDeps(), params);
   }
 
+  private handleOpSetSectionUri(
+    params: Record<string, string>,
+  ): Promise<UriResponsePayload> {
+    return handleOpSetSectionUriPure(this.uriDeps(), params);
+  }
+
   private handleOpSetFlowUri(
     params: Record<string, string>,
   ): Promise<UriResponsePayload> {
@@ -1185,7 +1228,7 @@ export default class OpPlugin extends Plugin {
           new Notice(`op: no repo_path for ${entry.project} — skipping gh issue close`);
           return;
         }
-        await closeGithubIssue(repoPath, entry.githubIssue);
+        await closeGithubIssue(repoPath, entry.githubIssue, closeReasonForStatus(entry.status));
       },
     };
   }
@@ -1324,8 +1367,21 @@ export default class OpPlugin extends Plugin {
         scope,
         scopeBody,
       });
+      // Persist the scratch payload + return the stdout one-liner BEFORE
+      // kicking off `gh issue create`. The gh call takes ~5s, which blew past
+      // the obsidian-cli stdout-bridge wait window (OP-137, same shape as
+      // OP-121). `autoCreateGithubIssueFor` writes the resulting URL to the
+      // issue's `github_issue:` frontmatter via `setGithubIssue` once gh
+      // returns, so async URL landing is preserved — callers needing the URL
+      // synchronously must re-read the issue file after a short delay.
+      await writeUriResponse(this.app, {
+        ok: true,
+        command,
+        issueId: res.id,
+        path: res.path,
+      });
       if (this.settings.github.autoCreateGithubIssue) {
-        await this.autoCreateGithubIssueFor(res.path, res.id, {
+        void this.autoCreateGithubIssueFor(res.path, res.id, {
           slug,
           title,
           priority,
@@ -1335,12 +1391,6 @@ export default class OpPlugin extends Plugin {
           (err) => console.error("[op-obsidian] cli auto-create github issue failed", err),
         );
       }
-      await writeUriResponse(this.app, {
-        ok: true,
-        command,
-        issueId: res.id,
-        path: res.path,
-      });
       return `${command}: created ${res.id} at ${res.path}`;
     } catch (err: any) {
       const msg = err?.message ?? String(err);
@@ -1445,6 +1495,37 @@ export default class OpPlugin extends Plugin {
       });
       const target = res.mode === "body" ? "body" : "scope";
       return `${command}: ${res.issueId} ${target} ${res.replaced ? "replaced" : "appended"}`;
+    } catch (err: any) {
+      const msg = err?.message ?? String(err);
+      console.error("[op-obsidian]", command, err);
+      await writeUriResponse(this.app, { ok: false, command, error: msg });
+      return `${command} failed: ${msg}`;
+    }
+  }
+
+  private async handleOpSetSectionCli(params: Record<string, string>): Promise<string> {
+    const command = "op-set-section";
+    try {
+      const parsed = parseSetSectionParams(params);
+      if (!parsed.ok) return parsed.error;
+      const { id, name, content, append } = parsed.value;
+      const entry = this.resolveByIdOrThrow(id);
+      const res = await setSection(this.app, entry, name, content, { append });
+      await writeUriResponse(this.app, {
+        ok: true,
+        command,
+        issueId: res.issueId,
+        path: res.path,
+        section: res.section,
+        replaced: res.replaced,
+        appended: res.appended,
+      });
+      const verb = res.appended
+        ? "appended"
+        : res.replaced
+          ? "replaced"
+          : "created";
+      return `${command}: ${res.issueId} ${res.section} ${verb}`;
     } catch (err: any) {
       const msg = err?.message ?? String(err);
       console.error("[op-obsidian]", command, err);
@@ -2032,8 +2113,13 @@ export default class OpPlugin extends Plugin {
       githubIssue,
     });
     new Notice(`Created ${res.id}`);
+    const file = this.app.vault.getAbstractFileByPath(res.path);
+    if (file instanceof TFile) {
+      await this.app.workspace.getLeaf(false).openFile(file);
+    }
+    // Fire-and-forget gh create — see OP-137 / handleOpNewCli for context.
     if (!githubIssue && this.settings.github.autoCreateGithubIssue) {
-      await this.autoCreateGithubIssueFor(res.path, res.id, {
+      void this.autoCreateGithubIssueFor(res.path, res.id, {
         slug,
         title,
         priority,
@@ -2042,10 +2128,6 @@ export default class OpPlugin extends Plugin {
       }).catch(
         (err) => console.error("[op-obsidian] uri auto-create failed", err),
       );
-    }
-    const file = this.app.vault.getAbstractFileByPath(res.path);
-    if (file instanceof TFile) {
-      await this.app.workspace.getLeaf(false).openFile(file);
     }
   }
 }
