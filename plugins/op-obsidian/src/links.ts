@@ -5,6 +5,7 @@ import {
   computeApply,
   computeMigrate,
   computeRemove,
+  getRelation,
   scanDrift,
   validateLinkArgs,
   type Cleanup,
@@ -129,6 +130,45 @@ export async function removeLink(
     changed: planned.changed,
     cleaned: [],
   };
+}
+
+/**
+ * Enumerate the issues currently linked from `srcId` under `relation`. Returns
+ * resolved IssueEntry rows so callers can present them in a picker; ids that
+ * point at a missing/unresolved file are dropped silently (link drift is the
+ * `op-link-check` command's job, not this picker's). Used by the `op-remove-link`
+ * palette flow to constrain the target picker.
+ */
+export function listLinkedTargets(
+  app: App,
+  store: IssueStore,
+  srcId: string,
+  relation: string,
+): IssueEntry[] {
+  const def = getRelation(relation);
+  const srcEntry = store.byId(srcId);
+  if (!srcEntry || srcEntry.type !== "issue") return [];
+  const file = app.vault.getAbstractFileByPath(srcEntry.path);
+  if (!(file instanceof TFile)) return [];
+  const fm = readFm(app, file);
+  const ids: string[] = [];
+  if (def.isList) {
+    const v = fm[def.name];
+    if (Array.isArray(v)) {
+      for (const x of v) {
+        if (typeof x === "string" && x.length > 0) ids.push(x);
+      }
+    }
+  } else {
+    const v = fm[def.name];
+    if (typeof v === "string" && v.length > 0) ids.push(v);
+  }
+  const out: IssueEntry[] = [];
+  for (const id of ids) {
+    const entry = store.byId(id);
+    if (entry && entry.type === "issue") out.push(entry);
+  }
+  return out;
 }
 
 export interface LinkCheckResult {
