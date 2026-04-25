@@ -58,6 +58,12 @@ old
     expect(() => normalizeScopePayload("intro\n## Nope\nbody")).toThrow(/H2 headings/);
   });
 
+  it("error mentions 'Scope' section name (capitalised)", () => {
+    expect(() => normalizeScopePayload("intro\n## Nope\nbody")).toThrow(
+      /Scope payload must not contain H2 headings/,
+    );
+  });
+
   it("rejects empty payload", () => {
     expect(() => normalizeScopePayload("   \n\n")).toThrow(/empty/);
   });
