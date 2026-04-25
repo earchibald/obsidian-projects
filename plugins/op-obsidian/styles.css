@@ -47,20 +47,61 @@
 }
 
 .op-sidebar__item {
-  padding: 0.35rem 0.25rem;
+  padding: 0.35rem 0.15rem 0.35rem 0.25rem;
   border-bottom: 1px solid var(--background-modifier-border-hover);
+}
+
+.op-sidebar__row {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
 }
 
 .op-sidebar__link {
   color: var(--text-normal);
   text-decoration: none;
-  display: block;
+  flex: 1;
+  min-width: 0;
   font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .op-sidebar__link:hover {
   color: var(--text-accent);
   text-decoration: underline;
+}
+
+.op-sidebar__actions {
+  display: flex;
+  align-items: center;
+  gap: 0.15rem;
+  flex-shrink: 0;
+  margin-left: auto;
+}
+
+.op-sidebar__action {
+  background: transparent;
+  border: none;
+  padding: 0.15rem;
+  color: var(--text-muted);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 3px;
+  box-shadow: none;
+}
+
+.op-sidebar__action:hover {
+  color: var(--text-accent);
+  background: var(--background-modifier-hover);
+}
+
+.op-sidebar__action .svg-icon {
+  width: 14px;
+  height: 14px;
 }
 
 .op-sidebar__meta {

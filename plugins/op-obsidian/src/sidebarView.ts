@@ -1,8 +1,9 @@
-import { ItemView, setTooltip, TFile, WorkspaceLeaf } from "obsidian";
+import { ItemView, TFile, WorkspaceLeaf, setIcon, setTooltip } from "obsidian";
 import type { IssueStore } from "./issueStore";
 import type { EventBus } from "./eventBus";
 import type { IssueEntry, LifecycleEvent } from "./types";
 import type { ViewSettings } from "./settings";
+import type { AgentLaunchMode } from "./agentProfiles";
 
 export const OP_SIDEBAR_VIEW_TYPE = "op-sidebar";
 
@@ -34,6 +35,7 @@ export class OpSidebarView extends ItemView {
     private bus: EventBus,
     private getSettings: () => ViewSettings,
     private revealAgent?: (entry: IssueEntry) => void | Promise<void>,
+    private launchAgent?: (entry: IssueEntry, mode: AgentLaunchMode) => void | Promise<void>,
   ) {
     super(leaf);
   }
@@ -106,8 +108,9 @@ export class OpSidebarView extends ItemView {
     const ul = this.bodyEl.createEl("ul", { cls: "op-sidebar__list" });
     for (const e of issues) {
       const li = ul.createEl("li", { cls: "op-sidebar__item" });
+      const headerRow = li.createDiv({ cls: "op-sidebar__row" });
       const linkText = `${e.id} · ${stripIdPrefix(e.title, e.id)}`;
-      const link = li.createEl("a", {
+      const link = headerRow.createEl("a", {
         cls: "op-sidebar__link",
         text: linkText,
       });
@@ -117,10 +120,9 @@ export class OpSidebarView extends ItemView {
         ev.preventDefault();
         void this.openEntry(e);
       });
-      const meta = li.createDiv({ cls: "op-sidebar__meta" });
-      meta.createSpan({ text: e.project, cls: "op-sidebar__project" });
+      const actions = headerRow.createDiv({ cls: "op-sidebar__actions" });
       if (e.agent) {
-        const badge = meta.createEl("a", {
+        const badge = actions.createEl("a", {
           text: e.agent,
           cls: `op-sidebar__agent op-sidebar__agent--${e.agent}`,
         });
@@ -133,7 +135,32 @@ export class OpSidebarView extends ItemView {
             void this.revealAgent?.(e);
           });
         }
+      } else if (this.launchAgent) {
+        const launchBtn = actions.createEl("button", {
+          cls: "op-sidebar__action op-sidebar__action--launch",
+        });
+        setIcon(launchBtn, "play");
+        launchBtn.setAttr("aria-label", `Launch agent for ${e.id}`);
+        launchBtn.setAttr("title", "Launch agent");
+        launchBtn.addEventListener("click", (ev) => {
+          ev.preventDefault();
+          ev.stopPropagation();
+          void this.launchAgent?.(e, "implement");
+        });
+        const planBtn = actions.createEl("button", {
+          cls: "op-sidebar__action op-sidebar__action--plan",
+        });
+        setIcon(planBtn, "clipboard-list");
+        planBtn.setAttr("aria-label", `Launch agent in plan mode for ${e.id}`);
+        planBtn.setAttr("title", "Launch agent (plan mode)");
+        planBtn.addEventListener("click", (ev) => {
+          ev.preventDefault();
+          ev.stopPropagation();
+          void this.launchAgent?.(e, "plan");
+        });
       }
+      const meta = li.createDiv({ cls: "op-sidebar__meta" });
+      meta.createSpan({ text: e.project, cls: "op-sidebar__project" });
       if (e.priority) {
         meta.createSpan({ text: e.priority, cls: `op-sidebar__prio op-sidebar__prio--${e.priority}` });
       }
