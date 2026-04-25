@@ -85,11 +85,44 @@ the plan
     expect(next).toContain("## Plan\n\nthe plan");
     expect(next).not.toContain("old eval");
   });
+
+  it("does not match ## Initial   Evaluation (multiple spaces between words)", () => {
+    // escapeRegExp passes spaces through unchanged; `## Initial   Evaluation`
+    // differs from the literal `Initial Evaluation` in the regex and must not
+    // be treated as the target section.
+    const text = `${FM}
+# T
+
+## Initial   Evaluation
+old
+`;
+    const { replaced } = rewriteEvaluationSection(text, "new");
+    expect(replaced).toBe(false);
+  });
+
+  it("does not match ## Initial Evaluations (extra chars before end-of-line)", () => {
+    // The `\\s*$` anchor in the heading regex prevents over-matching a heading
+    // that has a suffix like `s`.
+    const text = `${FM}
+# T
+
+## Initial Evaluations
+old
+`;
+    const { replaced } = rewriteEvaluationSection(text, "new");
+    expect(replaced).toBe(false);
+  });
 });
 
 describe("normalizeEvaluationPayload", () => {
   it("rejects payload with H2 heading", () => {
     expect(() => normalizeEvaluationPayload("intro\n## Nope\nbody")).toThrow(/H2 headings/);
+  });
+
+  it("error mentions 'Initial Evaluation' section name (capitalised)", () => {
+    expect(() => normalizeEvaluationPayload("intro\n## Nope\nbody")).toThrow(
+      /Initial Evaluation payload must not contain H2 headings/,
+    );
   });
 
   it("rejects empty payload", () => {

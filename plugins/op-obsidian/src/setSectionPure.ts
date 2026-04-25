@@ -16,7 +16,11 @@ export function isSetSectionName(name: string): name is SetSectionName {
   return (SET_SECTION_NAMES as readonly string[]).includes(name);
 }
 
-export function normalizeSectionPayload(raw: string, sectionName: SetSectionName): string {
+// `sectionName` is typed as `string` (not the `SetSectionName` allowlist) so the
+// legacy Scope and Initial Evaluation wrappers can delegate here. The public
+// op-set-section verb keeps its Plan|Notes|Summary restriction at the
+// setSection.ts boundary via `isSetSectionName`.
+export function normalizeSectionPayload(raw: string, sectionName: string): string {
   if (typeof raw !== "string") throw new Error(`${sectionName} payload must be a string`);
   const trimmed = raw.replace(/\r\n/g, "\n").replace(/\s+$/g, "");
   if (!trimmed) throw new Error(`${sectionName} payload is empty`);
@@ -47,7 +51,7 @@ export interface RewriteSectionResult {
 
 export function rewriteSection(
   text: string,
-  sectionName: SetSectionName,
+  sectionName: string,
   payload: string,
   options: RewriteSectionOptions = {},
 ): RewriteSectionResult {
