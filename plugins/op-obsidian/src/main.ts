@@ -86,7 +86,7 @@ import { editWorkflow } from "./editWorkflow";
 import { launchInTerminal } from "./terminalLaunch";
 import { installAgentHooks, type HookInstallResult } from "./agentHooks";
 import { userError } from "./userError";
-import { cleanupAgentSessions } from "./agentSessionCleanup";
+import { cleanupAgentSessions, tmuxSessionsForCleanup } from "./agentSessionCleanup";
 import { detectTmux } from "./tmuxDetect";
 import { showActionableNotice } from "./actionableNotices";
 import { probeLiveTmuxWindows, selectStaleAgentBadges } from "./staleAgentBadges";
@@ -921,7 +921,13 @@ export default class OpPlugin extends Plugin {
   private async surfaceStaleAgentBadgesOnStartup(): Promise<void> {
     const issues = this.store.issues().filter((e) => !!e.agent);
     if (issues.length === 0) return;
-    const probe = await probeLiveTmuxWindows(this.settings.tmuxBinary);
+    // Brief delay so `op-work` mid-flight at startup can finish creating its
+    // tmux window before we probe — reduces false-positive [Clear badge] Notices.
+    await new Promise((r) => setTimeout(r, 2000));
+    const probe = await probeLiveTmuxWindows(
+      this.settings.tmuxBinary,
+      tmuxSessionsForCleanup(this.settings.orchestratorState),
+    );
     if (!probe.ok) {
       console.debug("[op-obsidian] stale-agent probe skipped — tmux unavailable");
       return;
@@ -1462,9 +1468,12 @@ export default class OpPlugin extends Plugin {
     const actions: Array<{ label: string; onClick: () => void }> = [];
     if (args.repoPath && args.url) {
       const { repoPath, url, reason, entryId } = args;
+      let retryFired = false;
       actions.push({
         label: "Retry",
         onClick: () => {
+          if (retryFired) return;
+          retryFired = true;
           void closeGithubIssue(repoPath, url, reason)
             .then(() => {
               showActionableNotice({ text: `op: gh issue closed for ${entryId}` });
