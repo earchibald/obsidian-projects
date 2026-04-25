@@ -88,6 +88,9 @@ import { installAgentHooks, type HookInstallResult } from "./agentHooks";
 import { userError } from "./userError";
 import { cleanupAgentSessions } from "./agentSessionCleanup";
 import { detectTmux } from "./tmuxDetect";
+import { showActionableNotice } from "./actionableNotices";
+import { probeLiveTmuxWindows, selectStaleAgentBadges } from "./staleAgentBadges";
+import { openErrorLog, writeErrorLog } from "./errorLog";
 import { configureClient } from "./iterm/client";
 import { closeTransport } from "./iterm/connection";
 import { existsSync } from "fs";
@@ -162,9 +165,18 @@ export default class OpPlugin extends Plugin {
         await this.saveSettings();
         console.debug(`[op-obsidian] tmux auto-detected: ${prev} → ${found.path}`);
       } else {
-        new Notice(
-          `op: tmux not found at ${this.settings.tmuxBinary} or common paths — agent launches will fail until you install tmux or set the path in Settings → op.`,
-        );
+        showActionableNotice({
+          text: `op: tmux not found at ${this.settings.tmuxBinary} or common paths — agent launches will fail until you install tmux or set the path in Settings → op.`,
+          actions: [
+            {
+              label: "Open settings",
+              onClick: () => {
+                (this.app as any).setting?.open?.();
+                (this.app as any).setting?.openTabById?.("op-obsidian");
+              },
+            },
+          ],
+        });
       }
     }
     this.detector = new AgentDetector((id) => {
@@ -221,14 +233,12 @@ export default class OpPlugin extends Plugin {
         new Notice(`op: no repo_path for ${entry.project} — skipping gh issue close`);
         return;
       }
-      return closeGithubIssue(
-        repoPath,
-        entry.githubIssue,
-        closeReasonForStatus(entry.status),
-      ).catch((err: any) => {
+      const reason = closeReasonForStatus(entry.status);
+      const url = entry.githubIssue;
+      return closeGithubIssue(repoPath, url, reason).catch((err: any) => {
         const msg = err?.message ?? String(err);
         console.error("[op-obsidian] gh issue close failed", msg);
-        new Notice(`op: gh issue close failed — ${msg}`);
+        void this.surfaceGhCloseError({ entryId: entry.id, repoPath, url, reason, msg });
       });
     });
 
@@ -275,6 +285,7 @@ export default class OpPlugin extends Plugin {
     // whose issue no longer exists in the vault.
     this.app.workspace.onLayoutReady(() => {
       void this.reconcileAgentStateOnStartup();
+      void this.surfaceStaleAgentBadgesOnStartup();
     });
 
     this.registerView(
@@ -897,6 +908,40 @@ export default class OpPlugin extends Plugin {
     await this.cleanupAgentStateFor(stale);
   }
 
+  /**
+   * One-shot startup probe for stale `agent:` badges — issues whose
+   * frontmatter claims an attached agent but whose tmux window is gone
+   * (crash, manual `tmux kill-window`, machine reboot). Surfaces one
+   * actionable Notice per stale issue with a `[Clear badge]` action.
+   *
+   * Skipped silently when the tmux probe fails (tmux missing / timeout) —
+   * we'd rather under-warn than fire false positives during a reboot.
+   * Continuous liveness is OP-149 §1's scope; this is a per-load floor.
+   */
+  private async surfaceStaleAgentBadgesOnStartup(): Promise<void> {
+    const issues = this.store.issues().filter((e) => !!e.agent);
+    if (issues.length === 0) return;
+    const probe = await probeLiveTmuxWindows(this.settings.tmuxBinary);
+    if (!probe.ok) {
+      console.debug("[op-obsidian] stale-agent probe skipped — tmux unavailable");
+      return;
+    }
+    const stale = selectStaleAgentBadges(issues, probe.live);
+    for (const entry of stale) {
+      showActionableNotice({
+        text: `op: ${entry.id} has no live agent`,
+        actions: [
+          {
+            label: "Clear badge",
+            onClick: () => {
+              void clearAgentOnIssue(this.app, entry.path);
+            },
+          },
+        ],
+      });
+    }
+  }
+
   private async revealSidebar(): Promise<void> {
     const existing = this.app.workspace.getLeavesOfType(OP_SIDEBAR_VIEW_TYPE);
     let leaf: WorkspaceLeaf | null = existing[0] ?? null;
@@ -986,11 +1031,27 @@ export default class OpPlugin extends Plugin {
   ): Promise<void> {
     try {
       const res = await createIssue(this.app, this.store, input);
-      new Notice(`Created ${res.id}`);
       const file = this.app.vault.getAbstractFileByPath(res.path);
       if (file instanceof TFile) {
         await this.app.workspace.getLeaf(false).openFile(file);
       }
+      showActionableNotice({
+        text: `op: created ${res.id}`,
+        actions: [
+          {
+            label: "Open",
+            onClick: () => {
+              void this.openIssue(res.entry);
+            },
+          },
+          {
+            label: "Start agent",
+            onClick: () => {
+              void this.doOpenAgent(res.entry, {});
+            },
+          },
+        ],
+      });
       if (!input.githubIssue && this.settings.github.autoCreateGithubIssue) {
         await this.autoCreateGithubIssueFor(res.path, res.id, input).catch((err) => {
           console.error("[op-obsidian] auto-create github issue failed", err);
@@ -1312,10 +1373,122 @@ export default class OpPlugin extends Plugin {
     const path = this.resolveArgsToPath(args);
     if (path) this.inFlightResolvePaths.add(path);
     try {
-      return await runResolve(this.app, this.store, this.withGhCloseHook(args));
+      const result = await runResolve(this.app, this.store, this.withGhCloseHook(args));
+      this.surfaceResolveResult(result, args.issue);
+      return result;
     } finally {
       if (path) this.inFlightResolvePaths.delete(path);
     }
+  }
+
+  /**
+   * Surface a resolve result as user-facing Notices. Two paths converge here:
+   * the explicit `op-resolve` command and the `issue:status-changed`
+   * auto-resolver. Both want the same actionable output:
+   *
+   *  - on success: `op: <ID> resolved · [Open]`, where [Open] navigates to
+   *    the post-move RESOLVED ISSUES path
+   *  - on github close failure: `op: gh issue close failed · [Retry] · [Open log]`
+   */
+  private surfaceResolveResult(
+    result: Awaited<ReturnType<typeof runResolve>>,
+    rawId?: string,
+  ): void {
+    if (result.ok) {
+      const id = result.issueId ?? rawId ?? "issue";
+      const trashed = result.trashed?.length ?? 0;
+      const status = result.status ?? "resolved";
+      const movedTo = result.movedTo;
+      const tail = trashed ? ` (${trashed} task${trashed === 1 ? "" : "s"} trashed)` : "";
+      showActionableNotice({
+        text: `op: ${id} ${status}${tail}`,
+        actions: movedTo
+          ? [
+              {
+                label: "Open",
+                onClick: () => {
+                  const f = this.app.vault.getAbstractFileByPath(movedTo);
+                  if (f instanceof TFile) {
+                    void this.app.workspace.getLeaf(false).openFile(f);
+                  }
+                },
+              },
+            ]
+          : [],
+      });
+    }
+    if (result.githubCloseError && result.issueId) {
+      const entry = this.store.issues().find((e) => e.id === result.issueId);
+      const url = entry?.githubIssue;
+      const repoPath = entry
+        ? resolveRepoPath(this.app, this.settings, entry.project)
+        : undefined;
+      const reason =
+        entry && (entry.status === "resolved" || entry.status === "wontfix")
+          ? closeReasonForStatus(entry.status)
+          : closeReasonForStatus("resolved");
+      void this.surfaceGhCloseError({
+        entryId: result.issueId,
+        repoPath,
+        url,
+        reason,
+        msg: result.githubCloseError,
+      });
+    }
+  }
+
+  /**
+   * Show the actionable `gh issue close failed` Notice. `[Retry]` re-runs
+   * `closeGithubIssue` directly; `[Open log]` writes the error to a vault
+   * scratch note and opens it. When the retry context is incomplete (we
+   * couldn't resolve a repo path or URL), the retry action is dropped — the
+   * Notice still informs the user and offers `[Open log]`.
+   */
+  private async surfaceGhCloseError(args: {
+    entryId: string;
+    repoPath?: string;
+    url?: string;
+    reason: ReturnType<typeof closeReasonForStatus>;
+    msg: string;
+  }): Promise<void> {
+    const logPath = await writeErrorLog(
+      this.app,
+      `gh issue close (${args.entryId})`,
+      [`url: ${args.url ?? "<unknown>"}`, `repo: ${args.repoPath ?? "<unknown>"}`, `error: ${args.msg}`].join("\n"),
+    ).catch((err) => {
+      console.error("[op-obsidian] errorLog.write failed", err);
+      return undefined;
+    });
+    const actions: Array<{ label: string; onClick: () => void }> = [];
+    if (args.repoPath && args.url) {
+      const { repoPath, url, reason, entryId } = args;
+      actions.push({
+        label: "Retry",
+        onClick: () => {
+          void closeGithubIssue(repoPath, url, reason)
+            .then(() => {
+              showActionableNotice({ text: `op: gh issue closed for ${entryId}` });
+            })
+            .catch((err: any) => {
+              const msg = err?.message ?? String(err);
+              console.error("[op-obsidian] gh issue close retry failed", msg);
+              showActionableNotice({
+                text: `op: gh issue close retry failed — ${msg}`,
+                actions: logPath
+                  ? [{ label: "Open log", onClick: () => void openErrorLog(this.app) }]
+                  : [],
+              });
+            });
+        },
+      });
+    }
+    if (logPath) {
+      actions.push({ label: "Open log", onClick: () => void openErrorLog(this.app) });
+    }
+    showActionableNotice({
+      text: `op: gh issue close failed for ${args.entryId}`,
+      actions,
+    });
   }
 
   private resolveArgsToPath(args: ResolveArgs): string | undefined {

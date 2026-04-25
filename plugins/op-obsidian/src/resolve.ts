@@ -1,4 +1,4 @@
-import { App, Modal, Notice, Setting, TFile, normalizePath } from "obsidian";
+import { App, Modal, Setting, TFile, normalizePath } from "obsidian";
 import type { IssueStore } from "./issueStore";
 import type { IssueEntry, TaskEntry } from "./types";
 import { findIssue } from "./findIssue";
@@ -91,11 +91,8 @@ export async function runResolve(
       if (entry.githubIssue) githubClosed = true;
     } catch (err: any) {
       githubCloseError = err?.message ?? String(err);
-      new Notice(`op: github close failed — ${githubCloseError}`);
     }
   }
-
-  new Notice(`op: ${entry.id} → ${targetStatus} (${trashed.length} tasks trashed)`);
 
   return {
     ok: true,
