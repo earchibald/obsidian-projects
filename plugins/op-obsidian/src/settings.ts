@@ -1,4 +1,5 @@
-import { App, Modal, PluginSettingTab, Setting, Notice } from "obsidian";
+import { App, Modal, PluginSettingTab, Setting } from "obsidian";
+import { notify } from "./notificationLog";
 import {
   applyPreset,
   defaultPreset,
@@ -228,7 +229,7 @@ export class OpSettingsTab extends PluginSettingTab {
         b.setButtonText("Re-probe").onClick(async () => {
           this.plugin.detector.invalidate();
           await this.plugin.detector.refresh();
-          new Notice("op: agent detection refreshed");
+          notify("op: agent detection refreshed");
           this.display();
         }),
       );
@@ -424,15 +425,15 @@ export class OpSettingsTab extends PluginSettingTab {
           const slug = newSlug.trim();
           const p = newPath.trim();
           if (!slug || !p) {
-            new Notice("Both slug and path are required");
+            notify("Both slug and path are required");
             return;
           }
           if (!path.isAbsolute(p)) {
-            new Notice(`Path must be absolute: ${p}`);
+            notify(`Path must be absolute: ${p}`);
             return;
           }
           if (!existsSync(p)) {
-            new Notice(`Path does not exist (saved anyway): ${p}`);
+            notify(`Path does not exist (saved anyway): ${p}`);
           }
           s.workingDirs[slug] = p;
           await this.plugin.saveSettings();
@@ -454,23 +455,23 @@ export class OpSettingsTab extends PluginSettingTab {
           try {
             parsed = JSON.parse(raw);
           } catch (err: any) {
-            new Notice(`workingDirs: invalid JSON — ${err?.message ?? err}`);
+            notify(`workingDirs: invalid JSON — ${err?.message ?? err}`);
             return;
           }
           if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-            new Notice(`workingDirs: must be a JSON object of slug → absolute path`);
+            notify(`workingDirs: must be a JSON object of slug → absolute path`);
             return;
           }
           const next: Record<string, string> = {};
           const warnings: string[] = [];
           for (const [slug, v] of Object.entries(parsed as Record<string, unknown>)) {
             if (typeof v !== "string" || !v.trim()) {
-              new Notice(`workingDirs[${slug}]: value must be a non-empty string`);
+              notify(`workingDirs[${slug}]: value must be a non-empty string`);
               return;
             }
             const p = v.trim();
             if (!path.isAbsolute(p)) {
-              new Notice(`workingDirs[${slug}]: path must be absolute — ${p}`);
+              notify(`workingDirs[${slug}]: path must be absolute — ${p}`);
               return;
             }
             if (!existsSync(p)) warnings.push(`${slug}: missing ${p}`);
@@ -478,7 +479,7 @@ export class OpSettingsTab extends PluginSettingTab {
           }
           s.workingDirs = next;
           await this.plugin.saveSettings();
-          if (warnings.length) new Notice(`workingDirs saved. Warnings: ${warnings.join("; ")}`);
+          if (warnings.length) notify(`workingDirs saved. Warnings: ${warnings.join("; ")}`);
           this.display();
         });
       });
@@ -542,7 +543,7 @@ export class OpSettingsTab extends PluginSettingTab {
         }
         try {
           const out = execFileSync(p, ["-V"], { encoding: "utf8", timeout: 3000 }).trim();
-          new Notice(`op: tmux OK — ${out}`, 6000);
+          notify(`op: tmux OK — ${out}`, 6000);
         } catch (err: any) {
           userError(
             `op: tmux at ${p} failed to run — ${err?.message ?? err}`,
@@ -557,10 +558,10 @@ export class OpSettingsTab extends PluginSettingTab {
         if (found.path) {
           s.tmuxBinary = found.path;
           await this.plugin.saveSettings();
-          new Notice(`op: tmux found at ${found.path}`);
+          notify(`op: tmux found at ${found.path}`);
           this.display();
         } else {
-          new Notice(`op: tmux not found in any of: ${found.tried.join(", ")}`);
+          notify(`op: tmux not found in any of: ${found.tried.join(", ")}`);
         }
       }),
     );
@@ -639,7 +640,7 @@ export class OpSettingsTab extends PluginSettingTab {
         b.setButtonText("Reset").onClick(async () => {
           s.orchestratorState = emptyRegistry();
           await this.plugin.saveSettings();
-          new Notice("op: orchestrator state cleared");
+          notify("op: orchestrator state cleared");
         }),
       );
 
@@ -799,7 +800,7 @@ export class OpSettingsTab extends PluginSettingTab {
         t.setValue(s.developer.showDevCommands).onChange(async (v) => {
           s.developer.showDevCommands = v;
           await this.plugin.saveSettings();
-          new Notice("Reload the plugin to apply — Settings → Community plugins → op-obsidian → toggle off then on.", 8000);
+          notify("Reload the plugin to apply — Settings → Community plugins → op-obsidian → toggle off then on.", 8000);
         }),
       );
   }
@@ -908,10 +909,10 @@ export class HotkeyPresetResultsModal extends Modal {
           .onClick(() => {
             const r = revertPreset(this.app, previousCustomKeys);
             if (r.ok) {
-              new Notice("op: hotkey preset reverted");
+              notify("op: hotkey preset reverted");
               this.close();
             } else {
-              new Notice(`op: revert failed — ${r.reason}`);
+              notify(`op: revert failed — ${r.reason}`);
             }
           }),
       )
@@ -940,9 +941,9 @@ export class HotkeyPresetResultsModal extends Modal {
           .onClick(async () => {
             try {
               await navigator.clipboard.writeText(snippet);
-              new Notice("op: snippet copied");
+              notify("op: snippet copied");
             } catch (err: any) {
-              new Notice(`op: copy failed — ${err?.message ?? err}`);
+              notify(`op: copy failed — ${err?.message ?? err}`);
             }
           }),
       )

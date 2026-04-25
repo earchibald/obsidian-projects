@@ -1,4 +1,4 @@
-import { Notice } from "obsidian";
+import { notify } from "./notificationLog";
 
 // Pair every user-visible failure with a one-line "what to do next" hint.
 // The composed text is what the Notice shows AND what we return, so tests can
@@ -14,7 +14,7 @@ export function formatUserError(message: string, hint?: string): string {
 export function userError(message: string, hint?: string): string {
   const text = formatUserError(message, hint);
   const timeoutMs = hint ? 12000 : 8000;
-  new Notice(text, timeoutMs);
+  notify(text, timeoutMs);
   console.warn("[op-obsidian]", text);
   return text;
 }

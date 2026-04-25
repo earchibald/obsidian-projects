@@ -1,6 +1,6 @@
 import { execFile } from "child_process";
 import { promisify } from "util";
-import { Notice } from "obsidian";
+import { notify } from "./notificationLog";
 
 import type { OpSettings } from "./settings";
 import { SHARED_TMUX_SESSION, tmuxWindowName } from "./terminalLaunch";
@@ -34,7 +34,7 @@ export async function revealAgentSession(
     }
   }
 
-  new Notice(`op: no live session found for ${issueId}`);
+  notify(`op: no live session found for ${issueId}`);
 }
 
 function uniqueSessions(settings: OpSettings, extra?: string): string[] {
