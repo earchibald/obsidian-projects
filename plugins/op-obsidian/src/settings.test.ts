@@ -151,4 +151,20 @@ describe("mergeSettings", () => {
     expect(mergeSettings({}).orchestratorState).toEqual(emptyRegistry());
     expect(mergeSettings({ orchestratorState: "garbage" }).orchestratorState).toEqual(emptyRegistry());
   });
+
+  it("projectOrder defaults to [] and accepts a sanitised string array", () => {
+    expect(mergeSettings({}).projectOrder).toEqual([]);
+    expect(mergeSettings({ projectOrder: ["foo", "bar"] }).projectOrder).toEqual(["foo", "bar"]);
+  });
+
+  it("projectOrder rejects non-array, drops non-string / blank / duplicate entries", () => {
+    expect(mergeSettings({ projectOrder: "foo" as unknown as string[] }).projectOrder).toEqual([]);
+    expect(mergeSettings({ projectOrder: { 0: "foo" } as unknown as string[] }).projectOrder).toEqual([]);
+    expect(
+      mergeSettings({
+        projectOrder: ["foo", 42 as unknown as string, "", "  ", "bar", "foo"],
+      }).projectOrder,
+    ).toEqual(["foo", "bar"]);
+    expect(mergeSettings({ projectOrder: ["  baz  "] }).projectOrder).toEqual(["baz"]);
+  });
 });

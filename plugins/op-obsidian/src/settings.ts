@@ -2,6 +2,7 @@ import { App, PluginSettingTab, Setting, Notice } from "obsidian";
 import { existsSync } from "fs";
 import * as path from "path";
 import type OpPlugin from "./main";
+import { applyProjectOrder, listProjects } from "./projects";
 import { AGENT_IDS, type AgentId } from "./agentProfiles";
 import type { ITermPlacement } from "./terminalLaunch";
 import { LAYOUT_IDS, type LayoutId } from "./layout/layouts";
@@ -36,6 +37,113 @@ export type {
 export class OpSettingsTab extends PluginSettingTab {
   constructor(app: App, private plugin: OpPlugin) {
     super(app, plugin);
+  }
+
+  private renderProjectOrder(containerEl: HTMLElement): void {
+    const s = this.plugin.settings;
+    const projects = applyProjectOrder(listProjects(this.app), s.projectOrder);
+
+    if (projects.length === 0) {
+      containerEl.createEl("p", {
+        text: "No projects discovered yet. Scaffold one with /op:scaffold.",
+        cls: "op-project-order__empty",
+      });
+      return;
+    }
+
+    const list = containerEl.createEl("ul", { cls: "op-project-order__list" });
+    let dragSlug: string | null = null;
+
+    const persistFromDom = async (): Promise<void> => {
+      const next: string[] = [];
+      list.querySelectorAll<HTMLLIElement>(".op-project-order__item").forEach((li) => {
+        const slug = li.dataset.slug;
+        if (slug) next.push(slug);
+      });
+      // Preserve any slugs the user has ordered for projects that aren't
+      // currently discovered (e.g. STATUS.md temporarily missing) so a
+      // transient absence doesn't wipe their curated position.
+      const visible = new Set(next);
+      for (const slug of s.projectOrder) {
+        if (!visible.has(slug)) next.push(slug);
+      }
+      s.projectOrder = next;
+      await this.plugin.saveSettings();
+    };
+
+    const clearDropAffordance = (): void => {
+      list.querySelectorAll(".is-drop-before, .is-drop-after").forEach((el) => {
+        el.classList.remove("is-drop-before", "is-drop-after");
+      });
+    };
+
+    for (const p of projects) {
+      const li = list.createEl("li", { cls: "op-project-order__item" });
+      li.dataset.slug = p.slug;
+      li.draggable = true;
+      li.createEl("span", { cls: "op-project-order__handle", text: "⋮⋮" });
+      li.createEl("span", { cls: "op-project-order__slug", text: p.slug });
+      if (p.prefix) {
+        li.createEl("span", { cls: "op-project-order__prefix", text: p.prefix });
+      }
+
+      li.addEventListener("dragstart", (ev) => {
+        dragSlug = p.slug;
+        li.classList.add("is-dragging");
+        if (ev.dataTransfer) {
+          ev.dataTransfer.effectAllowed = "move";
+          ev.dataTransfer.setData("text/plain", p.slug);
+        }
+      });
+      li.addEventListener("dragend", () => {
+        dragSlug = null;
+        li.classList.remove("is-dragging");
+        clearDropAffordance();
+      });
+      li.addEventListener("dragover", (ev) => {
+        if (!dragSlug || dragSlug === p.slug) return;
+        ev.preventDefault();
+        if (ev.dataTransfer) ev.dataTransfer.dropEffect = "move";
+        const rect = li.getBoundingClientRect();
+        const before = ev.clientY < rect.top + rect.height / 2;
+        clearDropAffordance();
+        li.classList.add(before ? "is-drop-before" : "is-drop-after");
+      });
+      li.addEventListener("dragleave", () => {
+        li.classList.remove("is-drop-before", "is-drop-after");
+      });
+      li.addEventListener("drop", async (ev) => {
+        ev.preventDefault();
+        if (!dragSlug || dragSlug === p.slug) {
+          clearDropAffordance();
+          return;
+        }
+        const src = list.querySelector<HTMLLIElement>(
+          `.op-project-order__item[data-slug="${CSS.escape(dragSlug)}"]`,
+        );
+        if (!src) {
+          clearDropAffordance();
+          return;
+        }
+        const rect = li.getBoundingClientRect();
+        const before = ev.clientY < rect.top + rect.height / 2;
+        if (before) list.insertBefore(src, li);
+        else list.insertBefore(src, li.nextSibling);
+        clearDropAffordance();
+        await persistFromDom();
+      });
+    }
+
+    new Setting(containerEl)
+      .setName("Reset to alphabetical")
+      .setDesc("Clears your custom order so projects sort alphabetically again.")
+      .addButton((b) =>
+        b.setButtonText("Reset").onClick(async () => {
+          s.projectOrder = [];
+          await this.plugin.saveSettings();
+          this.display();
+        }),
+      );
   }
 
   display(): void {
@@ -337,6 +445,13 @@ export class OpSettingsTab extends PluginSettingTab {
           this.display();
         });
       });
+
+    containerEl.createEl("h2", { text: "Project order" });
+    containerEl.createEl("p", {
+      text: "Drag to reorder how projects appear in command pickers (e.g. “op: New issue”). Newly-discovered projects sort alphabetically below the curated list. Reset to alphabetical clears your custom order.",
+      cls: "setting-item-description",
+    });
+    this.renderProjectOrder(containerEl);
 
     containerEl.createEl("h2", { text: "Terminal" });
     new Setting(containerEl)

@@ -5,7 +5,7 @@ import { EventBus } from "./eventBus";
 import { IssueStore } from "./issueStore";
 import { createIssue, type CreateIssueInput, type Priority } from "./createIssue";
 import { findIssue } from "./findIssue";
-import { listProjects } from "./projects";
+import { applyProjectOrder, listProjects } from "./projects";
 import {
   AppendCommitModal,
   FindIssueModal,
@@ -751,7 +751,7 @@ export default class OpPlugin extends Plugin {
   }
 
   private runNewIssueCommand(): void {
-    const projects = listProjects(this.app);
+    const projects = applyProjectOrder(listProjects(this.app), this.settings.projectOrder);
     if (projects.length === 0) {
       new Notice("No projects found under Projects/");
       return;
