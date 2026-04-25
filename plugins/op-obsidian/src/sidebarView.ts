@@ -106,11 +106,13 @@ export class OpSidebarView extends ItemView {
     const ul = this.bodyEl.createEl("ul", { cls: "op-sidebar__list" });
     for (const e of issues) {
       const li = ul.createEl("li", { cls: "op-sidebar__item" });
+      const linkText = `${e.id} · ${stripIdPrefix(e.title, e.id)}`;
       const link = li.createEl("a", {
         cls: "op-sidebar__link",
-        text: `${e.id} · ${stripIdPrefix(e.title, e.id)}`,
+        text: linkText,
       });
       link.setAttr("href", "#");
+      link.setTooltip(linkText, { delay: 250 });
       link.addEventListener("click", (ev) => {
         ev.preventDefault();
         void this.openEntry(e);
