@@ -1,4 +1,4 @@
-import { ItemView, TFile, WorkspaceLeaf, setIcon, setTooltip } from "obsidian";
+import { ItemView, TFile, WorkspaceLeaf, prepareFuzzySearch, setIcon, setTooltip } from "obsidian";
 import type { IssueStore } from "./issueStore";
 import type { EventBus } from "./eventBus";
 import type { IssueEntry, LifecycleEvent } from "./types";
@@ -26,6 +26,8 @@ export class OpSidebarView extends ItemView {
   private active: TabId = "issues";
   private unsubscribe?: () => void;
   private bodyEl!: HTMLElement;
+  private filterInput!: HTMLInputElement;
+  private filterQuery = "";
   private tabButtons = new Map<TabId, HTMLElement>();
   private rafPending = false;
 
@@ -71,6 +73,20 @@ export class OpSidebarView extends ItemView {
       this.tabButtons.set(t.id, btn);
     }
 
+    this.filterInput = root.createEl("input", {
+      cls: "op-sidebar__filter",
+      attr: {
+        type: "search",
+        placeholder: "Filter issues…",
+        "aria-label": "Filter issues",
+        spellcheck: "false",
+      },
+    });
+    this.filterInput.addEventListener("input", () => {
+      this.filterQuery = this.filterInput.value;
+      this.scheduleRender();
+    });
+
     this.bodyEl = root.createDiv({ cls: "op-sidebar__body" });
 
     this.unsubscribe = this.bus.on("*", (ev) => {
@@ -99,10 +115,11 @@ export class OpSidebarView extends ItemView {
     for (const [id, btn] of this.tabButtons) {
       btn.toggleClass("is-active", id === this.active);
     }
-    const issues = this.pickFor(this.active);
+    const issues = filterEntries(this.pickFor(this.active), this.filterQuery);
     this.bodyEl.empty();
     if (issues.length === 0) {
-      this.bodyEl.createDiv({ cls: "op-sidebar__empty", text: "(none)" });
+      const emptyText = this.filterQuery.trim() ? "(no matches)" : "(none)";
+      this.bodyEl.createDiv({ cls: "op-sidebar__empty", text: emptyText });
       return;
     }
     const ul = this.bodyEl.createEl("ul", { cls: "op-sidebar__list" });
@@ -231,6 +248,22 @@ function byResolvedDesc(a: IssueEntry, b: IssueEntry): number {
 
 function stripIdPrefix(title: string, id: string): string {
   return title.startsWith(`${id} `) ? title.slice(id.length + 1) : title;
+}
+
+type MatcherFactory = (query: string) => (text: string) => unknown;
+
+export function filterEntries(
+  entries: IssueEntry[],
+  query: string,
+  makeMatcher: MatcherFactory = prepareFuzzySearch,
+): IssueEntry[] {
+  const q = query.trim();
+  if (!q) return entries;
+  const match = makeMatcher(q);
+  return entries.filter((e) => {
+    const target = `${e.id} ${stripIdPrefix(e.title, e.id)} ${e.project}`;
+    return match(target) !== null;
+  });
 }
 
 function ghIssueNumber(url: string): number | undefined {

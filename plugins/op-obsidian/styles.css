@@ -30,6 +30,23 @@
   border-bottom-color: var(--text-accent);
 }
 
+.op-sidebar__filter {
+  width: 100%;
+  margin-bottom: 0.4rem;
+  padding: 0.3rem 0.5rem;
+  font-size: var(--font-ui-small);
+  color: var(--text-normal);
+  background: var(--background-secondary);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 4px;
+  box-shadow: none;
+}
+
+.op-sidebar__filter:focus {
+  outline: none;
+  border-color: var(--interactive-accent);
+}
+
 .op-sidebar__body {
   margin-top: 0.25rem;
 }
