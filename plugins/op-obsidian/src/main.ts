@@ -12,6 +12,7 @@ import {
   IssuePickerModal,
   NewIssueModal,
   ProjectSuggestModal,
+  RelationPickerModal,
   ScaffoldProjectModal,
   SetGithubIssueModal,
   SetPrModal,
@@ -25,8 +26,15 @@ import { parseNewScopePayload, type NewScopeMode } from "./setScopePure";
 import { setEvaluation } from "./setEvaluation";
 import { setSection } from "./setSection";
 import { setFlow, type Complexity, type Flow } from "./setFlow";
-import { applyLink, removeLink, linkCheck, migrateLinks } from "./links";
-import { RELATION_NAMES } from "./relations";
+import {
+  applyLink,
+  listDanglingLinkedIds,
+  listLinkedTargets,
+  removeLink,
+  linkCheck,
+  migrateLinks,
+} from "./links";
+import { RELATION_NAMES, type RelationName } from "./relations";
 import { runEvaluatorFlow } from "./evaluator";
 import { launchHeadless } from "./launchHeadless";
 import {
@@ -512,6 +520,18 @@ export default class OpPlugin extends Plugin {
       id: "op-reset-flow",
       name: "op: reset flow / complexity",
       callback: () => this.runResetFlowCommand(),
+    });
+
+    this.addCommand({
+      id: "op-set-link",
+      name: "op: set issue link",
+      callback: () => this.runSetLinkCommand(),
+    });
+
+    this.addCommand({
+      id: "op-remove-link",
+      name: "op: remove issue link",
+      callback: () => this.runRemoveLinkCommand(),
     });
 
     this.addCommand({
@@ -1252,6 +1272,110 @@ export default class OpPlugin extends Plugin {
         }
       }).open();
     });
+  }
+
+  private runSetLinkCommand(): void {
+    this.pickIssueInteractive((srcEntry) => {
+      new RelationPickerModal(
+        this.app,
+        RELATION_NAMES,
+        (relation) => this.pickSetLinkTarget(srcEntry, relation),
+        `Pick relation for ${srcEntry.id}`,
+      ).open();
+    });
+  }
+
+  private pickSetLinkTarget(srcEntry: IssueEntry, relation: RelationName): void {
+    new FindIssueModal(this.app, (raw) => {
+      const projects = listProjects(this.app);
+      const result = findIssue(this.store, { raw, projects });
+      if (result.matches.length === 0) {
+        new Notice(
+          `op: no match for ${result.interpretation}. Try an ID (e.g. OP-12) or a title fragment.`,
+        );
+        return;
+      }
+      if (result.matches.length === 1) {
+        void this.doApplyLink(srcEntry, relation, result.matches[0]);
+        return;
+      }
+      new IssuePickerModal(this.app, result.matches, (dst) =>
+        void this.doApplyLink(srcEntry, relation, dst),
+      ).open();
+    }).open();
+  }
+
+  private async doApplyLink(
+    src: IssueEntry,
+    relation: RelationName,
+    dst: IssueEntry,
+  ): Promise<void> {
+    try {
+      const res = await applyLink(this.app, this.store, {
+        srcId: src.id,
+        dstId: dst.id,
+        relation,
+      });
+      const cleanedNote = res.cleaned.length ? ` · cleaned ${res.cleaned.join(", ")}` : "";
+      const changeNote = res.changed ? "linked" : "already linked";
+      new Notice(`op: ${src.id} ${relation} → ${dst.id} (${changeNote})${cleanedNote}`);
+    } catch (err: any) {
+      console.error("[op-obsidian] op-set-link failed", err);
+      new Notice(`op-set-link failed: ${err?.message ?? err}`);
+    }
+  }
+
+  private runRemoveLinkCommand(): void {
+    this.pickIssueInteractive((srcEntry) => {
+      new RelationPickerModal(
+        this.app,
+        RELATION_NAMES,
+        (relation) => this.pickRemoveLinkTarget(srcEntry, relation),
+        `Pick relation to remove from ${srcEntry.id}`,
+      ).open();
+    });
+  }
+
+  private pickRemoveLinkTarget(srcEntry: IssueEntry, relation: RelationName): void {
+    const linked = listLinkedTargets(this.app, this.store, srcEntry.id, relation);
+    if (linked.length === 0) {
+      const dangling = listDanglingLinkedIds(this.app, this.store, srcEntry.id, relation);
+      if (dangling.length > 0) {
+        new Notice(
+          `op: ${srcEntry.id} has no resolvable ${relation} links` +
+            ` (${dangling.length} dangling — run 'op: check issue link drift' to repair)`,
+        );
+      } else {
+        new Notice(`op: ${srcEntry.id} has no ${relation} links to remove`);
+      }
+      return;
+    }
+    if (linked.length === 1) {
+      void this.doRemoveLink(srcEntry, relation, linked[0]);
+      return;
+    }
+    new IssuePickerModal(this.app, linked, (dst) =>
+      void this.doRemoveLink(srcEntry, relation, dst),
+    ).open();
+  }
+
+  private async doRemoveLink(
+    src: IssueEntry,
+    relation: RelationName,
+    dst: IssueEntry,
+  ): Promise<void> {
+    try {
+      const res = await removeLink(this.app, this.store, {
+        srcId: src.id,
+        dstId: dst.id,
+        relation,
+      });
+      const changeNote = res.changed ? "removed" : "already absent";
+      new Notice(`op: ${src.id} ${relation} ✗ ${dst.id} (${changeNote})`);
+    } catch (err: any) {
+      console.error("[op-obsidian] op-remove-link failed", err);
+      new Notice(`op-remove-link failed: ${err?.message ?? err}`);
+    }
   }
 
   private runSetGithubIssueCommand(): void {

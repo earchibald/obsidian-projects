@@ -4,6 +4,7 @@ import type { ProjectInfo } from "./projects";
 import type { Priority, CreateIssueInput } from "./createIssue";
 import type { IssueEntry } from "./types";
 import type { AgentId } from "./agentProfiles";
+import type { RelationName } from "./relations";
 import {
   validateNewIssueInput,
   validateScaffoldInput,
@@ -31,6 +32,27 @@ export class AgentPickerModal extends FuzzySuggestModal<AgentId> {
   }
   onChooseItem(a: AgentId): void {
     this.onChoose(a);
+  }
+}
+
+export class RelationPickerModal extends FuzzySuggestModal<RelationName> {
+  constructor(
+    app: App,
+    private relations: RelationName[],
+    private onChoose: (relation: RelationName) => void,
+    private placeholder = "Pick relation",
+  ) {
+    super(app);
+    this.setPlaceholder(this.placeholder);
+  }
+  getItems(): RelationName[] {
+    return this.relations;
+  }
+  getItemText(r: RelationName): string {
+    return r;
+  }
+  onChooseItem(r: RelationName): void {
+    this.onChoose(r);
   }
 }
 
