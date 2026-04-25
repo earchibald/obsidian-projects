@@ -10,6 +10,11 @@ Always, in order:
 
 1. **Semver bump + build.** Run `node scripts/bump-version.mjs <patch|minor|major>` so `plugins/op-obsidian/manifest.json`, `plugins/op-obsidian/package.json`, and `plugins/op/.claude-plugin/plugin.json` move in lockstep. Pick the bump level by judgment (patch = fix, minor = additive, major = breaking). The script then runs `npm run build` in `plugins/op-obsidian/` and asserts `main.js` is fresher than `manifest.json` — a green run guarantees the artifact matches the source you just bumped (OP-105 guardrail). If `node_modules/` is missing, the script aborts with an actionable error; install deps (`npm ci` when `package-lock.json` exists, else `npm install`) in `plugins/op-obsidian/` and re-run.
 
+   **Fresh-worktree fixup mode.** In a freshly created worktree (`EnterWorktree` / `git worktree add`), `plugins/op-obsidian/node_modules/` does not exist. The script writes the new version into all three JSON files **before** the `npm run build` step fails with `Cannot find package 'esbuild'` — so the bump is already on disk when you see the error. Recovery:
+
+   1. `cd plugins/op-obsidian && npm ci` (or `npm install` if no lockfile — but op-obsidian has one).
+   2. Re-run with the **literal version** that's now in the JSON files, e.g. `node scripts/bump-version.mjs 0.37.3` — **not** `patch`/`minor`/`major`, which would compound the bump. The script idempotently re-runs the build step against the version already on disk.
+
 2. **Sync into the active vault.**
    ```bash
    VAULT=$(obsidian vault | awk -F'\t' '/^path\t/{print $2}')
