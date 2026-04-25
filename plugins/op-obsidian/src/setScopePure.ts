@@ -1,3 +1,45 @@
+export type NewScopeMode = "bullets" | "body";
+
+export type ParsedNewScope =
+  | { kind: "bullets"; bullets: string[] }
+  | { kind: "body"; body: string };
+
+// Validate and shape the raw `scope=` value passed to op-new (and the
+// op-scaffold seed path). Bullets mode is the default — it splits the payload
+// into trimmed bullets that the renderer wraps as `- [ ]`. We reject H2s and
+// code-fence lines there because the renderer would flatten them into bullets
+// (see OP-124). Body mode writes the payload verbatim under `## Scope` and
+// only rejects H2s, which would terminate the section.
+export function parseNewScopePayload(raw: string, mode: NewScopeMode): ParsedNewScope {
+  if (typeof raw !== "string") throw new Error("scope payload must be a string");
+  const trimmed = raw.replace(/\r\n/g, "\n").replace(/\s+$/g, "");
+  if (!trimmed.trim()) throw new Error("scope payload is empty");
+  if (/^##\s+/m.test(trimmed)) {
+    if (mode === "body") {
+      throw new Error(
+        "scope payload must not contain H2 headings (`## ...`) — they would terminate the Scope section",
+      );
+    }
+    throw new Error(
+      "scope payload contains an H2 heading (`## ...`). H2s would be flattened into `- [ ]` bullets. Pass `scope_mode=body` to write the payload verbatim under `## Scope`, or use `op-set-scope mode=body` after creation.",
+    );
+  }
+  if (mode === "body") {
+    return { kind: "body", body: trimmed };
+  }
+  if (/^```/m.test(trimmed)) {
+    throw new Error(
+      "scope payload contains a code fence (```), which would be flattened into `- [ ]` bullets. Pass `scope_mode=body` to write the payload verbatim under `## Scope`.",
+    );
+  }
+  const bullets = trimmed
+    .split(/[\n,]/)
+    .map((l) => l.trim())
+    .filter(Boolean);
+  if (bullets.length === 0) throw new Error("scope payload is empty");
+  return { kind: "bullets", bullets };
+}
+
 export function normalizeScopePayload(raw: string): string {
   if (typeof raw !== "string") throw new Error("scope payload must be a string");
   const trimmed = raw.replace(/\r\n/g, "\n").replace(/\s+$/g, "");

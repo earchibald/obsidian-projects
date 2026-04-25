@@ -15,6 +15,9 @@ export interface RenderInput {
   title: string;
   priority: Priority;
   scope: string[];
+  // When set, written verbatim under `## Scope` instead of bullets. Mutually
+  // exclusive with `scope` — if both are present, `scopeBody` wins.
+  scopeBody?: string;
   assignee: string;
   githubIssue?: string;
 }
@@ -37,7 +40,9 @@ export function renderIssueNote(i: RenderInput): string {
 
   const body: string[] = [`# ${i.title}`, ""];
   body.push("## Scope", "");
-  if (i.scope.length > 0) {
+  if (i.scopeBody && i.scopeBody.trim().length > 0) {
+    body.push(i.scopeBody.replace(/\s+$/g, ""));
+  } else if (i.scope.length > 0) {
     for (const bullet of i.scope) {
       body.push(`- [ ] ${bullet.trim()}`);
     }

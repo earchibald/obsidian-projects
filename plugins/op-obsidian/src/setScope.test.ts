@@ -4,6 +4,7 @@ import {
   normalizeScopePayload,
   rewriteFullBody,
   normalizeBodyPayload,
+  parseNewScopePayload,
 } from "./setScopePure";
 
 const FM = `---
@@ -98,6 +99,53 @@ old plan
 
   it("body mode rejects empty payload", () => {
     expect(() => normalizeBodyPayload("   \n")).toThrow(/empty/);
+  });
+
+  it("parseNewScopePayload bullets mode splits on newlines into trimmed bullets", () => {
+    const out = parseNewScopePayload("first bullet\n  second bullet  \n\nthird", "bullets");
+    expect(out).toEqual({
+      kind: "bullets",
+      bullets: ["first bullet", "second bullet", "third"],
+    });
+  });
+
+  it("parseNewScopePayload bullets mode also splits on commas (legacy URI delimiter)", () => {
+    const out = parseNewScopePayload("a, b, c", "bullets");
+    expect(out).toEqual({ kind: "bullets", bullets: ["a", "b", "c"] });
+  });
+
+  it("parseNewScopePayload bullets mode rejects payload containing an H2", () => {
+    expect(() =>
+      parseNewScopePayload("intro\n## Deliverables\nfoo", "bullets"),
+    ).toThrow(/H2|scope_mode=body/);
+  });
+
+  it("parseNewScopePayload bullets mode rejects payload containing a code fence", () => {
+    expect(() =>
+      parseNewScopePayload("intro\n```yaml\nkey: val\n```", "bullets"),
+    ).toThrow(/code fence|scope_mode=body/);
+  });
+
+  it("parseNewScopePayload body mode returns the trimmed payload verbatim", () => {
+    const out = parseNewScopePayload("Para one.\n\n- a\n- b\n", "body");
+    expect(out).toEqual({ kind: "body", body: "Para one.\n\n- a\n- b" });
+  });
+
+  it("parseNewScopePayload body mode allows code fences", () => {
+    const raw = "Spec:\n```yaml\nkey: val\n```";
+    const out = parseNewScopePayload(raw, "body");
+    expect(out).toEqual({ kind: "body", body: raw });
+  });
+
+  it("parseNewScopePayload body mode rejects H2 (would terminate ## Scope section)", () => {
+    expect(() =>
+      parseNewScopePayload("Intro\n## Deliverables\nfoo", "body"),
+    ).toThrow(/H2/);
+  });
+
+  it("parseNewScopePayload rejects empty payload in either mode", () => {
+    expect(() => parseNewScopePayload("", "bullets")).toThrow(/empty/);
+    expect(() => parseNewScopePayload("   \n\n", "body")).toThrow(/empty/);
   });
 
   it("handles ## Scope at end of file (no trailing section)", () => {

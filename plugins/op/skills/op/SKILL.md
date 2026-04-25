@@ -50,8 +50,8 @@ All `op-*` commands take `key=value` arguments (not `--flag`). Each prints a one
 
 | Command | Required | Optional | Effect |
 | :--- | :--- | :--- | :--- |
-| `op-scaffold` | `slug`, `prefix` | `repo_path`, `title`, `priority`, `scope` | creates `Projects/<slug>/<slug>.base` + `STATUS.md`; writes `repo_path:` (absolute path only) if given; seeds `<PREFIX>-1` if `title` given |
-| `op-new` | `project`, `title` | `priority`, `scope`, `github_issue` | creates next-N issue with sanitized filename and schema-conformant frontmatter; when the plugin's `autoCreateGithubIssue` setting is on and no `github_issue` is passed, also runs `gh issue create` in the project's `repo_path` and writes the URL to `github_issue:` |
+| `op-scaffold` | `slug`, `prefix` | `repo_path`, `title`, `priority`, `scope`, `scope_mode` | creates `Projects/<slug>/<slug>.base` + `STATUS.md`; writes `repo_path:` (absolute path only) if given; seeds `<PREFIX>-1` if `title` given. `scope_mode=bullets\|body` matches `op-new` semantics |
+| `op-new` | `project`, `title` | `priority`, `scope`, `scope_mode`, `github_issue` | creates next-N issue with sanitized filename and schema-conformant frontmatter. Default `scope_mode=bullets` splits `scope=` on newlines and wraps each line as `- [ ]`; rejects payloads containing `## ` H2s or code fences (would be flattened). Pass `scope_mode=body` to write `scope=` verbatim under `## Scope` (bullets, paragraphs, code fences allowed; H2s still rejected since they would terminate the section). When the plugin's `autoCreateGithubIssue` setting is on and no `github_issue` is passed, also runs `gh issue create` in the project's `repo_path` and writes the URL to `github_issue:` |
 | `op-work` | `issue` | — | sets `status: in-progress`; creates the initial TASKS note |
 | `op-append-commit` | `issue`, `sha`, `subject` | — | idempotent append to issue's `commits:` list |
 | `op-set-pr` | `issue`, `url` | — | sets scalar `pr:` |
@@ -62,7 +62,7 @@ All `op-*` commands take `key=value` arguments (not `--flag`). Each prints a one
 | `op-migrate-links` | — | — | one-shot rewrite of legacy `parent_issue` / `subissues` to canonical `parent` / `children`. Idempotent. |
 | `op-resolve` (or `op-close-current-issue`) | `issue` (or `path`) | `status=wontfix` | sets `status: resolved`, writes `resolved: <today>`, moves into `RESOLVED ISSUES/`, trashes linked TASKS — atomically. When `closeGithubIssueOnResolve` is on and the issue has a `github_issue:` URL, also runs `gh issue close` on it; the JSON response reports `githubClosed` / `githubCloseError` |
 
-`scope` is a single value containing newline-separated bullets.
+`scope` is a single value containing newline-separated bullets. To pass richer markdown (paragraphs, sub-bullets, code fences) for the issue's `## Scope` section, set `scope_mode=body` and the payload is written verbatim. H2 headings (`## ...`) are rejected in either mode because they would terminate the Scope section.
 
 **URI senders (`obsidian://op-new?…`):** Obsidian's protocol parser is `Record<string, string>` and last-wins, so repeated `scope=a&scope=b` keys collapse to only the last value. Pack multi-value lists into a single `scope=` param using `%0A` (newline) or `,` as the delimiter; the plugin's `collectRepeated` helper splits on either. Spaces and `+`: the parser uses `decodeURIComponent`, which leaves `+` untouched — but the plugin normalizes `+` → space at the dispatch boundary to match `URLSearchParams.toString()` semantics. To preserve a literal `+`, encode it as `%2B`.
 
@@ -92,7 +92,7 @@ Prefix → slug is **not** a plugin command — scan `Projects/*/STATUS.md` dire
    - **Detailed** (> 140 chars, or multi-line regardless of length) → propose title, priority, summary paragraph + checklist; preserve any explicit acceptance criteria verbatim; confirm.
    - **If unsure** (borderline length, ambiguous structure) → treat as detailed and surface the ambiguity in the confirm step rather than guessing silently.
 3. **Always pause for explicit user confirmation before mutating vault or repo** — even in auto mode. Issue creation is a commitment artifact.
-4. Run `obsidian op-new project=<slug> title="<title>" priority=<low|med|high> [scope="bullet 1\nbullet 2"]`.
+4. Run `obsidian op-new project=<slug> title="<title>" priority=<low|med|high> [scope="bullet 1\nbullet 2"]`. For multi-paragraph scope or scope with code fences/sub-bullets, add `scope_mode=body` so the payload is written verbatim under `## Scope` instead of being wrapped per-line as `- [ ]`. Bullets-mode payloads must not contain `## ` H2s or code fences — the plugin rejects them rather than mangle the body.
 5. Report the new id and path, and include the `obsidian://` link for the new issue note so the user can open it in one click; suggest `/op:issue <PREFIX>-<N>`.
 
 ---

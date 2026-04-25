@@ -20,6 +20,7 @@ import { scaffoldProject, type ScaffoldProjectResult } from "./scaffoldProject";
 import { workIssue } from "./workIssue";
 import { appendCommit, setPr } from "./commits";
 import { setScope } from "./setScope";
+import { parseNewScopePayload, type NewScopeMode } from "./setScopePure";
 import { setEvaluation } from "./setEvaluation";
 import { setFlow, type Complexity, type Flow } from "./setFlow";
 import { applyLink, removeLink, linkCheck, migrateLinks } from "./links";
@@ -1296,7 +1297,7 @@ export default class OpPlugin extends Plugin {
     const seedPriority = seedTitle
       ? ((params.priority as Priority | undefined) ?? "med")
       : undefined;
-    const seedScope = seedTitle ? collectRepeated(params, "scope") : undefined;
+    const seedScopeShape = seedTitle ? resolveScopeParams(params) : {};
     const repoPath = params.repo_path?.trim() || undefined;
     return scaffoldProject(this.app, this.store, {
       slug,
@@ -1304,7 +1305,8 @@ export default class OpPlugin extends Plugin {
       repoPath,
       seedTitle,
       seedPriority,
-      seedScope,
+      seedScope: seedScopeShape.scope,
+      seedScopeBody: seedScopeShape.scopeBody,
     });
   }
 
@@ -1314,10 +1316,22 @@ export default class OpPlugin extends Plugin {
       const parsed = parseNewParams(params);
       if (!parsed.ok) return parsed.error;
       const { slug, title, priority } = parsed.value;
-      const scope = collectRepeated(params, "scope");
-      const res = await createIssue(this.app, this.store, { slug, title, priority, scope });
+      const { scope, scopeBody } = resolveScopeParams(params);
+      const res = await createIssue(this.app, this.store, {
+        slug,
+        title,
+        priority,
+        scope,
+        scopeBody,
+      });
       if (this.settings.github.autoCreateGithubIssue) {
-        await this.autoCreateGithubIssueFor(res.path, res.id, { slug, title, priority, scope }).catch(
+        await this.autoCreateGithubIssueFor(res.path, res.id, {
+          slug,
+          title,
+          priority,
+          scope,
+          scopeBody,
+        }).catch(
           (err) => console.error("[op-obsidian] cli auto-create github issue failed", err),
         );
       }
@@ -2007,18 +2021,25 @@ export default class OpPlugin extends Plugin {
       throw new Error("op-new URI requires project and title");
     }
     const priority = (params.priority as Priority | undefined) ?? "med";
-    const scope = collectRepeated(params, "scope");
+    const { scope, scopeBody } = resolveScopeParams(params);
     const githubIssue = params.github_issue?.trim() || undefined;
     const res = await createIssue(this.app, this.store, {
       slug,
       title,
       priority,
       scope,
+      scopeBody,
       githubIssue,
     });
     new Notice(`Created ${res.id}`);
     if (!githubIssue && this.settings.github.autoCreateGithubIssue) {
-      await this.autoCreateGithubIssueFor(res.path, res.id, { slug, title, priority, scope }).catch(
+      await this.autoCreateGithubIssueFor(res.path, res.id, {
+        slug,
+        title,
+        priority,
+        scope,
+        scopeBody,
+      }).catch(
         (err) => console.error("[op-obsidian] uri auto-create failed", err),
       );
     }
@@ -2042,10 +2063,34 @@ function defaultBinaryFor(id: AgentId): string {
 
 function buildGithubBody(id: string, input: CreateIssueInput): string {
   const lines = [`Tracked as op issue **${id}**.`, ""];
-  if (input.scope && input.scope.length > 0) {
+  if (input.scopeBody && input.scopeBody.trim().length > 0) {
+    lines.push("## Scope", "", input.scopeBody.replace(/\s+$/g, ""));
+  } else if (input.scope && input.scope.length > 0) {
     lines.push("## Scope", "");
     for (const b of input.scope) lines.push(`- [ ] ${b}`);
   }
   return lines.join("\n").trim();
+}
+
+// Resolve the raw `scope=` / `scope_mode=` params into either bullets or a
+// verbatim body. Reject H2/code-fence payloads in bullets mode (OP-124).
+// Returns an empty object when no scope was supplied.
+function resolveScopeParams(
+  params: Record<string, string>,
+): { scope?: string[]; scopeBody?: string } {
+  const raw = params.scope;
+  if (typeof raw !== "string" || raw.trim() === "") return {};
+  const rawMode = params.scope_mode;
+  let mode: NewScopeMode = "bullets";
+  if (rawMode !== undefined && rawMode !== "") {
+    if (rawMode !== "bullets" && rawMode !== "body") {
+      throw new Error("scope_mode must be 'bullets' or 'body'");
+    }
+    mode = rawMode;
+  }
+  const parsed = parseNewScopePayload(raw, mode);
+  return parsed.kind === "bullets"
+    ? { scope: parsed.bullets }
+    : { scopeBody: parsed.body };
 }
 
