@@ -241,21 +241,27 @@ flowchart TD
 
 ## 4. Smoother Obsidian ↔ iTerm transitions
 
-**Today.** Plugin runs `tell application "iTerm" to activate` then opens a tab/window. Closing the iTerm window snap-backs focus to Obsidian (macOS WindowServer rule, not our bug — but felt as our bug). Cold-launch flicker is ~250ms.
+**Today.** The plugin's terminal launch path (`terminalLaunch.ts`) still uses `osascript`/AppleScript for the iTerm tab-create + activate calls — see `buildITermOsascript()` and the `pExecFile("/usr/bin/osascript", ...)` callsite at `terminalLaunch.ts:118-119`. This is **legacy code that should already be gone**: OP-101 Step 5 deleted the AppleScript driver and introduced the iTerm WebSocket TS wrapper at `plugins/op-obsidian/src/iterm/` (with `client.ts`, `driver.ts`, `proto/api.generated.{js,d.ts}`). The orchestrator path (`orchestrator.ts`) already routes through that wrapper; `terminalLaunch.ts` is the unmigrated remainder. Closing the iTerm window snap-backs focus to Obsidian (macOS WindowServer rule, not our bug — but felt as our bug). Cold-launch flicker is ~250ms.
 
-**Proposed.** Three concrete fixes from the focus research, none speculative:
+**The remaining legitimate `osascript` site** is `iterm/cookie.ts` — first-run AppleScript prompt for the iTerm Python API auth `(cookie, key)` pair. That's a one-shot, has no clean WebSocket alternative (the cookie is what bootstraps the WebSocket), and is documented as "the only remaining osascript site." Leave that alone.
 
-1. **Background-launch mode.** New setting: "Launch agent without stealing focus." When on, the plugin runs `open -ga iTerm` for cold starts. **Clarification on `-g` semantics:** `-g` means "do not bring the application to the foreground" — it holds for both cold-start (where it suppresses the activation that would otherwise happen when the app launches) and when iTerm is already running (where it creates the tab without raising the window). When iTerm is already running, `open -ga iTerm` by itself doesn't create a new tab; that step still requires the AppleScript tab-creation call. The full sequence is: `open -ga iTerm` (ensure process is alive, no activation), then the existing tab-create AppleScript, then `tell application "Obsidian" to activate`. The net result is Obsidian stays focused throughout.
-   
-   **AppleScript animation race.** The `tell application "Obsidian" to activate` runs synchronously in the same AppleScript block but fires before iTerm's new-tab animation (~200ms) completes. In practice this means Obsidian is re-focused while iTerm is mid-fade, which looks fine (the iTerm tab is behind Obsidian). However, if the plugin fires a second AppleScript operation within that ~200ms window, it will see iTerm as the frontmost app. Fix: add `delay 0.3` in the AppleScript between the tab-create and the Obsidian activate. This is free — the user doesn't see the delay since Obsidian was already focused.
-   
-   Net result: agent boots in the background while the user keeps typing in their note. Default off (current behavior is what most people want when they hit "launch"); on for power users who use `op: launch agent` from inside a flow.
+**Proposed.** Four fixes — three behavioral, one tech-debt cleanup that this work **must** carry as a prerequisite:
+
+0. **Migrate `terminalLaunch.ts` off AppleScript before adding new behavior to it.** Replace `buildITermOsascript()` and the `pExecFile("/usr/bin/osascript", ...)` callsites with calls to `iterm/client.ts` (`createWindow`, `selectSession`, etc.). The non-orchestrator launch path should look like the orchestrator path: WebSocket-only, with `cookie.ts` as the single auth path. Once `terminalLaunch.ts` is clean, layering the focus-control fixes below is straightforward; layering them on top of the AppleScript path means writing more AppleScript, which the codebase has already decided to retire.
+1. **Background-launch mode.** New setting: "Launch agent without stealing focus." When on, the plugin runs `child_process.execFile('open', ['-ga', 'iTerm'])` for cold starts (the `-g` flag launches without activation), then uses the iTerm WebSocket wrapper to create the tab/session without bringing iTerm to the front. The wrapper's `CreateTab`/`CreateWindow` RPCs do not implicitly activate the iTerm app — activation is a separate AppleScript-only side-effect of the legacy path. **This is a free behavioral improvement of the migration in step 0.** Default off (current behavior is what most people want when they hit "launch"); on for power users who use `op: launch agent` from inside a flow.
 2. **Per-launch override.** `⌥+click` on the sidebar launch button, or `⌥↵` in the pick-and-act modal, toggles background launch for that one launch.
-3. **Document tmux-CC "Hide on close tab" preference.** iTerm Prefs → Advanced → "When closing a tmux tab" → **Hide**. With this, closing an iTerm tab keeps the tmux window alive and the iTerm session in front — *eliminates* the snap-back to Obsidian for tmux-CC users. We can't set this for the user, but we can detect and prompt: on first launch with tmux-CC mode active, check `defaults read com.googlecode.iterm2 SuppressCloseTabConfirmationAlert` (best-effort proxy) and if the kill-on-close behavior is detected, emit a one-time clickable Notice with a "Open iTerm pref pane" link.
+3. **Cross-app activation (Obsidian re-focus) without `osascript`.** When the user *does* want focus to return to Obsidian after a launch (the inverse of background-launch), use `child_process.execFile('open', ['-a', 'Obsidian'])` rather than `tell application "Obsidian" to activate`. `open -a` is the standard non-AppleScript path for cross-app activation and works the same way the system uses for "Open With…" handlers. Zero AppleScript surface added.
+4. **Document the iTerm tmux-integration prefs that minimize snap-back.** iTerm 3.6.10 has no single "Hide on close tab" toggle — that pref doesn't exist with that label, contrary to the original spec text. The closest equivalent is a **two-pref combination** under iTerm Settings:
+   - **Settings → Profiles → Session → After a session ends → No Action.** This stops iTerm from auto-closing the iTerm tab when its underlying tmux window goes away.
+   - **Settings → Advanced → Tmux Integration → "Close tmux windows after detaching?" → No.** This stops iTerm from telling tmux to kill the window when the iTerm tab closes — i.e. the tmux window survives, ready for re-attach.
+
+   The Tmux Integration section also exposes related knobs that affect launch UX: **"Should new tmux windows not created by iTerm2 open in the current window?"** (default Yes — keep it on so op-launched windows reuse the user's existing iTerm window instead of opening a fresh one), and **"Disable window position restoration in tmux integration"** (Yes — prevents iTerm from second-guessing op's layout).
+
+   We can't set these for the user (iTerm prefs are app-private), but we can detect them via `defaults read com.googlecode.iterm2 …` and emit a **one-time actionable Notice on first tmux-CC launch** with the pref names + an `[Open iTerm settings]` button (which runs `open -a iTerm` and lets the user navigate; iTerm doesn't expose a deep-link to a specific pref pane).
 
 **Rejected as researched mirages:**
 - *SwiftUI shim* — out of scope. Building a separate launcher binary to dodge focus rules adds an installation surface that nobody will accept for ~100ms of polish. The seed prompt mentioned this hopefully; the honest answer is no.
-- *`tell System Events to set frontmost`* — same WindowServer call as `activate`, no behavioral change.
+- *`tell System Events to set frontmost`* — same WindowServer call as `activate`, no behavioral change. Also dead-end given the AppleScript-retirement direction.
 - *Custom ⌘W rebind in iTerm* — breaks "close tab" globally; non-starter.
 
 **Focus stack — why the snap-back happens (and where each fix intervenes):**
@@ -268,9 +274,9 @@ sequenceDiagram
   participant I as iTerm
   participant T as tmux
 
-  Note over U,T: TODAY (snap-back path)
+  Note over U,T: TODAY (legacy AppleScript path; snap-back)
   U->>O: click "launch agent"
-  O->>I: osascript activate + new tab
+  O->>I: osascript activate + create tab
   W-->>O: deactivate (slot 2)
   W-->>I: activate (slot 1)
   U->>I: ⌘W (close tab — tmux kill-window)
@@ -278,24 +284,26 @@ sequenceDiagram
   T-->>I: window count = 0
   W-->>O: re-activate (next in stack)  ← snap-back
 
-  Note over U,T: PROPOSED — fix #1 (open -ga)
+  Note over U,T: PROPOSED — fix #0 + #1 (WebSocket + open -ga)
   U->>O: ⌥+click "launch agent"
-  O->>I: open -ga iTerm
-  Note right of W: iTerm launches WITHOUT activating
+  O->>O: child_process.execFile('open', ['-ga', 'iTerm'])
+  O->>I: WebSocket: CreateTab (no activate side-effect)
   Note over O: Obsidian stays focused — no flicker
 
-  Note over U,T: PROPOSED — fix #3 (iTerm "Hide on close tab")
-  U->>I: ⌘W
-  I->>T: detach (NOT kill)
+  Note over U,T: PROPOSED — fix #4 (iTerm tmux-integration prefs)
+  U->>I: ⌘W on tmux tab
+  Note over I: pref "After session ends" = No Action
+  Note over I: pref "Close tmux windows after detaching" = No
+  I-xT: tmux window NOT killed
   Note over T: window survives, ready for re-attach
   Note over I: iTerm has other tabs/windows — stays frontmost — no snap-back
 ```
 
-**Why it feels better.** Two real fixes (`open -ga`, post-create activate-bounce) eliminate the worst transitions. The tmux-CC tip is a free win for users who take it.
+**Why it feels better.** Three real wins: the AppleScript-retirement debt gets paid down (instead of accumulated); background-launch becomes possible cleanly via the WebSocket wrapper; the iTerm pref tip eliminates the snap-back for users who configure their tmux integration as recommended. No new AppleScript anywhere.
 
-**Cost / risk.** Tiny. macOS-only, which we already are.
+**Cost / risk.** Larger than the original estimate. Step 0 (migration) is the dominant cost — `terminalLaunch.ts` is ~322 lines and the AppleScript paths are central, but the WebSocket wrapper already exists and the orchestrator path proves the migration is feasible. Behavioral fixes (1–3) are small once Step 0 lands. macOS-only throughout, matching existing platform scope.
 
-**Verdict.** `RECOMMEND` for the two fixes + the prompt. `REJECT` SwiftUI shim.
+**Verdict.** `RECOMMEND`, with a hard sequencing rule: **Step 0 (AppleScript retirement) ships first**, then steps 1–4 layer on. Do not add new AppleScript callsites to introduce focus-control behavior, even temporarily. `REJECT` SwiftUI shim and the other listed mirages.
 
 ---
 
@@ -624,11 +632,11 @@ Each section becomes its own follow-up issue, sized for one PR. Suggested sequen
 5. **§6 Sidebar polish** (1 PR, ~120 LoC) — keyboard nav + density pref + right-click menus (§12).
 6. **§5 Badge persistence across resolve** (1 PR, ~120 LoC; needs careful tests). Sequenced after liveness probe (§1) lands. (Revised up from ~100: the TOCTOU fix, race-condition documentation, and actionable Notice add ~20 LoC net.)
 7. **§2 Note-level primary chip + §11 status strip + §10 onboarding README** (1 PR, **~400 LoC**). Revised up from ~300: the CM6 widget with proper `destroy`/`AbortController` teardown (~180 LoC), post-processor mirror (~80 LoC), GH status strip with lazy cache (~100 LoC), onboarding README scaffolder (~60 LoC). Shares the CM6 widget infrastructure — bundle justified.
-8. **§4 Terminal transition fixes** (1 PR, ~80 LoC). macOS-only; opt-in setting. Includes `delay 0.3` AppleScript fix.
+8. **§4 Terminal transition fixes** (1 PR, **~250 LoC**, revised up from ~80). macOS-only; opt-in setting for background-launch. **Includes the §4-Step-0 prerequisite: migrate `terminalLaunch.ts` off AppleScript onto the existing iTerm WebSocket TS wrapper** before layering the focus-control behavior. The orchestrator path already uses the wrapper; only the non-orchestrator launch path remains. Once that's clean, fixes #1 (`open -ga` + WebSocket tab-create) and #3 (`open -a Obsidian` instead of `tell ... activate`) drop in cleanly. Fix #4 (iTerm-prefs Notice) is independent and ships alongside.
 9. **§8 Quick-capture** (1 PR, ~80 LoC). Standalone; can ship anywhere in the sequence.
 10. **§13 Settings tab restructure** (1 PR, ~400 LoC moved + **~150 LoC new**). Revised up from ~80 new: search filter (~25 LoC), two-tier wrapper (~20 LoC), per-section JS-controlled collapsibles — using `div`+click handler, not native `<details>`, per the drag-target bug identified in the adversarial pass (~10 × 15 = ~150 LoC). Biggest single PR but pure restructure; ship after the chip+onboarding bundle so the new "Onboarding" daily setting has somewhere to live.
 
-Total: 10 PRs, roughly **1,810 LoC touched** (1,410 new + 400 moved), no breaking changes to setting semantics. Each PR ships independently. (Up from original ~1,600 estimate; the difference is the adversarial pass's additions: exec-timeout guards, widget teardown, actionable-Notice wiring, drag-safe collapsibles.)
+Total: 10 PRs, roughly **~1,980 LoC touched** (1,580 new + 400 moved), no breaking changes to setting semantics. Each PR ships independently. (Up from ~1,810 after the §4 revision: AppleScript retirement in `terminalLaunch.ts` adds ~170 LoC of migration work, but pays down the OP-101 Step-5 follow-up that should already have happened.)
 
 ## 17. Open questions for first review pass
 
