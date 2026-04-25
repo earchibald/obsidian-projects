@@ -176,3 +176,11 @@ export function parseLinkCheckParams(
   const repair = raw === "1" || raw === "true";
   return { ok: true, value: { repair } };
 }
+
+export function parseGetWorkflowParams(
+  params: Record<string, string>,
+): ParamsResult<{ project: string }> {
+  const project = params.project ?? params.slug;
+  if (!project) return { ok: false, error: "op-get-workflow failed: --project is required" };
+  return { ok: true, value: { project } };
+}

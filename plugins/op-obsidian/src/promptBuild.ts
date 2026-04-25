@@ -31,6 +31,27 @@ export async function buildPrompt(
 
   parts.push(renderSkillTrigger(profile, entry.id));
 
+  if (injection.includeWorkflow && entry.project) {
+    const workflowPath = `Projects/${entry.project}/WORKFLOW.md`;
+    const wf = app.vault.getAbstractFileByPath(workflowPath);
+    if (wf instanceof TFile) {
+      const raw = await app.vault.read(wf);
+      const body = stripFrontmatter(raw).trim();
+      if (body) {
+        const cap = Math.max(0, injection.maxWorkflowChars | 0);
+        if (cap === 0 || body.length > cap) {
+          // Over the inline cap (or inlining disabled): point at the file
+          // rather than burn kickoff context.
+          parts.push(
+            `## Project workflow\n\nSee ${workflowPath} for this project's SDLC policy. Read it before touching the repo.`,
+          );
+        } else {
+          parts.push(`## Project workflow\n\nFrom ${workflowPath}:\n\n${body}`);
+        }
+      }
+    }
+  }
+
   const header: string[] = [];
   header.push(`Issue: ${entry.id} — ${entry.title}`);
   header.push(`Project: ${entry.project}`);

@@ -19,6 +19,7 @@ import {
 import { scaffoldProject, type ScaffoldProjectResult } from "./scaffoldProject";
 import { workIssue } from "./workIssue";
 import { appendCommit, setPr } from "./commits";
+import { getWorkflow } from "./workflow";
 import { setScope } from "./setScope";
 import { parseNewScopePayload, type NewScopeMode } from "./setScopePure";
 import { setEvaluation } from "./setEvaluation";
@@ -55,6 +56,7 @@ import {
   handleOpRemoveLinkUri as handleOpRemoveLinkUriPure,
   handleOpLinkCheckUri as handleOpLinkCheckUriPure,
   handleOpMigrateLinksUri as handleOpMigrateLinksUriPure,
+  handleOpGetWorkflowUri as handleOpGetWorkflowUriPure,
   type UriHandlerDeps,
 } from "./uriHandlers";
 import {
@@ -68,6 +70,7 @@ import {
   parseSetLinkParams,
   parseRemoveLinkParams,
   parseLinkCheckParams,
+  parseGetWorkflowParams,
 } from "./cliHandlers";
 import type { IssueEntry, LifecycleEvent } from "./types";
 import { DEFAULT_SETTINGS, mergeSettings, OpSettingsTab, type OpSettings } from "./settings";
@@ -477,6 +480,12 @@ export default class OpPlugin extends Plugin {
       this.runUri("op-set-pr", normalizeUriParams(params), (p) => this.handleOpSetPrUri(p));
     });
 
+    this.registerObsidianProtocolHandler("op-get-workflow", (params) => {
+      this.runUri("op-get-workflow", normalizeUriParams(params), (p) =>
+        this.handleOpGetWorkflowUri(p),
+      );
+    });
+
     this.registerObsidianProtocolHandler("op-set-scope", (params) => {
       this.runUri("op-set-scope", normalizeUriParams(params), (p) => this.handleOpSetScopeUri(p));
     });
@@ -642,6 +651,15 @@ export default class OpPlugin extends Plugin {
         url: { value: "<url>", description: "PR URL" },
       },
       (params) => this.handleOpSetPrCli(params),
+    );
+
+    this.registerCliHandler(
+      "op-get-workflow",
+      "Read Projects/<project>/WORKFLOW.md and return {exists, path, content}. Read-only.",
+      {
+        project: { value: "<slug>", description: "Project slug (folder name under Projects/)" },
+      },
+      (params) => this.handleOpGetWorkflowCli(params),
     );
 
     this.registerCliHandler(
@@ -1112,6 +1130,7 @@ export default class OpPlugin extends Plugin {
       removeLink: (args) => removeLink(this.app, this.store, args),
       linkCheck: (opts) => linkCheck(this.app, this.store, opts),
       migrateLinks: () => migrateLinks(this.app, this.store),
+      getWorkflow: (project) => getWorkflow(this.app, project),
     };
   }
 
@@ -1147,6 +1166,12 @@ export default class OpPlugin extends Plugin {
 
   private handleOpSetPrUri(params: Record<string, string>): Promise<UriResponsePayload> {
     return handleOpSetPrUriPure(this.uriDeps(), params);
+  }
+
+  private handleOpGetWorkflowUri(
+    params: Record<string, string>,
+  ): Promise<UriResponsePayload> {
+    return handleOpGetWorkflowUriPure(this.uriDeps(), params);
   }
 
   private handleOpSetScopeUri(
@@ -1419,6 +1444,32 @@ export default class OpPlugin extends Plugin {
         pr: res.pr,
       });
       return `${command}: ${res.issueId} pr=${res.pr}`;
+    } catch (err: any) {
+      const msg = err?.message ?? String(err);
+      console.error("[op-obsidian]", command, err);
+      await writeUriResponse(this.app, { ok: false, command, error: msg });
+      return `${command} failed: ${msg}`;
+    }
+  }
+
+  private async handleOpGetWorkflowCli(params: Record<string, string>): Promise<string> {
+    const command = "op-get-workflow";
+    try {
+      const parsed = parseGetWorkflowParams(params);
+      if (!parsed.ok) return parsed.error;
+      const res = await getWorkflow(this.app, parsed.value.project);
+      await writeUriResponse(this.app, {
+        ok: true,
+        command,
+        project: res.project,
+        path: res.path,
+        exists: res.exists,
+        content: res.content,
+        size: res.size,
+      });
+      return res.exists
+        ? `${command}: ${res.project} → ${res.path} (${res.size} chars)`
+        : `${command}: ${res.project} → no WORKFLOW.md (would live at ${res.path})`;
     } catch (err: any) {
       const msg = err?.message ?? String(err);
       console.error("[op-obsidian]", command, err);

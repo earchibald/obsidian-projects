@@ -8,6 +8,7 @@ import {
   parseSetFlowParams,
   parseNewParams,
   parseScaffoldParams,
+  parseGetWorkflowParams,
 } from "./cliHandlers";
 
 describe("parseWorkParams", () => {
@@ -129,5 +130,19 @@ describe("parseScaffoldParams", () => {
     expect(parseScaffoldParams({ slug: "mp" }).ok).toBe(false);
     const r = parseScaffoldParams({ slug: "mp", prefix: "MP" });
     expect(r.ok && r.value).toEqual({ slug: "mp", prefix: "MP" });
+  });
+});
+
+describe("parseGetWorkflowParams", () => {
+  it("requires project (or slug alias)", () => {
+    expect(parseGetWorkflowParams({}).ok).toBe(false);
+    const a = parseGetWorkflowParams({ project: "obsidian-projects" });
+    expect(a.ok && a.value.project).toBe("obsidian-projects");
+    const b = parseGetWorkflowParams({ slug: "jira-bases" });
+    expect(b.ok && b.value.project).toBe("jira-bases");
+  });
+  it("project beats slug when both present", () => {
+    const r = parseGetWorkflowParams({ project: "a", slug: "b" });
+    expect(r.ok && r.value.project).toBe("a");
   });
 });
