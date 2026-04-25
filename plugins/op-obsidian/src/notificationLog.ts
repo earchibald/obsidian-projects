@@ -20,9 +20,17 @@ export interface NotificationEntry {
 export function formatLine(entry: NotificationEntry): string {
   const iso = entry.timestamp.toISOString();
   const cat = entry.category ? ` [${entry.category}]` : "";
-  // Each entry is a single bullet line; collapse internal whitespace so
-  // multi-line Notice text doesn't fragment the log shape.
-  const safe = entry.text.replace(/\s+/g, " ").trim();
+  // Each entry is a single bullet line.
+  // 1. Strip null bytes — they corrupt vault files.
+  // 2. Strip ANSI CSI / escape sequences — agent output can include colour codes.
+  // 3. Collapse internal whitespace so multi-line Notice text (newlines, tabs,
+  //    embedded "- bullets") doesn't fragment the log structure.
+  const safe = entry.text
+    .replace(/\0/g, "")
+    .replace(/\x1b\[[0-9;]*[A-Za-z]/g, "")
+    .replace(/\x1b./gs, "")
+    .replace(/\s+/g, " ")
+    .trim();
   return `- ${iso}${cat} · ${safe}`;
 }
 
@@ -47,6 +55,10 @@ let writeQueue: Promise<void> = Promise.resolve();
 
 export function registerApp(app: App): void {
   registeredApp = app;
+}
+
+export function unregisterApp(): void {
+  registeredApp = undefined;
 }
 
 // Test helper — mirrors `errorLog.ts`'s implicit "single source of truth"
@@ -119,11 +131,21 @@ export async function openNotificationLog(app: App): Promise<void> {
   }
   // No log yet — create an empty one so the palette command always has
   // something to open. Beats a silent no-op when the user goes hunting.
+  // If a concurrent `writeOnce` wins the race and creates the file first,
+  // `vault.create` will throw; catch that and fall back to the now-existing file.
   const folder = path.split("/").slice(0, -1).join("/");
   if (folder && !(await app.vault.adapter.exists(folder))) {
     await app.vault.createFolder(folder).catch(() => {});
   }
   const placeholder = `${HEADER}\n_No notifications recorded yet._\n`;
-  const created = await app.vault.create(path, placeholder);
-  await app.workspace.getLeaf(false).openFile(created);
+  let target: TFile;
+  try {
+    target = await app.vault.create(path, placeholder);
+  } catch {
+    // Concurrent write already created the file.
+    const raced = app.vault.getAbstractFileByPath(path);
+    if (!(raced instanceof TFile)) return; // nothing to open
+    target = raced;
+  }
+  await app.workspace.getLeaf(false).openFile(target);
 }

@@ -88,7 +88,7 @@ import { installAgentHooks, type HookInstallResult } from "./agentHooks";
 import { userError } from "./userError";
 import { cleanupAgentSessions, tmuxSessionsForCleanup } from "./agentSessionCleanup";
 import { detectTmux } from "./tmuxDetect";
-import { notify, notifyAction, registerApp, openNotificationLog } from "./notificationLog";
+import { notify, notifyAction, registerApp, unregisterApp, openNotificationLog } from "./notificationLog";
 import { probeLiveTmuxWindows, selectStaleAgentBadges } from "./staleAgentBadges";
 import { openErrorLog, writeErrorLog } from "./errorLog";
 import { configureClient } from "./iterm/client";
@@ -938,6 +938,9 @@ export default class OpPlugin extends Plugin {
     // OP-101: drop any open iTerm WebSocket so plugin reload doesn't leak the
     // socket. Safe no-op when the WS path was never used in this session.
     closeTransport();
+    // Clear the registered App so any notify() calls that fire after unload
+    // don't attempt vault writes against a detached plugin context.
+    unregisterApp();
   }
 
   // Resolve the absolute filesystem path used for the `safeStorage`-encrypted

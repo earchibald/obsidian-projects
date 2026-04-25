@@ -40,6 +40,7 @@ import {
   notify,
   notifyAction,
   registerApp,
+  unregisterApp,
   openNotificationLog,
   _resetForTests,
 } from "./notificationLog";
@@ -111,6 +112,36 @@ describe("formatLine", () => {
       text: "first line\n→ hint   second\tword",
     });
     expect(line).toBe("- 2026-04-25T00:00:00.000Z · first line → hint second word");
+  });
+
+  it("strips null bytes", () => {
+    const line = formatLine({
+      timestamp: new Date("2026-04-25T00:00:00.000Z"),
+      text: "hello\x00world",
+    });
+    expect(line).toBe("- 2026-04-25T00:00:00.000Z · helloworld");
+  });
+
+  it("strips ANSI CSI colour sequences from agent output", () => {
+    const line = formatLine({
+      timestamp: new Date("2026-04-25T00:00:00.000Z"),
+      text: "\x1b[31mERROR\x1b[0m: build failed",
+    });
+    expect(line).toBe("- 2026-04-25T00:00:00.000Z · ERROR: build failed");
+  });
+
+  it("embedded '\\n- bullet' becomes continuation text, not a new entry", () => {
+    // After sanitisation the embedded newline collapses to a space, so the
+    // resulting text stays within one bullet line — no phantom entries.
+    const line = formatLine({
+      timestamp: new Date("2026-04-25T00:00:00.000Z"),
+      text: "op: status ok\n- not a real entry\n",
+    });
+    expect(line).toBe(
+      "- 2026-04-25T00:00:00.000Z · op: status ok - not a real entry",
+    );
+    // Crucially, splitting the line by "\n" yields exactly one element.
+    expect(line.split("\n")).toHaveLength(1);
   });
 });
 
@@ -219,6 +250,17 @@ describe("notify", () => {
     notify("hi", 12000);
     expect((FakeNotice as any).calls[0].duration).toBe(12000);
   });
+
+  it("stops writing to vault after unregisterApp (simulates onunload)", async () => {
+    const { app, files } = makeApp();
+    registerApp(app);
+    unregisterApp();
+    notify("should not be logged");
+    await new Promise((r) => setTimeout(r, 0));
+    await new Promise((r) => setTimeout(r, 0));
+    expect((FakeNotice as any).calls).toHaveLength(1); // Notice still shows
+    expect(files.get(NOTIFICATION_LOG_PATH)).toBeUndefined(); // no vault write
+  });
 });
 
 describe("notifyAction", () => {
@@ -254,5 +296,23 @@ describe("openNotificationLog", () => {
     expect(files.get(NOTIFICATION_LOG_PATH)!.body).toContain(
       "No notifications recorded yet",
     );
+  });
+
+  it("handles concurrent vault.create race — falls back to existing file", async () => {
+    // Simulate a vault that throws on create (file already exists from a
+    // concurrent writeOnce) but then returns the file via getAbstractFileByPath.
+    const { app, files, getOpened } = makeApp();
+    // Pre-populate the file to simulate the concurrent write winning.
+    files.set(NOTIFICATION_LOG_PATH, {
+      path: NOTIFICATION_LOG_PATH,
+      body: "written by concurrent writeOnce",
+    });
+    // Override create to throw as Obsidian would when the file already exists.
+    (app.vault as any).create = async () => {
+      throw new Error("File already exists");
+    };
+    // Should NOT throw, and should open the pre-existing file.
+    await expect(openNotificationLog(app)).resolves.toBeUndefined();
+    expect(getOpened()).toBe(NOTIFICATION_LOG_PATH);
   });
 });
