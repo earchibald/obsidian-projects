@@ -163,6 +163,7 @@ Moving from loose command files to a **skill + plugin** architecture provides se
 2.  **Namespace Isolation:** `/op:*` commands won't collide with other project commands.
 3.  **Deterministic Operations:** The `op-obsidian` plugin handles complex file moves, ID numbering, and schema enforcement using typed code, while the `op` skill focuses on high-level reasoning.
 4.  **Authoritative Context:** A single `SKILL.md` file serves as the source of truth for Claude, replacing fragmented command preambles.
+5.  **Workflow-agnostic:** The skill and plugin manage vault state and the issue schema; they do **not** define a development workflow. Branching, worktrees, PR requirements, release cadence, and version bumping are each project's own concern, documented in that project's `CLAUDE.md`. Drive the `op-*` capabilities (`commits:`, `pr:`, `version:`, `github_issue:`) the way your project wants — straight-to-main, PR-required, multi-stage pipelines, or anything in between.
 
 See `docs/plans/2026-04-18-skill-and-plugin-packaging.md` and `docs/specs/OP-19-plugin-split-recommendation.md` for more rationale.
 

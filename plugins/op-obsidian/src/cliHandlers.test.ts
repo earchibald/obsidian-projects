@@ -9,6 +9,8 @@ import {
   parseSetFlowParams,
   parseNewParams,
   parseScaffoldParams,
+  parseGetWorkflowParams,
+  parseEditWorkflowParams,
 } from "./cliHandlers";
 
 describe("parseWorkParams", () => {
@@ -155,5 +157,35 @@ describe("parseScaffoldParams", () => {
     expect(parseScaffoldParams({ slug: "mp" }).ok).toBe(false);
     const r = parseScaffoldParams({ slug: "mp", prefix: "MP" });
     expect(r.ok && r.value).toEqual({ slug: "mp", prefix: "MP" });
+  });
+});
+
+describe("parseGetWorkflowParams", () => {
+  it("requires project (or slug alias)", () => {
+    expect(parseGetWorkflowParams({}).ok).toBe(false);
+    const a = parseGetWorkflowParams({ project: "obsidian-projects" });
+    expect(a.ok && a.value.project).toBe("obsidian-projects");
+    const b = parseGetWorkflowParams({ slug: "jira-bases" });
+    expect(b.ok && b.value.project).toBe("jira-bases");
+  });
+  it("project beats slug when both present", () => {
+    const r = parseGetWorkflowParams({ project: "a", slug: "b" });
+    expect(r.ok && r.value.project).toBe("a");
+  });
+});
+
+describe("parseEditWorkflowParams", () => {
+  it("requires project (or slug alias)", () => {
+    const r = parseEditWorkflowParams({});
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.error).toMatch(/--project/);
+  });
+  it("accepts the slug alias", () => {
+    const r = parseEditWorkflowParams({ slug: "obsidian-projects" });
+    expect(r.ok && r.value.project).toBe("obsidian-projects");
+  });
+  it("project beats slug when both present", () => {
+    const r = parseEditWorkflowParams({ project: "a", slug: "b" });
+    expect(r.ok && r.value.project).toBe("a");
   });
 });

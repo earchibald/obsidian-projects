@@ -19,6 +19,7 @@ Projects/<project-slug>/
   DOCS/             ← specs, plans, ADRs, runbooks
   <project>.base    ← Bases dashboard
   STATUS.md         ← embeds open-issues view for at-a-glance status
+  WORKFLOW.md       ← optional; project's SDLC policy (see "WORKFLOW.md" below)
 ```
 
 ---
@@ -31,6 +32,7 @@ Projects/<project-slug>/
 ---
 id: <PROJECT-N>          # e.g. JB-2  — stable, never changes
 project: <slug>          # e.g. jira-bases
+title: "<full title>"    # full pre-sanitization title; filenames are truncated and have forbidden chars stripped, this field keeps the original
 type: issue
 status: open | in-progress | blocked | resolved | wontfix
 priority: low | med | high
@@ -64,13 +66,15 @@ Example: `JB-2 prepend id to issue filenames.md`
 
 Why: keeps the project key visible in file lists and makes wikilinks from TASKS self-documenting.
 
+**Title field.** The filename is sanitized (forbidden chars `#^[]|\/:?"<>*` replaced with spaces, capped at 80 chars at a word boundary) and may lose information. `title:` in frontmatter holds the full original title verbatim, JSON-quoted so YAML parses safely. Bases views and pickers prefer it over the file basename. Plugin-managed at `op-new` — agents shouldn't write it directly.
+
 **Body:** one-line summary checklist at minimum. Agents may expand freely.
 
 **Git refs.** `commits:` and `pr:` are the canonical trail of *what shipped* for the issue. They live on the issue (not on TASKS) because TASKS are trashed on resolve; the issue and its refs persist in `RESOLVED ISSUES/` forever. Both fields are optional — meta-only projects without a code repo leave them unset.
 
 **GitHub issue mapping.** `github_issue:` is an optional URL pointing at a GitHub issue that mirrors this op issue. Set manually via the plugin's "Set GitHub issue URL" command, auto-populated at creation time when the `autoCreateGithubIssue` plugin setting is on (runs `gh issue create` in the project's repo), or passed in at creation. When `closeGithubIssueOnResolve` is on, resolving the op issue runs `gh issue close` on the linked URL.
 
-**Version.** `version:` records the semver release that shipped the issue (e.g. `0.1.7`). Set at resolve time, in the same commit that bumps the project's version file (`plugin.json` / `manifest.json` / `package.json`). One bump per issue; classify as patch (fixes, docs, internal), minor (new user-facing behavior, additive schema), or major (breaking schema change). See the `op` skill's "Semver bumping" section for the full rules. Optional — meta-only projects without a version file leave it unset.
+**Version.** `version:` is **optional**. It records the release identifier (e.g. `0.1.7`) that shipped this issue, when the project tracks releases on issues. *When* and *how* to set it — patch/minor/major classification, lockstep across multiple version files, whether to bump per issue at all — is owned by the project, not by this skill. See the project's own `CLAUDE.md` (or equivalent) for the policy. Meta-only projects without a release artifact leave the field unset.
 
 **Issue links.** Issues form a graph via plugin-managed link fields. The `op-obsidian` plugin owns both sides of every link — agents MUST use `op-set-link` / `op-remove-link` and never write the link frontmatter directly. Direct edits are tolerated for human convenience, but `op-link-check` will flag any drift across the vault and `op-link-check repair=true` will reconcile it.
 
@@ -148,13 +152,14 @@ Use `obsidian vault="<vault>" files folder="Projects/<slug>/ISSUES"` and `files 
 3. **Create TASKS notes** (one per logical subtask) before touching any code or external systems.
 4. **Update issue** `status: in-progress` at session start.
 5. **Before any external action** (repo create, push, release, deploy) — confirm with user unless they granted explicit upfront authorization.
-6. **During work:** after each commit that lands work for the in-progress issue, append `<sha7> <subject>` to the issue's `commits:` list. When a PR is opened for the issue, set `pr:`. Skip for projects with no git repo.
-7. **On completion:**
+6. **During work:** if the project tracks shipped commits on the issue, append `<sha7> <subject>` to `commits:` via `op-append-commit`; if it tracks PRs, set `pr:` via `op-set-pr`. Cadence (per commit, batch at resolve, or never) is the **project's** choice — see its `CLAUDE.md`. Skip both when the project says nothing or has no git repo.
+7. **On completion (vault-side invariants the skill enforces):**
    - Set issue `status: resolved`, add `resolved: <date>`.
-   - If the project has a git repo and `commits:` is empty, offer to back-fill from `git log` before moving the issue.
-   - `obsidian move` the issue to `RESOLVED ISSUES/`.
-   - Delete TASKS notes via `obsidian delete` (goes to trash, not permanent).
-   - Do NOT delete DOCS.
+   - Move the issue to `RESOLVED ISSUES/`.
+   - Trash TASKS notes (goes to trash, not permanent).
+   - Do NOT touch DOCS.
+
+   These steps run atomically inside `op-resolve`. **Project-specific resolve actions** (release, version bump, deploy, branch merge) layer on top of this and are governed by the project's own conventions, not by this skill.
 
 ---
 
@@ -209,6 +214,35 @@ repo_path: /Users/you/Projects/<slug>   # optional, absolute path
 
 **Fallback for legacy projects:** if `prefix` is missing from STATUS.md, fall back to scanning issue filenames (`Projects/<slug>/ISSUES/*.md` and `RESOLVED ISSUES/*.md`). If neither the field nor any issue exists, stop and ask the user — a freshly scaffolded project with zero issues has no implicit prefix, so the scaffolder is responsible for writing `prefix` at creation time.
 
+
+---
+
+## WORKFLOW.md
+
+`Projects/<slug>/WORKFLOW.md` is **optional** and per-project. It documents the project's SDLC policy — branching model, PR rules, version-bump cadence, commit-to-issue mapping, deploy procedure, anything that varies project-to-project. The `op` skill itself is workflow-agnostic (per OP-106); WORKFLOW.md is the seam where the project gets to express its own opinion.
+
+**Frontmatter:**
+
+```yaml
+---
+project: <slug>
+type: workflow
+updated: YYYY-MM-DD       # optional
+---
+```
+
+**Body:** freeform agent-optimized prose. There is no enforced structure — the audience is a working agent, so write terse, imperative guidance ("Always work in a worktree", "Run `npm test` before committing", etc.).
+
+**Surfacing to working agents:**
+- The `op-obsidian` plugin's `op:open-agent` kickoff prompt inlines the WORKFLOW.md content automatically (capped at the configurable `injection.maxWorkflowChars`, default 2000). Over the cap → the prompt surfaces only the path with a "read this first" hint.
+- Programmatic access for agents: `obsidian op-get-workflow project=<slug>` returns `{exists, path, content, size}`.
+
+**Authoring:**
+- Palette command **op: edit project workflow (WORKFLOW.md)** (or `obsidian op-edit-workflow project=<slug>`) launches a dedicated agent session in tmux that interviews the user about branching/version/PR/commit policy and writes the file. The session has full edit capability but is bounded to the workflow file (no `op-work` / `op-resolve` / version bump). tmux window naming: `op-workflow-<slug>` to keep it distinct from issue sessions in the shared `op-agents` session.
+
+**`type: workflow`** is a top-level type alongside `issue`, `task`, `doc`, `project-status`, and `schema`. Cross-project base aggregations should exclude it (`type != "workflow"`) so it doesn't pollute Issue/Task/Doc lists.
+
+**Optional, opinion-driven:** absent ⇒ no opinion. The skill defaults to asking the user when policy ambiguity comes up. Projects without code repos (or without a workflow-driven feel) leave the file unset.
 
 ---
 

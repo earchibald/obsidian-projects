@@ -97,6 +97,15 @@ describe("renderIssueNote", () => {
     expect(out).not.toContain("- [ ] Para one");
   });
 
+  it("emits title in frontmatter as a JSON-quoted scalar so YAML-significant chars survive", () => {
+    const out = render({ title: 'fix: handle "colons" & #hashes' });
+    expect(out).toContain(
+      `title: ${JSON.stringify('fix: handle "colons" & #hashes')}`,
+    );
+    // Body heading still uses the raw title (unquoted).
+    expect(out).toContain('# fix: handle "colons" & #hashes');
+  });
+
   it("scopeBody takes precedence over bullets when both supplied", () => {
     const out = render({
       scope: ["bullet"],
@@ -183,7 +192,7 @@ describe("createIssue", () => {
     expect(result.entry.project).toBe("demo");
     expect(result.entry.priority).toBe("high");
     expect(result.entry.assignee).toBe("alice");
-    expect(result.entry.title).toBe(result.file.basename);
+    expect(result.entry.title).toBe("smoke test");
     expect(result.entry.resolvedFolder).toBe(false);
     expect(result.entry.githubIssue).toBeUndefined();
   });
@@ -196,5 +205,26 @@ describe("createIssue", () => {
     });
     expect(result.entry.priority).toBe("med");
     expect(result.entry.assignee).toBe("earchibald");
+  });
+
+  it("preserves the full pre-sanitization title in frontmatter and on the entry", async () => {
+    const { app, store, created } = fakeApp("demo", "DM");
+    const fullTitle =
+      "fix: handle ?colons? & #hashes/path | when creating issues so the original survives";
+    const result = await createIssue(app, store, {
+      slug: "demo",
+      title: fullTitle,
+    });
+
+    // Filename remains sanitized — forbidden chars replaced with spaces.
+    const basename = result.path.split("/").pop()!;
+    expect(basename).not.toMatch(/[?#|:"<>*\\^[\]]/);
+
+    // Frontmatter keeps the raw title verbatim, JSON-quoted so YAML parses safely.
+    const file = created.find((c) => c.path === result.path)!;
+    expect(file.content).toContain(`title: ${JSON.stringify(fullTitle)}`);
+
+    // The synthesized entry uses the full title, not the truncated basename.
+    expect(result.entry.title).toBe(fullTitle);
   });
 });
