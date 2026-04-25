@@ -22,6 +22,7 @@ import { appendCommit, setPr } from "./commits";
 import { setScope } from "./setScope";
 import { parseNewScopePayload, type NewScopeMode } from "./setScopePure";
 import { setEvaluation } from "./setEvaluation";
+import { setSection } from "./setSection";
 import { setFlow, type Complexity, type Flow } from "./setFlow";
 import { applyLink, removeLink, linkCheck, migrateLinks } from "./links";
 import { RELATION_NAMES } from "./relations";
@@ -50,6 +51,7 @@ import {
   handleOpSetPrUri as handleOpSetPrUriPure,
   handleOpSetScopeUri as handleOpSetScopeUriPure,
   handleOpSetEvaluationUri as handleOpSetEvaluationUriPure,
+  handleOpSetSectionUri as handleOpSetSectionUriPure,
   handleOpSetFlowUri as handleOpSetFlowUriPure,
   handleOpSetLinkUri as handleOpSetLinkUriPure,
   handleOpRemoveLinkUri as handleOpRemoveLinkUriPure,
@@ -63,6 +65,7 @@ import {
   parseSetPrParams,
   parseSetScopeParams,
   parseSetEvaluationParams,
+  parseSetSectionParams,
   parseSetFlowParams,
   parseNewParams,
   parseSetLinkParams,
@@ -487,6 +490,12 @@ export default class OpPlugin extends Plugin {
       );
     });
 
+    this.registerObsidianProtocolHandler("op-set-section", (params) => {
+      this.runUri("op-set-section", normalizeUriParams(params), (p) =>
+        this.handleOpSetSectionUri(p),
+      );
+    });
+
     this.registerObsidianProtocolHandler("op-set-flow", (params) => {
       this.runUri("op-set-flow", normalizeUriParams(params), (p) => this.handleOpSetFlowUri(p));
     });
@@ -668,6 +677,27 @@ export default class OpPlugin extends Plugin {
         },
       },
       (params) => this.handleOpSetEvaluationCli(params),
+    );
+
+    this.registerCliHandler(
+      "op-set-section",
+      "Replace (or append to) a body section on an issue. Restricted to Plan|Notes|Summary.",
+      {
+        issue: { value: "<id>", description: "Issue id (e.g. OP-34)" },
+        name: {
+          value: "<Plan|Notes|Summary>",
+          description: "Section heading to target.",
+        },
+        content: {
+          value: "<markdown>",
+          description: "New section body. Must not contain H2 headings (`## ...`).",
+        },
+        append: {
+          description:
+            "Pass append=true to append to the existing section (with blank-line separator) instead of replacing.",
+        },
+      },
+      (params) => this.handleOpSetSectionCli(params),
     );
 
     this.registerCliHandler(
@@ -1107,6 +1137,8 @@ export default class OpPlugin extends Plugin {
       setPr: (entry, url) => setPr(this.app, entry, url),
       setScope: (entry, scope, options) => setScope(this.app, entry, scope, options),
       setEvaluation: (entry, evaluation) => setEvaluation(this.app, entry, evaluation),
+      setSection: (entry, name, content, options) =>
+        setSection(this.app, entry, name, content, options),
       setFlow: (entry, input) => setFlow(this.app, entry, input),
       applyLink: (args) => applyLink(this.app, this.store, args),
       removeLink: (args) => removeLink(this.app, this.store, args),
@@ -1159,6 +1191,12 @@ export default class OpPlugin extends Plugin {
     params: Record<string, string>,
   ): Promise<UriResponsePayload> {
     return handleOpSetEvaluationUriPure(this.uriDeps(), params);
+  }
+
+  private handleOpSetSectionUri(
+    params: Record<string, string>,
+  ): Promise<UriResponsePayload> {
+    return handleOpSetSectionUriPure(this.uriDeps(), params);
   }
 
   private handleOpSetFlowUri(
@@ -1445,6 +1483,37 @@ export default class OpPlugin extends Plugin {
       });
       const target = res.mode === "body" ? "body" : "scope";
       return `${command}: ${res.issueId} ${target} ${res.replaced ? "replaced" : "appended"}`;
+    } catch (err: any) {
+      const msg = err?.message ?? String(err);
+      console.error("[op-obsidian]", command, err);
+      await writeUriResponse(this.app, { ok: false, command, error: msg });
+      return `${command} failed: ${msg}`;
+    }
+  }
+
+  private async handleOpSetSectionCli(params: Record<string, string>): Promise<string> {
+    const command = "op-set-section";
+    try {
+      const parsed = parseSetSectionParams(params);
+      if (!parsed.ok) return parsed.error;
+      const { id, name, content, append } = parsed.value;
+      const entry = this.resolveByIdOrThrow(id);
+      const res = await setSection(this.app, entry, name, content, { append });
+      await writeUriResponse(this.app, {
+        ok: true,
+        command,
+        issueId: res.issueId,
+        path: res.path,
+        section: res.section,
+        replaced: res.replaced,
+        appended: res.appended,
+      });
+      const verb = res.appended
+        ? "appended"
+        : res.replaced
+          ? "replaced"
+          : "created";
+      return `${command}: ${res.issueId} ${res.section} ${verb}`;
     } catch (err: any) {
       const msg = err?.message ?? String(err);
       console.error("[op-obsidian]", command, err);
