@@ -8,9 +8,9 @@
 // Split directions match iTerm AppleScript: "vertical" creates a pane to the
 // right of the target (a vertical divider); "horizontal" creates one below.
 
-export type LayoutId = "1" | "1x2" | "3" | "2x2" | "2+3" | "2x3+2" | "3x3";
+export type LayoutId = "1" | "1x2" | "3" | "2x2" | "2+3" | "2x3" | "2x3+2" | "3x3";
 
-export const LAYOUT_IDS: readonly LayoutId[] = ["1", "1x2", "3", "2x2", "2+3", "2x3+2", "3x3"];
+export const LAYOUT_IDS: readonly LayoutId[] = ["1", "1x2", "3", "2x2", "2+3", "2x3", "2x3+2", "3x3"];
 
 export type SplitDir = "vertical" | "horizontal";
 
@@ -81,6 +81,21 @@ export const LAYOUTS: Record<LayoutId, LayoutSpec> = {
       { from: 0, dir: "vertical" }, // cell 2 = top-right
       { from: 1, dir: "vertical" }, // cell 3 = bottom-middle
       { from: 3, dir: "vertical" }, // cell 4 = bottom-right
+    ],
+  },
+
+  // 2 rows of 3. Append order: TL, BL (full bottom row), TM, TR, BM, BR.
+  "2x3": {
+    id: "2x3",
+    cells: 6,
+    rows: 2,
+    cols: 3,
+    splits: [
+      { from: 0, dir: "horizontal" }, // cell 1 = bottom-full
+      { from: 0, dir: "vertical" }, // cell 2 = top-middle
+      { from: 2, dir: "vertical" }, // cell 3 = top-right
+      { from: 1, dir: "vertical" }, // cell 4 = bottom-middle
+      { from: 4, dir: "vertical" }, // cell 5 = bottom-right
     ],
   },
 

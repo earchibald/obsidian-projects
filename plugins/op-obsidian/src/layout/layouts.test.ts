@@ -42,6 +42,7 @@ describe("layouts", () => {
     expect(LAYOUTS["3"].cells).toBe(3);
     expect(LAYOUTS["2x2"].cells).toBe(4);
     expect(LAYOUTS["2+3"].cells).toBe(5);
+    expect(LAYOUTS["2x3"].cells).toBe(6);
     expect(LAYOUTS["2x3+2"].cells).toBe(8);
     expect(LAYOUTS["3x3"].cells).toBe(9);
   });

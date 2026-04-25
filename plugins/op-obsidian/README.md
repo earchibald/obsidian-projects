@@ -102,7 +102,7 @@ Per-project repo paths (slug → absolute path). Overridden by a `repo_path:` in
 
 ### iTerm layout orchestrator
 
-Optional. When enabled, op arranges agent panes in the current iTerm window using the chosen layout (`1x1`, `2x1`, `2x2`, `3x2`, …). Overflow spills to a new iTerm window with a fresh tmux session. macOS + iTerm only.
+Optional. When enabled, op arranges agent panes in the current iTerm window using the chosen layout (`1`, `1x2`, `3`, `2x2`, `2+3`, `2x3`, `2x3+2`, `3x3`). Default is `2x3` (6 panes). Overflow spills to a new iTerm window with a fresh tmux session. macOS + iTerm only.
 
 ### Sidebar view
 
