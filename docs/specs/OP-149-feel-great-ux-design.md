@@ -99,7 +99,13 @@ flowchart TD
 
 **Why it feels better.** The single highest-frequency op-obsidian action — figuring out what to work on next — becomes one keystroke. The sidebar stops lying about which agents are alive.
 
-**Cost / risk.** Small. Recency log is ~30 LoC. Liveness probe is one `tmux` exec on a 5s interval gated on visibility — negligible. The probe is the only new platform call; on non-macOS it no-ops (tmux available everywhere we ship).
+**Cross-vault note.** `data.json` lives at `.obsidian/plugins/op-obsidian/data.json` — one file per vault. A multi-vault user's recency log in Vault A never appears in Vault B. Per-vault recency is not only correct; it's the only thing possible with this storage layer.
+
+**`data.json` corruption recovery.** The existing `mergeSettings()` call passes the parsed result through `Object.assign({}, DEFAULT_SETTINGS, stored)` — if `recent` is missing or non-array it gets replaced by the default (`[]`). This handles missing-key gracefully. It does **not** handle the case where `data.json` itself is unparseable JSON (full file corruption). For the `recent` array specifically, add a guard at the read site: `settings.recent = Array.isArray(settings.recent) ? settings.recent : [];` — this is two extra lines and ensures that any corruption of just this field is self-healing without touching the rest of the settings recovery path.
+
+**Liveness probe exec timeout.** `tmux list-windows` under normal conditions takes 1–5ms. Under pathological conditions (tmux zombie process, NFS home directory, kernel scheduling hiccup), the exec can hang indefinitely. The probe runs on the main thread via `child_process.execSync` and will block the sidebar render if it hangs. Fix: use `execSync` with an explicit `timeout` option: `execSync('tmux list-windows -t op-agents -F \'#W\'', { timeout: 500 })` — 500ms is generous for any healthy tmux and will throw if exceeded, which the caller already handles as "tmux unavailable". This prevents the render thread from stalling.
+
+**Cost / risk.** Small. Recency log is ~30 LoC. Liveness probe is one `tmux` exec on a 5s interval gated on visibility — negligible. The probe is the only new platform call; on non-macOS it no-ops (tmux available everywhere we ship). The corruption-guard and exec-timeout together add ~5 LoC.
 
 **Verdict.** `RECOMMEND` — leads. Highest leverage per LoC in the spec.
 
@@ -165,7 +171,11 @@ flowchart TD
 
 **Why it feels better.** The note tells you what the *next obvious thing* is and lets you do it without leaving the note. Critical: it does NOT add a wall of buttons. Adversarial pass landed hard on this — five buttons under every issue is *worse* than zero.
 
-**Cost / risk.** Medium. CM6 widgets are stable but break occasionally across Obsidian minor versions; we already use the metadata cache extensively, so the dependency surface doesn't grow. Reading-mode mirror is straightforward post-processor.
+**Widget lifecycle — teardown and event listeners.** When the user toggles between Live Preview and Reading mode (or closes the leaf), Obsidian tears down the CM6 extension's `EditorView` instance. `WidgetType.destroy(dom)` is called at that point. Any DOM event listeners attached in `toDOM()` **must** be removed in `destroy(dom)` — if they're not, the handler closures keep the widget (and its `app` reference) alive and will fire on stale DOM elements. Implementation rule: always use `{ signal: abortController.signal }` for event listeners in widgets, where the `AbortController` is stored on the widget instance and its `abort()` is called in `destroy()`. This is one extra pattern but prevents the class of "stale listener" bug that would be invisible in testing and only manifest after rapid mode-switching.
+
+**Source mode behavior.** In "source mode" (Settings → Editor → Default view → Source), CM6 runs with decorations disabled and `WidgetType`-based decorations are not rendered. The chip will silently not appear. This is the right call: source mode is a "show me the raw file" intention signal; injecting UI contradicts it. Document this explicitly in the feature's user-facing help text so source-mode users know to use the palette or sidebar instead. No additional code needed.
+
+**Cost / risk.** Medium. CM6 widgets are stable but break occasionally across Obsidian minor versions; we already use the metadata cache extensively, so the dependency surface doesn't grow. Reading-mode mirror is straightforward post-processor. Widget lifecycle discipline (destroy + AbortController) adds a small but mandatory implementation rule.
 
 **Verdict.** `RECOMMEND`.
 
@@ -189,6 +199,8 @@ flowchart TD
    | `⌘⇧R` | op: resolve current issue |
    | `⌘⇧N` | op: new issue (current project) |
    | `⌘⇧.` | op: append last commit |
+   | `⌘⇧]` | op: next issue in project (§19a) |
+   | `⌘⇧[` | op: previous issue in project (§19a) |
 
 2. **`op: pick & act` — single SuggestModal that does picking and acting in one step.** The footer hint shows `↵ open · ⌘↵ launch · ⌥↵ plan-mode · ⇧↵ resolve · ⌃↵ append commit`. This is the Omnisearch / Make.md / Raycast pattern — collapses the today's two-step "find issue, then run a command on it" into one modal.
 
@@ -209,6 +221,8 @@ flowchart TD
 
 **Why it feels better.** Out of the box the user has a working keyboard workflow. Today the answer to "how do I drive this with the keyboard?" is "go bind 27 commands, good luck." The pick-and-act modal is the single most ergonomic surface for keyboard-only work — far better than a chord scheme that Obsidian doesn't natively support.
 
+**Hotkey collision strategy — decided.** "Best effort, show what was skipped." When the user clicks "Apply op default", the plugin calls `app.hotkeyManager.customKeys` for each target binding. If a target key is already bound to another command, the preset skips that binding and adds the skipped pair to a reported list. After applying, the plugin opens a modal (or a Notice for small counts) that says: "Applied 6 of 8 bindings. Skipped: `⌘⇧L` (bound to Note Export → export as PDF), `⌘⇧A` (bound to Admonition → insert). You can rebind these manually in Settings → Hotkeys." "All or nothing" is wrong — it destroys the value of the preset for any power user with an existing setup. Silently skipping without reporting is also wrong — it leaves the user with a partially working preset and no idea why two shortcuts don't work. The best-effort-plus-report pattern is what Obsidian itself uses for theme CSS variables and is the least surprising behavior.
+
 **Cost / risk.** Low. Hotkeys are user data; the preset must be opt-in (we mutate `app.hotkeyManager.customKeys` only on explicit click) and reversible. The modal is one new class on top of existing infrastructure.
 
 **Verdict.** `RECOMMEND`.
@@ -221,7 +235,11 @@ flowchart TD
 
 **Proposed.** Three concrete fixes from the focus research, none speculative:
 
-1. **Background-launch mode.** New setting: "Launch agent without stealing focus." When on, the plugin runs `open -ga iTerm` (the `-g` flag launches without activation) for cold starts, and follows tab-create AppleScript with `tell application "Obsidian" to activate` to bounce focus back. Net result: agent boots in the background while the user keeps typing in their note. Default off (current behavior is what most people want when they hit "launch"); on for power users who use `op: launch agent` from inside a flow.
+1. **Background-launch mode.** New setting: "Launch agent without stealing focus." When on, the plugin runs `open -ga iTerm` for cold starts. **Clarification on `-g` semantics:** `-g` means "do not bring the application to the foreground" — it holds for both cold-start (where it suppresses the activation that would otherwise happen when the app launches) and when iTerm is already running (where it creates the tab without raising the window). When iTerm is already running, `open -ga iTerm` by itself doesn't create a new tab; that step still requires the AppleScript tab-creation call. The full sequence is: `open -ga iTerm` (ensure process is alive, no activation), then the existing tab-create AppleScript, then `tell application "Obsidian" to activate`. The net result is Obsidian stays focused throughout.
+   
+   **AppleScript animation race.** The `tell application "Obsidian" to activate` runs synchronously in the same AppleScript block but fires before iTerm's new-tab animation (~200ms) completes. In practice this means Obsidian is re-focused while iTerm is mid-fade, which looks fine (the iTerm tab is behind Obsidian). However, if the plugin fires a second AppleScript operation within that ~200ms window, it will see iTerm as the frontmost app. Fix: add `delay 0.3` in the AppleScript between the tab-create and the Obsidian activate. This is free — the user doesn't see the delay since Obsidian was already focused.
+   
+   Net result: agent boots in the background while the user keeps typing in their note. Default off (current behavior is what most people want when they hit "launch"); on for power users who use `op: launch agent` from inside a flow.
 2. **Per-launch override.** `⌥+click` on the sidebar launch button, or `⌥↵` in the pick-and-act modal, toggles background launch for that one launch.
 3. **Document tmux-CC "Hide on close tab" preference.** iTerm Prefs → Advanced → "When closing a tmux tab" → **Hide**. With this, closing an iTerm tab keeps the tmux window alive and the iTerm session in front — *eliminates* the snap-back to Obsidian for tmux-CC users. We can't set this for the user, but we can detect and prompt: on first launch with tmux-CC mode active, check `defaults read com.googlecode.iterm2 SuppressCloseTabConfirmationAlert` (best-effort proxy) and if the kill-on-close behavior is detected, emit a one-time clickable Notice with a "Open iTerm pref pane" link.
 
@@ -278,7 +296,11 @@ sequenceDiagram
 **Proposed.**
 
 1. **`In flight` tab keeps showing resolved-but-live issues** as long as `agent:` is set AND a tmux window with that ID exists. Visually: show with a strikethrough or muted title and a `resolved` chip, but the badge stays clickable.
-2. **On `op-resolve`, do NOT clear `agent:` if a live tmux window exists for the issue.** Today, `clearAgentOnIssue` is called in two places: from the SessionEnd hook (correct — session ended), and from the resolve flow (wrong if the session is still alive). Add a tmux-liveness check before clearing in the resolve path; if alive, leave `agent:` set and emit a Notice: "Agent session still attached — `agent:` field kept. It will clear when the session ends."
+2. **On `op-resolve`, do NOT clear `agent:` if a live tmux window exists for the issue.** Today, `clearAgentOnIssue` is called in two places: from the SessionEnd hook (correct — session ended), and from the resolve flow (wrong if the session is still alive). Add a tmux-liveness check before clearing in the resolve path; if alive, leave `agent:` set and emit an actionable Notice: "Agent session still attached — `agent:` field kept. [Open agent] [Detach]" — per §9's actionable-Notice pattern. The `[Open agent]` link runs the existing attach command; `[Detach]` runs `op: detach agent`.
+
+   **TOCTOU fix.** The original text proposed two separate `tmux` calls: `tmux has-session` then `tmux list-windows`. Between those two calls, the tmux window can be killed — a classic TOCTOU race. Fix: make a single `tmux list-windows -t op-agents -F '#W'` call and use the result for both presence and window-name checks. One exec, one parse, one moment in time. The non-zero exit from `list-windows` when the session doesn't exist doubles as the "not found" signal; `has-session` is not needed.
+
+   **SessionEnd race.** If `op-resolve` fires for OP-72 while the agent is mid-tool-call and the SessionEnd hook is about to fire, both code paths race to write `agent:`. Resolution: **SessionEnd hook always wins.** In the resolve path, if the liveness check says "alive, keep", write `agent:` kept. When SessionEnd fires (milliseconds or minutes later), it clears `agent:` as normal. The final state is always correct regardless of race order. No lock needed; the issue is that the resolve path *shouldn't clear*, and with TOCTOU fixed, it won't if the session was alive at read time.
 3. **`op: detach agent`** — explicit command that kills the tmux window for a given issue and clears `agent:`. Useful for cleanup of zombie sessions when the SessionEnd hook didn't fire (crashes).
 
 **Resolve-path liveness gate — decision flow:**
@@ -507,7 +529,9 @@ Pain points the structure causes:
 
 **Why it feels better.** A new user sees five settings, not thirty. A returning user types in the search and finds the toggle in one second. The "I changed one thing and the page jumped 600px" annoyance disappears. Power-user surface is still all there, just one fold-down away.
 
-**Cost / risk.** Medium — a refactor of 771 LoC into ~10 `renderSection(el)` functions, plus the search filter, plus the two-tier wrapper. Low behavioral risk: setting semantics don't change, only their layout. Bigger risk is breaking the existing settings tab smoke-test recipe in CLAUDE.md (`app.setting.openTabById("op-obsidian")`); the recipe still works, but assertions counting `.op-project-order__item` need to account for the section being inside a `<details>` (still in the DOM, just nested).
+**Cost / risk.** Medium — a refactor of 771 LoC into ~10 `renderSection(el)` functions, plus the search filter, plus the two-tier wrapper. Low behavioral risk: setting semantics don't change, only their layout. Bigger risk is breaking the existing settings tab smoke-test recipe in CLAUDE.md (`app.setting.openTabById("op-obsidian")`); the recipe still works, but assertions counting `.op-project-order__item` need to account for the section being inside a collapsible wrapper.
+
+**Drag-inside-collapsible bug warning.** If native `<details>`/`<summary>` elements are used for collapsible sections, items inside a *closed* `<details>` have `getBoundingClientRect()` return all-zeros — they're present in the DOM but not laid out. The existing drag-reorder code for the Project order list reads `getBoundingClientRect()` on `.op-project-order__item` rows during drag. If those rows are inside a collapsed `<details>`, the drag handler will see zero heights and misplace items on drop. **Do not use native `<details>` for the "Working directories & project order" section (or any section with drag targets).** Use a JS-controlled `div` with `display: none` / `display: block` toggled by a click handler on the section header instead. This keeps the drag handler working and avoids the layout-measurement bug. The drag handlers must also be re-tested inside the collapsed/expanded state as part of the §13 smoke test.
 
 **Verdict.** `RECOMMEND`. Lands as its own follow-up issue — the spec's biggest single PR by LoC, but pure restructure with ~zero new behavior to test.
 
@@ -519,7 +543,7 @@ These have surface appeal and are not in scope. Naming them prevents drift.
 
 | Idea | Why no |
 |---|---|
-| **Status bar widget showing active issue / agent count** | Status bar is a graveyard. Use the sidebar header chip (§1) instead. |
+| **Status bar widget showing active issue / agent count** | `HOLD`, not `REJECT`. "Status bar is a graveyard" is true for most plugins, but op-obsidian has a clear signal value: active issue ID + alive/dead agent dot. Many users keep Obsidian open beside a terminal and the status bar is visible even when the sidebar is closed or pinned-away. The sidebar header chip (§1) is the right *action* surface; the status bar is the right *ambient* surface. Ship as opt-in (`Show status bar chip` setting, off by default) only after §1 ships and the information contract is proven. |
 | **Custom "dashboard" `ItemView` as home base** | New chrome users have to learn and position. Notes are the home base; we layer on top. |
 | **Second fuzzy launcher** | Obsidian has one. Lean on it harder via `op: pick & act` (§3). |
 | **Animated transitions between leaves** | Workspace API exposes no tween hooks. Jump-cuts only. |
@@ -529,7 +553,8 @@ These have surface appeal and are not in scope. Naming them prevents drift.
 | **Drag-to-resolve** | Destructive operations need explicit confirmation, not gestures. |
 | **SwiftUI launcher shim** | Out of scope; ~100ms of polish doesn't justify a separate binary. |
 | **Cross-vault sync of recency log** | YAGNI. Single-machine recency is the 95% case. |
-| **Mobile UI parity** | Not deferred — explicitly out of scope. The plugin's value (terminal launches) doesn't exist on mobile. |
+| **Mobile UI parity (full)** | Not deferred — explicitly out of scope. The plugin's primary value (terminal launches, tmux orchestration) doesn't exist on mobile. |
+| **Mobile read-only mode** | `HOLD`. Non-terminal use cases (viewing issue notes, checking status, reading scope) do exist on mobile. A minimal read-only surface — sidebar renders, note chip renders in Reading mode only, no agent buttons — would be genuinely useful and costs ~50 LoC of guard clauses. Deferred, not rejected; re-evaluate after the non-mobile RECOMMEND stack is shipped. |
 
 ---
 
@@ -584,25 +609,98 @@ Each section becomes its own follow-up issue, sized for one PR. Suggested sequen
 
 1. **§7 Palette ergonomics** (1 PR, ~30 LoC) — name trims + dev-command gating. Zero risk, immediate "feels less cluttered" win.
 2. **§9 Actionable Notices** (1 PR, ~80 LoC). Pure UI; no behavior change beyond click handlers.
-3. **§3 Hotkey preset + `op: pick & act`** (1 PR, ~200 LoC). The opinionated preset is the foundation everything else binds to.
-4. **§1 Resumability** (1 PR, ~150 LoC) — recency log + `op: resume last` + sidebar chip + liveness probe.
+3. **§3 Hotkey preset + `op: pick & act`** (1 PR, ~200 LoC). The opinionated preset is the foundation everything else binds to. **Why §3 before §1:** `op: resume last` (§1) is a plain palette command — it works without being preset-bound. Shipping the preset first means the command gets a key on arrival rather than arriving unbound and needing a second "bind it" nudge. Order confirmed as-is.
+4. **§1 Resumability** (1 PR, ~150 LoC) — recency log + `op: resume last` + sidebar chip + liveness probe (with exec-timeout guard from adversarial pass).
 5. **§6 Sidebar polish** (1 PR, ~120 LoC) — keyboard nav + density pref + right-click menus (§12).
-6. **§5 Badge persistence across resolve** (1 PR, ~100 LoC; needs careful tests). Sequenced after liveness probe (§1) lands.
-7. **§2 Note-level primary chip + §11 status strip + §10 onboarding README** (1 PR, ~300 LoC). Shares the CM6 widget infrastructure — bundle.
-8. **§4 Terminal transition fixes** (1 PR, ~80 LoC). macOS-only; opt-in setting.
+6. **§5 Badge persistence across resolve** (1 PR, ~120 LoC; needs careful tests). Sequenced after liveness probe (§1) lands. (Revised up from ~100: the TOCTOU fix, race-condition documentation, and actionable Notice add ~20 LoC net.)
+7. **§2 Note-level primary chip + §11 status strip + §10 onboarding README** (1 PR, **~400 LoC**). Revised up from ~300: the CM6 widget with proper `destroy`/`AbortController` teardown (~180 LoC), post-processor mirror (~80 LoC), GH status strip with lazy cache (~100 LoC), onboarding README scaffolder (~60 LoC). Shares the CM6 widget infrastructure — bundle justified.
+8. **§4 Terminal transition fixes** (1 PR, ~80 LoC). macOS-only; opt-in setting. Includes `delay 0.3` AppleScript fix.
 9. **§8 Quick-capture** (1 PR, ~80 LoC). Standalone; can ship anywhere in the sequence.
-10. **§13 Settings tab restructure** (1 PR, ~400 LoC moved + ~80 new). Biggest single PR but pure restructure; ship after the chip+onboarding bundle so the new "Onboarding" daily setting has somewhere to live.
+10. **§13 Settings tab restructure** (1 PR, ~400 LoC moved + **~150 LoC new**). Revised up from ~80 new: search filter (~25 LoC), two-tier wrapper (~20 LoC), per-section JS-controlled collapsibles — using `div`+click handler, not native `<details>`, per the drag-target bug identified in the adversarial pass (~10 × 15 = ~150 LoC). Biggest single PR but pure restructure; ship after the chip+onboarding bundle so the new "Onboarding" daily setting has somewhere to live.
 
-Total: 10 PRs, roughly 1,600 LoC touched (1,200 new + 400 moved), no breaking changes to setting semantics. Each PR ships independently.
+Total: 10 PRs, roughly **1,810 LoC touched** (1,410 new + 400 moved), no breaking changes to setting semantics. Each PR ships independently. (Up from original ~1,600 estimate; the difference is the adversarial pass's additions: exec-timeout guards, widget teardown, actionable-Notice wiring, drag-safe collapsibles.)
 
 ## 17. Open questions for first review pass
 
 These are deliberate ambiguities for the user / Copilot review to push back on:
 
-1. **Hotkey preset bindings (§3 table)** — are `⌘⇧*` the right modifiers? Conflicts with any user's existing setup are inevitable; should the preset be "best effort" (skip already-bound keys) or "all or nothing"?
+1. **Hotkey preset bindings (§3 table)** — are `⌘⇧*` the right modifiers? Conflicts with any user's existing setup are inevitable. ~~Should the preset be "best effort" (skip already-bound keys) or "all or nothing"?~~ **Decided:** best effort with UI showing skipped bindings (see §3).
 2. **Liveness probe interval (§1, §5)** — 5s feels right for sidebar visibility; is it cheap enough to also run on every issue-note open, so the chip in §2 is always accurate?
 3. **GH status fetch (§11)** — opt-in or opt-out by default? `gh` is on the user's path or it isn't; we can detect, but defaulting to "off if not configured" vs. "on with a one-time prompt" is a UX call.
 4. **Onboarding README path (§10)** — `Projects/_op-readme.md` puts it under the user's projects folder. Should it live elsewhere to avoid noise in the project list?
-5. **Resolve-path liveness check (§5)** — if `tmux has-session` itself fails (tmux uninstalled mid-session), do we block resolve, warn-and-clear, or warn-and-keep? The conservative choice is warn-and-keep, but that leaves zombie `agent:` fields when tmux is genuinely gone.
+5. **Resolve-path liveness check (§5)** — if `tmux list-windows` fails (tmux uninstalled mid-session), do we block resolve, warn-and-clear, or warn-and-keep? **Decided:** warn-and-keep (conservative). Zombie `agent:` fields are self-healing — `op: detach agent` clears them manually, and the stale-badge Notice (§9) will surface them. Blocking resolve for a liveness-tool failure is wrong; the underlying operation (move file, trash TASKS) should not be gated on a tmux binary being present.
 
 These are flagged for the adversarial review pass.
+
+---
+
+## 18. Adversarial review responses
+
+Direct answers to the 10 pressure-test prompts from the first review pass. Each answer either points to a concrete edit already made above or adds a decision inline.
+
+**1. §1 Resumability — recency log / `data.json` corruption / multi-vault / exec hang.**
+- *Corruption recovery:* `mergeSettings()` handles missing key gracefully (defaults to `[]`). Added an explicit `Array.isArray` guard at the read site for defence-in-depth. Full JSON corruption is out of scope for this spec — existing recovery path handles it. Edit made in §1.
+- *Multi-vault:* `data.json` is per-vault at `.obsidian/plugins/op-obsidian/data.json`. Cross-vault contamination is architecturally impossible. Clarified in §1.
+- *Exec hang:* Fixed with `execSync(..., { timeout: 500 })`. Edit made in §1.
+
+**2. §2 Note-level chip — CM6 widget tear-down / source mode.**
+- *Stale listeners on mode toggle:* Fixed by requiring `AbortController` pattern in `WidgetType.toDOM/destroy`. Made a mandatory implementation rule in §2.
+- *Source mode:* "Doesn't render" is correct. Document it in user-facing help. Edit made in §2.
+
+**3. §3 Hotkey preset — collision strategy.**
+- Decided: best-effort with a modal listing skipped bindings. Rationale and implementation detail added to §3. Open question #1 in §17 struck through.
+
+**4. §4 Terminal transitions — `open -ga` claim.**
+- `-g` holds for both cold-start and when iTerm is already running. The distinction is that `open -ga iTerm` alone doesn't create a tab; the AppleScript tab-create still runs, followed by `delay 0.3` and `tell application "Obsidian" to activate`. Clarified and the 300ms delay added to §4.
+
+**5. §5 Badge persistence — TOCTOU / race / actionable Notice.**
+- *TOCTOU:* Fixed by collapsing two calls into one `tmux list-windows` call. Edit made in §5.
+- *SessionEnd race:* Resolved by declaring "SessionEnd hook always wins." Correct final state is guaranteed regardless of race order. Edit made in §5.
+- *Notice actionability:* The original "session still attached" Notice was purely informational. Fixed to use §9's pattern: "Agent session still attached — `agent:` kept. [Open agent] [Detach]". Edit made in §5.
+
+**6. §13 Settings restructure — drag inside `<details>`.**
+- `getBoundingClientRect()` returns zero dimensions for items inside a collapsed `<details>`. This would break the drag-reorder code. Fix: use JS-controlled `div`+click-handler collapsibles (not native `<details>`) for all sections containing drag targets. Added explicit callout and implementation rule to §13. Drag handlers must be re-tested inside collapsed/expanded state as part of the §13 test plan.
+
+**7. §14 no-pile — biggest disagreement.**
+- **Status-bar widget:** Changed from `REJECT` to `HOLD` in §14. Argument: op-obsidian has a clear signal value (active issue + alive/dead agent dot); the status bar is visible even when the sidebar is hidden; this is genuinely different from generic "status bar is a graveyard" cases. Ship as opt-in after §1's information contract is proven.
+- **Mobile read-only mode:** Added as `HOLD` in §14. Non-terminal use cases (reading scope, checking issue state) exist on mobile. ~50 LoC of guard clauses for a minimal read-only surface is worth a deferred revisit.
+
+**8. §16 ordering — §3 before §1.**
+- Order confirmed. `op: resume last` (§1) is a plain palette command; it works without being preset-bound. Shipping the preset first means it arrives bound on day one. Note added to §16 item 3.
+
+**9. §16 sizing claims — what's materially off.**
+- *§2 + §11 + §10 (~300 LoC):* Too low. CM6 widget with proper teardown (~180 LoC), post-processor mirror (~80 LoC), GH status strip with lazy cache (~100 LoC), onboarding (~60 LoC) = ~420 LoC. Updated to ~400 LoC in §16.
+- *§13 new LoC (~80 new):* Too low. JS-controlled collapsibles for ~9 Advanced sections (~135 LoC), search filter (~25 LoC), wrapper (~20 LoC) = ~180 LoC new. Updated to ~150 LoC new (conservative) in §16.
+- *§5 (~100 LoC):* Slightly low after TOCTOU fix + race docs + actionable Notice wiring. Updated to ~120 LoC in §16.
+- Total revised estimate: ~1,810 LoC (up from ~1,600).
+
+**10. What was missed — the obvious-in-hindsight win.**
+See §19 below. Short answer: cross-issue keyboard navigation (next/previous in project, `]`/`[` from within an issue note) is the one missing move that makes keyboard-only work feel continuous rather than punctuated.
+
+---
+
+## 19. Missed wins
+
+Things not in the seed prompt, not surfaced by the pre-spec adversarial pass, and not in the first draft. Added based on the second adversarial pass.
+
+### 19a. Cross-issue keyboard navigation — `]` and `[` inside an issue note
+
+**Today.** When you're in an issue note (OP-72), navigating to the next open issue in the project requires: close note → open sidebar → find next row → click. Or: open palette → `op: pick & act` → type something. Neither is fluid.
+
+**Proposed.** Two new commands: **`op: next issue in project`** and **`op: previous issue in project`**. Bound to `]` and `[` in the default preset (or `⌘⇧]`/`⌘⇧[` if `]`/`[` conflict with existing note-editing bindings — check against Obsidian core first). Logic: from the frontmatter of the current note, read `project:` and the current `id:`, then look up the next/previous issue by ID in `issueStore`. Wrap at boundaries.
+
+**Why it feels better.** The issue list in the sidebar is a *list* — pressing `j/k` and `↵` (§6) gets you into a note, but getting to the *next* note in that list currently requires a context switch back to the sidebar. This closes that loop. The model is Vim's `]q`/`[q` (quickfix next/previous) or GitHub's `j/k` in the issue list — established muscle memory for the target user.
+
+**Cost / risk.** Trivial. ~30 LoC: two commands, one `issueStore` lookup, one `app.workspace.getLeaf().openFile()` call. Add to the §16 sequence as a fast follow to §6 (sidebar keyboard nav) — bundle into PR #5 or standalone as PR #9a.
+
+**Verdict.** `RECOMMEND`. Add to §3's preset table: `⌘⇧]` → `op: next issue in project`, `⌘⇧[` → `op: previous issue in project`.
+
+### 19b. `op: show session log` — surfacing shell output for debugging
+
+**Today.** The plugin shells out frequently (git, tmux, gh, AppleScript). When something goes wrong, the diagnostic path is "open the Obsidian dev console, filter for op errors, interpret raw Node.js stack traces." Power users who are not plugin developers find this deeply unfriendly.
+
+**Proposed.** A rolling in-memory log (last 100 shell invocations: command, exit code, stdout head, stderr head, timestamp) accessible via `op-dev: show session log` (or surfaced by `[Open log]` links in §9's Actionable Notices). Rendered as a modal with a copy-to-clipboard button for sharing diagnostics. Log is never persisted (privacy — shell output can contain tokens / PAT fragments).
+
+**Cost / risk.** Low (~50 LoC: log ring, modal, copy button). Dev-commands-only (hidden by §7's `showDevCommands` gate until the user opts in). No new I/O — just captures what's already happening.
+
+**Verdict.** `RECOMMEND`. Bundle into §9 (Actionable Notices) PR — the `[Open log]` links need this module to exist.
