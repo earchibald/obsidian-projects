@@ -40,3 +40,11 @@ obsidian property:set name=commits type=list \
 ```
 
 This is the **fallback** for when `op-obsidian` is missing or disabled. In normal operation, `obsidian op-append-commit issue=<PREFIX>-<N> sha=<sha> subject=<subj>` is the right tool — it's idempotent, handles the read/rewrite internally, and keeps the JSON response trail.
+
+## `op-append-commit` failure modes
+
+When a project's policy is to call `op-append-commit` after each commit (or batch at resolve), three failure shapes show up. The skill is workflow-agnostic about *when* you call it; this section covers what to do when the call itself fails.
+
+- **`git rev-parse` / `git log` errors** (not a repo, detached state, empty history) → note the failure once, skip the append for that commit, and continue with the work. Do **not** retry in a loop, and do **not** synthesize a sha. If the project does a resolve-time back-fill, surface the skipped commits there.
+- **Missing or unknown issue id** (the caller didn't pass one, or the id doesn't resolve to a file) → stop and ask the user for the `<PREFIX>-<N>`. Never append to a guessed issue — `commits:` is a permanent record on the resolved-issue note, and wrong attribution is worse than a missing entry.
+- **`obsidian op-append-commit` returns an error** (vault unreachable, plugin disabled, issue file moved mid-session) → re-probe the plugin (`app.plugins.enabledPlugins.has("op-obsidian")`) and re-resolve the issue path. If it still fails, record the `<sha7> <subject>` pair in the session (or a scratch note) and batch-append later; don't block the project's commit cadence on vault health.

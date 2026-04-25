@@ -70,7 +70,7 @@ Why: keeps the project key visible in file lists and makes wikilinks from TASKS 
 
 **GitHub issue mapping.** `github_issue:` is an optional URL pointing at a GitHub issue that mirrors this op issue. Set manually via the plugin's "Set GitHub issue URL" command, auto-populated at creation time when the `autoCreateGithubIssue` plugin setting is on (runs `gh issue create` in the project's repo), or passed in at creation. When `closeGithubIssueOnResolve` is on, resolving the op issue runs `gh issue close` on the linked URL.
 
-**Version.** `version:` records the semver release that shipped the issue (e.g. `0.1.7`). Set at resolve time, in the same commit that bumps the project's version file (`plugin.json` / `manifest.json` / `package.json`). One bump per issue; classify as patch (fixes, docs, internal), minor (new user-facing behavior, additive schema), or major (breaking schema change). See the `op` skill's "Semver bumping" section for the full rules. Optional — meta-only projects without a version file leave it unset.
+**Version.** `version:` is **optional**. It records the release identifier (e.g. `0.1.7`) that shipped this issue, when the project tracks releases on issues. *When* and *how* to set it — patch/minor/major classification, lockstep across multiple version files, whether to bump per issue at all — is owned by the project, not by this skill. See the project's own `CLAUDE.md` (or equivalent) for the policy. Meta-only projects without a release artifact leave the field unset.
 
 **Issue links.** Issues form a graph via plugin-managed link fields. The `op-obsidian` plugin owns both sides of every link — agents MUST use `op-set-link` / `op-remove-link` and never write the link frontmatter directly. Direct edits are tolerated for human convenience, but `op-link-check` will flag any drift across the vault and `op-link-check repair=true` will reconcile it.
 
@@ -148,13 +148,14 @@ Use `obsidian vault="<vault>" files folder="Projects/<slug>/ISSUES"` and `files 
 3. **Create TASKS notes** (one per logical subtask) before touching any code or external systems.
 4. **Update issue** `status: in-progress` at session start.
 5. **Before any external action** (repo create, push, release, deploy) — confirm with user unless they granted explicit upfront authorization.
-6. **During work:** after each commit that lands work for the in-progress issue, append `<sha7> <subject>` to the issue's `commits:` list. When a PR is opened for the issue, set `pr:`. Skip for projects with no git repo.
-7. **On completion:**
+6. **During work:** if the project tracks shipped commits on the issue, append `<sha7> <subject>` to `commits:` via `op-append-commit`; if it tracks PRs, set `pr:` via `op-set-pr`. Cadence (per commit, batch at resolve, or never) is the **project's** choice — see its `CLAUDE.md`. Skip both when the project says nothing or has no git repo.
+7. **On completion (vault-side invariants the skill enforces):**
    - Set issue `status: resolved`, add `resolved: <date>`.
-   - If the project has a git repo and `commits:` is empty, offer to back-fill from `git log` before moving the issue.
-   - `obsidian move` the issue to `RESOLVED ISSUES/`.
-   - Delete TASKS notes via `obsidian delete` (goes to trash, not permanent).
-   - Do NOT delete DOCS.
+   - Move the issue to `RESOLVED ISSUES/`.
+   - Trash TASKS notes (goes to trash, not permanent).
+   - Do NOT touch DOCS.
+
+   These steps run atomically inside `op-resolve`. **Project-specific resolve actions** (release, version bump, deploy, branch merge) layer on top of this and are governed by the project's own conventions, not by this skill.
 
 ---
 

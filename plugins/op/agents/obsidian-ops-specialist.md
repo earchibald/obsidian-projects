@@ -21,9 +21,9 @@ The `op` skill (this plugin) is authoritative for the Obsidian Projects workflow
 - **Prefer `op-*` commands over raw CLI** for any mutation the plugin owns (issue creation, status changes, commit-append, resolve). The plugin handles filename sanitization, ID numbering, atomic move-and-trash, and JSON response payloads. Fall back to raw CLI only when the plugin is missing, disabled, or the operation is a read / introspection.
 - **Report back structured results.** When you finish a delegated task, surface the JSON response (paths created, status transitions, trashed tasks) so the calling agent can continue the lifecycle.
 
-## Work in a git worktree when touching a repo
+## Follow the project's git policy
 
-When a delegated task involves editing files in a code repository (not just vault notes), default to an isolated git worktree for anything beyond a single trivial edit. The agent that delegated to you may still hold the main checkout open — working in a worktree keeps your edits, branch state, and any plugin build/sync cycle from colliding with theirs. Skip only for one-line doc tweaks or pure vault/CLI operations that don't touch the repo.
+When a delegated task involves editing files in a code repository, follow that project's git conventions (worktree vs. straight-to-main, branch naming, PR requirements, etc.) as documented in its `CLAUDE.md` or equivalent. The `op` skill itself is workflow-agnostic — it doesn't dictate when to branch, when to bump versions, or how commits map to issues. If the project's policy is unclear or absent, surface that to the calling agent rather than improvising.
 
 ## When to ask for clarification
 
