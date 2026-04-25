@@ -24,6 +24,7 @@ import { execFileSync } from "child_process";
 import {
   EXTRA_PREAMBLE_MAX,
   type SidebarTab,
+  type SidebarDensity,
   type OpSettings,
   DEFAULT_SETTINGS,
   mergeSettings,
@@ -37,6 +38,7 @@ export {
 export type {
   InjectionSettings,
   SidebarTab,
+  SidebarDensity,
   ViewSettings,
   GithubSettings,
   AgentsSettings,
@@ -682,6 +684,22 @@ export class OpSettingsTab extends PluginSettingTab {
           s.view.openOnStartup = v;
           await this.plugin.saveSettings();
         }),
+      );
+
+    new Setting(containerEl)
+      .setName("Sidebar density")
+      .setDesc(
+        "Compact tightens vertical row padding by 4px and hides the project chip when only one project is rendered. Comfortable matches the historical default.",
+      )
+      .addDropdown((d) =>
+        d
+          .addOption("comfortable", "Comfortable")
+          .addOption("compact", "Compact")
+          .setValue(s.view.density)
+          .onChange(async (v) => {
+            s.view.density = v as SidebarDensity;
+            await this.plugin.saveSettings();
+          }),
       );
 
     containerEl.createEl("h2", { text: "GitHub integration" });

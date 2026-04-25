@@ -13,9 +13,11 @@ beforeAll(() => {
 });
 
 vi.mock("obsidian", () => ({
+  App: class {},
   ItemView: class {
     contentEl: any = makeFakeEl();
   },
+  Modal: class {},
   TFile: class {},
   WorkspaceLeaf: class {},
   setIcon: () => {},
@@ -27,7 +29,13 @@ vi.mock("./staleAgentBadges", () => ({
   probeLiveTmuxWindows: vi.fn(async () => ({ live: new Set<string>(), ok: true })),
 }));
 
-import { filterEntries, OpSidebarView, TMUX_PROBE_INTERVAL_MS, type OpSidebarHooks } from "./sidebarView";
+import {
+  filterEntries,
+  OpSidebarView,
+  shouldShowProjectChip,
+  TMUX_PROBE_INTERVAL_MS,
+  type OpSidebarHooks,
+} from "./sidebarView";
 import { probeLiveTmuxWindows } from "./staleAgentBadges";
 
 function entry(over: Partial<IssueEntry>): IssueEntry {
@@ -91,6 +99,33 @@ describe("filterEntries", () => {
   });
 });
 
+describe("shouldShowProjectChip", () => {
+  const op1 = entry({ id: "OP-1", project: "obsidian-projects" });
+  const op2 = entry({ id: "OP-2", project: "obsidian-projects" });
+  const jb1 = entry({ id: "JB-1", project: "jira-bases" });
+
+  it("always shows the chip in comfortable density, even single-project", () => {
+    expect(shouldShowProjectChip("comfortable", [])).toBe(true);
+    expect(shouldShowProjectChip("comfortable", [op1])).toBe(true);
+    expect(shouldShowProjectChip("comfortable", [op1, op2])).toBe(true);
+    expect(shouldShowProjectChip("comfortable", [op1, jb1])).toBe(true);
+  });
+
+  it("hides the chip in compact density when every entry shares one project", () => {
+    expect(shouldShowProjectChip("compact", [op1])).toBe(false);
+    expect(shouldShowProjectChip("compact", [op1, op2])).toBe(false);
+  });
+
+  it("keeps the chip in compact density when projects differ", () => {
+    expect(shouldShowProjectChip("compact", [op1, jb1])).toBe(true);
+    expect(shouldShowProjectChip("compact", [jb1, op1, op2])).toBe(true);
+  });
+
+  it("treats an empty list as 'show' so the empty-state placeholder isn't rare-cased", () => {
+    expect(shouldShowProjectChip("compact", [])).toBe(true);
+  });
+});
+
 function makeFakeEl(): any {
   const el: any = {
     children: [] as any[],
@@ -122,6 +157,10 @@ function makeFakeEl(): any {
     },
     setAttr() {},
     addEventListener() {},
+    removeEventListener() {},
+    removeClass() {},
+    focus() {},
+    scrollIntoView() {},
   };
   return el;
 }
@@ -149,7 +188,13 @@ function makeView(hooks?: OpSidebarHooks): any {
     {} as any,
     store as any,
     bus as any,
-    () => ({ defaultTab: "issues", recentResolvedLimit: 20, openOnStartup: false } as any),
+    () =>
+      ({
+        defaultTab: "issues",
+        recentResolvedLimit: 20,
+        openOnStartup: false,
+        density: "comfortable",
+      } as any),
     undefined,
     undefined,
     hooks,
