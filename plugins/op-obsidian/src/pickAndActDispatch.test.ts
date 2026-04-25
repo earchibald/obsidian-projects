@@ -3,6 +3,8 @@ import {
   decidePickAndActAction,
   matchesPickAndActQuery,
   shouldIncludeResolved,
+  sortPickAndActResults,
+  numericIdSuffix,
 } from "./pickAndActDispatch";
 
 describe("decidePickAndActAction (macOS)", () => {
@@ -92,5 +94,74 @@ describe("shouldIncludeResolved", () => {
   it("does not include on partial id matches", () => {
     expect(shouldIncludeResolved("OP-7", "OP-72")).toBe(false);
     expect(shouldIncludeResolved("link", "OP-72")).toBe(false);
+  });
+});
+
+describe("numericIdSuffix", () => {
+  it("extracts the trailing number from a hyphenated ID", () => {
+    expect(numericIdSuffix("OP-72")).toBe(72);
+    expect(numericIdSuffix("PROJ-1")).toBe(1);
+  });
+
+  it("returns 0 for IDs with no numeric suffix", () => {
+    expect(numericIdSuffix("NOID")).toBe(0);
+    expect(numericIdSuffix("")).toBe(0);
+  });
+});
+
+describe("sortPickAndActResults", () => {
+  type Entry = { id: string; resolvedFolder?: boolean };
+
+  const open = (id: string): Entry => ({ id, resolvedFolder: false });
+  const resolved = (id: string): Entry => ({ id, resolvedFolder: true });
+
+  it("open issues sort before resolved issues", () => {
+    const result = sortPickAndActResults([resolved("OP-1"), open("OP-2")], "");
+    expect(result.map((e) => e.id)).toEqual(["OP-2", "OP-1"]);
+  });
+
+  it("within each bucket, higher numeric ID sorts first (most recent first)", () => {
+    const result = sortPickAndActResults([open("OP-1"), open("OP-3"), open("OP-2")], "");
+    expect(result.map((e) => e.id)).toEqual(["OP-3", "OP-2", "OP-1"]);
+  });
+
+  it("exact-ID match floats to top above open partial matches", () => {
+    // OP-7 is resolved but typed exactly; OP-72 is open (partial match)
+    const result = sortPickAndActResults(
+      [open("OP-72"), resolved("OP-7")],
+      "OP-7",
+    );
+    expect(result[0].id).toBe("OP-7");
+    expect(result[1].id).toBe("OP-72");
+  });
+
+  it("exact-ID match (case-insensitive) floats to top", () => {
+    const result = sortPickAndActResults(
+      [open("OP-72"), resolved("OP-7")],
+      "op-7",
+    );
+    expect(result[0].id).toBe("OP-7");
+  });
+
+  it("open exact-ID match still sorts first over other open issues", () => {
+    const result = sortPickAndActResults(
+      [open("OP-72"), open("OP-7"), open("OP-70")],
+      "OP-7",
+    );
+    expect(result[0].id).toBe("OP-7");
+  });
+
+  it("no mutation of the input array (returns a fresh copy)", () => {
+    const input = [open("OP-2"), open("OP-1")];
+    sortPickAndActResults(input, "");
+    expect(input[0].id).toBe("OP-2"); // original order preserved
+  });
+
+  it("empty query — open before resolved, descending numeric", () => {
+    const result = sortPickAndActResults(
+      [resolved("OP-5"), open("OP-3"), open("OP-10")],
+      "",
+    );
+    expect(result.map((e) => e.id)).toEqual(["OP-10", "OP-3", "OP-5"]);
   });
 });

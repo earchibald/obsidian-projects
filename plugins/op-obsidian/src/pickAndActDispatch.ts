@@ -97,3 +97,40 @@ export function matchesPickAndActQuery(
 export function shouldIncludeResolved(query: string, issueId: string): boolean {
   return query.trim().toLowerCase() === issueId.toLowerCase();
 }
+
+/**
+ * Extract the trailing numeric suffix from an issue ID (e.g. "OP-72" → 72).
+ * Returns 0 for IDs with no numeric suffix.
+ */
+export function numericIdSuffix(id: string): number {
+  const m = id.match(/-(\d+)$/);
+  return m ? parseInt(m[1], 10) : 0;
+}
+
+/**
+ * Sort a filtered list of issues for the pick & act modal.
+ *
+ * Ordering (most-preferred first):
+ *  1. Exact-ID match — if `query` is an exact case-insensitive match for an
+ *     issue's ID, that issue floats to the top regardless of resolved status.
+ *     This ensures that typing "OP-7" while OP-7 is resolved still surfaces it
+ *     immediately above the open OP-72 partial match.
+ *  2. Open/in-progress before resolved.
+ *  3. Within each bucket, numerically descending by issue number (most-recent
+ *     first).
+ */
+export function sortPickAndActResults(
+  entries: { id: string; resolvedFolder?: boolean }[],
+  query: string,
+): typeof entries {
+  const q = query.trim().toLowerCase();
+  return [...entries].sort((a, b) => {
+    const aExact = a.id.toLowerCase() === q ? 0 : 1;
+    const bExact = b.id.toLowerCase() === q ? 0 : 1;
+    if (aExact !== bExact) return aExact - bExact;
+    const aResolved = a.resolvedFolder ? 1 : 0;
+    const bResolved = b.resolvedFolder ? 1 : 0;
+    if (aResolved !== bResolved) return aResolved - bResolved;
+    return numericIdSuffix(b.id) - numericIdSuffix(a.id);
+  });
+}

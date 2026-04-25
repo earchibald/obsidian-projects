@@ -2230,6 +2230,10 @@ export default class OpPlugin extends Plugin {
       return;
     }
     const next = peers[(idx + direction + peers.length) % peers.length];
+    if (next.path === current.path) {
+      new Notice(`op: only one open issue in ${current.project}`);
+      return;
+    }
     void this.openIssue(next);
   }
 

@@ -4,6 +4,7 @@ import {
   decidePickAndActAction,
   matchesPickAndActQuery,
   shouldIncludeResolved,
+  sortPickAndActResults,
   type PickAndActAction,
 } from "./pickAndActDispatch";
 
@@ -49,14 +50,9 @@ export class PickAndActModal extends SuggestModal<IssueEntry> {
       const haystack = `${entry.id} ${entry.title} ${entry.project}`;
       return matchesPickAndActQuery(haystack, query);
     });
-    // Sort: open + in-progress first, then resolved at the bottom; within each
-    // bucket, numerically descending by issue number (most recent first).
-    return filtered.sort((a, b) => {
-      const aResolved = a.resolvedFolder ? 1 : 0;
-      const bResolved = b.resolvedFolder ? 1 : 0;
-      if (aResolved !== bResolved) return aResolved - bResolved;
-      return numericIdSuffix(b.id) - numericIdSuffix(a.id);
-    });
+    // Sort: exact-ID matches first, then open/in-progress before resolved;
+    // within each bucket, numerically descending by issue number (most recent first).
+    return sortPickAndActResults(filtered, query) as IssueEntry[];
   }
 
   renderSuggestion(entry: IssueEntry, el: HTMLElement): void {
@@ -115,7 +111,3 @@ export class PickAndActModal extends SuggestModal<IssueEntry> {
   }
 }
 
-function numericIdSuffix(id: string): number {
-  const m = id.match(/-(\d+)$/);
-  return m ? parseInt(m[1], 10) : 0;
-}
