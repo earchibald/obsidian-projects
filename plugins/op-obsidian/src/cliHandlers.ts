@@ -184,3 +184,11 @@ export function parseGetWorkflowParams(
   if (!project) return { ok: false, error: "op-get-workflow failed: --project is required" };
   return { ok: true, value: { project } };
 }
+
+export function parseEditWorkflowParams(
+  params: Record<string, string>,
+): ParamsResult<{ project: string }> {
+  const project = params.project ?? params.slug;
+  if (!project) return { ok: false, error: "op-edit-workflow failed: --project is required" };
+  return { ok: true, value: { project } };
+}

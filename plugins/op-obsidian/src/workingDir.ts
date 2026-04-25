@@ -14,16 +14,27 @@ export async function resolveWorkingDir(
   entry: IssueEntry,
   saveSettings: () => Promise<void>,
 ): Promise<ResolvedWorkingDir | undefined> {
-  const fromFrontmatter = readRepoPathFromStatus(app, entry.project);
+  return resolveWorkingDirForSlug(app, settings, entry.project, saveSettings);
+}
+
+// Slug-keyed variant. Used by entry-less flows (e.g. op-edit-workflow) that
+// need a working directory for a project but don't have an IssueEntry.
+export async function resolveWorkingDirForSlug(
+  app: App,
+  settings: OpSettings,
+  slug: string,
+  saveSettings: () => Promise<void>,
+): Promise<ResolvedWorkingDir | undefined> {
+  const fromFrontmatter = readRepoPathFromStatus(app, slug);
   if (fromFrontmatter) return { path: fromFrontmatter, source: "frontmatter" };
 
-  const fromSettings = settings.workingDirs[entry.project];
+  const fromSettings = settings.workingDirs[slug];
   if (fromSettings) return { path: fromSettings, source: "setting" };
 
-  const picked = await promptForWorkingDir(app, entry.project);
+  const picked = await promptForWorkingDir(app, slug);
   if (!picked) return undefined;
   if (picked.persist) {
-    settings.workingDirs[entry.project] = picked.path;
+    settings.workingDirs[slug] = picked.path;
     await saveSettings();
   }
   return { path: picked.path, source: "prompt" };

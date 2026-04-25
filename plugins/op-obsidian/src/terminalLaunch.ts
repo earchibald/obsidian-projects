@@ -27,12 +27,19 @@ export interface LaunchArgs {
   // /opt/homebrew/bin, so bare `tmux` fails on Apple Silicon brew installs.
   tmuxBinary: string;
   // Exported into the agent's env so SessionEnd hooks can identify which
-  // op-obsidian issue/agent a terminating session belongs to.
-  issueId: string;
+  // op-obsidian issue/agent a terminating session belongs to. Optional —
+  // entry-less launches (e.g. the workflow editor) leave it unset and the
+  // hook silently no-ops.
+  issueId?: string;
   // Human-readable title forwarded to the orchestrator for the iTerm
   // session/pane title (e.g. the issue note's file basename).
   issueTitle?: string;
   agentId: string;
+  // Override the tmux window name (sanitized to tmux-safe chars). Used by
+  // entry-less launches that have no `issueId` — the workflow editor
+  // passes `op-workflow-<slug>` here so its window doesn't collide with
+  // any issue session.
+  windowName?: string;
   // Debug mode: skip running the agent; drop into an interactive login shell
   // in the tmux window so the launch flow can be exercised manually (OP-43).
   debug?: boolean;
@@ -56,12 +63,19 @@ export async function launchInTerminal(args: LaunchArgs): Promise<LaunchResult> 
     throw new Error(`op: terminal launch currently supports macOS only (platform=${process.platform})`);
   }
   await assertTmuxAvailable(args.tmuxBinary);
+  if (!args.issueId && !args.windowName) {
+    throw new Error("op: launchInTerminal requires issueId or windowName");
+  }
 
   const session = SHARED_TMUX_SESSION;
-  const windowName = tmuxWindowName(args.issueId);
+  const windowName = tmuxWindowName(args.windowName ?? args.issueId ?? "agent");
   const { innerPath, outerPath } = await writeLaunchScripts({ args, session, windowName });
 
-  if (args.terminalApp === "iTerm" && args.orchestrator?.settings.orchestrator.enabled) {
+  if (
+    args.terminalApp === "iTerm" &&
+    args.orchestrator?.settings.orchestrator.enabled &&
+    args.issueId
+  ) {
     // Layout orchestrator takes over: it manages tmux session naming per
     // iTerm window and drives AppleScript splits itself.
     const { orchestrateLaunch } = await import("./orchestrator");
@@ -176,22 +190,23 @@ async function writeLaunchScripts({
   // fails to resolve in spawned agent windows. Prepend the usual user-shell
   // dirs so statusline and other CLI tools behave as in a normal terminal.
   // See OP-41.
-  const issueIdShell = shSingleQuote(args.issueId);
   const agentIdShell = shSingleQuote(args.agentId);
   const innerLines = [
     "#!/bin/bash",
     "set -e",
     `cd ${cwdShell}`,
     `export PATH="/opt/homebrew/bin:/usr/local/bin:$HOME/.local/bin:$HOME/bin:$PATH"`,
-    `export OP_ISSUE_ID=${issueIdShell}`,
-    `export OP_AGENT_ID=${agentIdShell}`,
   ];
+  if (args.issueId) {
+    innerLines.push(`export OP_ISSUE_ID=${shSingleQuote(args.issueId)}`);
+  }
+  innerLines.push(`export OP_AGENT_ID=${agentIdShell}`);
   if (args.debug) {
     // Launch the agent binary interactively with no initial prompt so
     // the launch flow (PATH, env, tmux window) can be exercised end-to-end
     // while a human drives the session.
     innerLines.push(
-      `echo "[op] debug agent launch — no prompt (issue=${args.issueId} agent=${args.agentId})"`,
+      `echo "[op] debug agent launch — no prompt (issue=${args.issueId ?? "<none>"} agent=${args.agentId})"`,
       `exec ${binShell} ${flagsShell}`,
     );
   } else {

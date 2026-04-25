@@ -9,6 +9,7 @@ import {
   parseNewParams,
   parseScaffoldParams,
   parseGetWorkflowParams,
+  parseEditWorkflowParams,
 } from "./cliHandlers";
 
 describe("parseWorkParams", () => {
@@ -143,6 +144,22 @@ describe("parseGetWorkflowParams", () => {
   });
   it("project beats slug when both present", () => {
     const r = parseGetWorkflowParams({ project: "a", slug: "b" });
+    expect(r.ok && r.value.project).toBe("a");
+  });
+});
+
+describe("parseEditWorkflowParams", () => {
+  it("requires project (or slug alias)", () => {
+    const r = parseEditWorkflowParams({});
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.error).toMatch(/--project/);
+  });
+  it("accepts the slug alias", () => {
+    const r = parseEditWorkflowParams({ slug: "obsidian-projects" });
+    expect(r.ok && r.value.project).toBe("obsidian-projects");
+  });
+  it("project beats slug when both present", () => {
+    const r = parseEditWorkflowParams({ project: "a", slug: "b" });
     expect(r.ok && r.value.project).toBe("a");
   });
 });

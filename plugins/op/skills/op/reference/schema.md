@@ -234,6 +234,9 @@ updated: YYYY-MM-DD       # optional
 - The `op-obsidian` plugin's `op:open-agent` kickoff prompt inlines the WORKFLOW.md content automatically (capped at the configurable `injection.maxWorkflowChars`, default 2000). Over the cap → the prompt surfaces only the path with a "read this first" hint.
 - Programmatic access for agents: `obsidian op-get-workflow project=<slug>` returns `{exists, path, content, size}`.
 
+**Authoring:**
+- Palette command **op: edit project workflow (WORKFLOW.md)** (or `obsidian op-edit-workflow project=<slug>`) launches a dedicated agent session in tmux that interviews the user about branching/version/PR/commit policy and writes the file. The session has full edit capability but is bounded to the workflow file (no `op-work` / `op-resolve` / version bump). tmux window naming: `op-workflow-<slug>` to keep it distinct from issue sessions in the shared `op-agents` session.
+
 **`type: workflow`** is a top-level type alongside `issue`, `task`, `doc`, `project-status`, and `schema`. Cross-project base aggregations should exclude it (`type != "workflow"`) so it doesn't pollute Issue/Task/Doc lists.
 
 **Optional, opinion-driven:** absent ⇒ no opinion. The skill defaults to asking the user when policy ambiguity comes up. Projects without code repos (or without a workflow-driven feel) leave the file unset.
