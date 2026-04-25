@@ -607,13 +607,13 @@ export class OpSidebarView extends ItemView {
     });
 
     badge.addEventListener("mouseleave", () => {
-      this.hoverSeq++;
       this.teardownHoverPreview();
     });
   }
 
   private showHoverPreview(anchor: HTMLElement, text: string): void {
-    // Replace any existing popover so we never stack two.
+    // Replace any existing popover so we never stack two. keepSeq=true so the
+    // seq counter is NOT bumped — the current capture is still live.
     this.teardownHoverPreview(/* keepSeq */ true);
 
     const el = document.createElement("div");
@@ -635,15 +635,25 @@ export class OpSidebarView extends ItemView {
     // dismisses it. Use capture phase to beat downstream stopPropagation.
     const handler = (ev: MouseEvent) => {
       if (ev.target instanceof Node && el.contains(ev.target)) return;
-      this.hoverSeq++;
       this.teardownHoverPreview();
     };
     this.hoverDocClickHandler = handler;
     document.addEventListener("click", handler, true);
   }
 
+  /**
+   * Cancel any pending hover timer, invalidate any in-flight capture (by
+   * bumping `hoverSeq`), and remove the popover + document click listener.
+   *
+   * Pass `keepSeq = true` only when replacing one popover with another within
+   * the same hover sequence (i.e. called from `showHoverPreview` itself) —
+   * this skips the seq bump so the current capture is not cancelled.
+   */
   private teardownHoverPreview(keepSeq = false): void {
-    if (!keepSeq) this.clearHoverTimer();
+    if (!keepSeq) {
+      this.hoverSeq++; // invalidate any in-flight tmux capture
+      this.clearHoverTimer();
+    }
     if (this.hoverEl) {
       this.hoverEl.remove();
       this.hoverEl = undefined;

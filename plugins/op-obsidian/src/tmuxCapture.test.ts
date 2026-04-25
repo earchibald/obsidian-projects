@@ -16,7 +16,7 @@ describe("clampHoverLines", () => {
     expect(clampHoverLines(30.7)).toBe(30);
   });
 
-  it("falls back to 1 for non-finite input", () => {
+  it("NaN falls back to MIN (1); Infinity clamps to MAX (500)", () => {
     expect(clampHoverLines(NaN)).toBe(1);
     expect(clampHoverLines(Infinity)).toBe(500);
   });
