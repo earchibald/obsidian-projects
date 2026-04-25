@@ -1,7 +1,7 @@
 // Generic per-section body rewriter for issue notes. Powers the op-set-section
 // verb, which targets ## Plan / ## Notes / ## Summary — the body sections that
-// have no dedicated verb today (## Scope and ## Initial Evaluation keep their
-// specialised verbs because they carry mode=body / bullet-handling concerns).
+// have no dedicated verb today (## Scope and ## Initial Evaluation each keep
+// their own specialised verbs: op-set-scope and op-set-evaluation).
 //
 // Two modes:
 //   - replace (default): swap the section's body for the payload, append the
@@ -20,11 +20,62 @@ export function isSetSectionName(name: string): name is SetSectionName {
 // legacy Scope and Initial Evaluation wrappers can delegate here. The public
 // op-set-section verb keeps its Plan|Notes|Summary restriction at the
 // setSection.ts boundary via `isSetSectionName`.
+
+/**
+ * Returns the index of the first line at or after `fromIndex` that starts with
+ * `## ` and is NOT inside a fenced code block (``` or ~~~). Returns
+ * `lines.length` when no such line exists. Used for both payload validation and
+ * section-end detection so that `## ` inside a code fence is never mistaken for
+ * a section terminator.
+ *
+ * Fence tracking rules (CommonMark-compatible):
+ *   Opening: a line that starts with 3+ backticks or tildes (info string
+ *     allowed after the fence chars); sets `fenceChar` and `fenceLen`.
+ *   Closing: a line consisting of ONLY the same fence character, at least as
+ *     long as the opener, with only optional trailing whitespace; exits fence
+ *     state.  A fence opened with ``` cannot be closed with ~~~, and a shorter
+ *     run of the same character is not a valid closer.
+ */
+function nextH2Outside(lines: string[], fromIndex: number): number {
+  let inFence = false;
+  let fenceChar = "";
+  let fenceLen = 0;
+  for (let i = fromIndex; i < lines.length; i++) {
+    const line = lines[i];
+    if (inFence) {
+      // Closing fence: same character, at least as long as the opener, no other
+      // non-whitespace characters on the line.
+      const m = line.match(/^(`+|~+)\s*$/);
+      if (m && m[1][0] === fenceChar && m[1].length >= fenceLen) {
+        inFence = false;
+        fenceChar = "";
+        fenceLen = 0;
+      }
+    } else {
+      const m = line.match(/^(`{3,}|~{3,})/);
+      if (m) {
+        inFence = true;
+        fenceChar = m[1][0];
+        fenceLen = m[1].length;
+      } else if (/^##\s+/.test(line)) {
+        return i;
+      }
+    }
+  }
+  return lines.length;
+}
+
+/** Returns true when `text` has a `## ` line outside a fenced code block. */
+function hasH2OutsideFences(text: string): boolean {
+  const lines = text.split("\n");
+  return nextH2Outside(lines, 0) < lines.length;
+}
+
 export function normalizeSectionPayload(raw: string, sectionName: string): string {
   if (typeof raw !== "string") throw new Error(`${sectionName} payload must be a string`);
   const trimmed = raw.replace(/\r\n/g, "\n").replace(/\s+$/g, "");
   if (!trimmed) throw new Error(`${sectionName} payload is empty`);
-  if (/^##\s+/m.test(trimmed)) {
+  if (hasH2OutsideFences(trimmed)) {
     throw new Error(
       `${sectionName} payload must not contain H2 headings (\`## ...\`) — they would terminate the ${sectionName} section`,
     );
@@ -75,13 +126,7 @@ export function rewriteSection(
     return { next: frontmatter + newBody, replaced: false, appended: false };
   }
 
-  let endIdx = lines.length;
-  for (let i = startIdx + 1; i < lines.length; i++) {
-    if (/^##\s+/.test(lines[i])) {
-      endIdx = i;
-      break;
-    }
-  }
+  const endIdx = nextH2Outside(lines, startIdx + 1);
 
   const append = options.append === true;
   let newSectionBody: string;

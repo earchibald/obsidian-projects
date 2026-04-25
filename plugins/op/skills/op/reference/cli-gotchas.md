@@ -45,6 +45,14 @@ obsidian property:set name=commits type=list \
 
 This is the **fallback** for when `op-obsidian` is missing or disabled. In normal operation, `obsidian op-append-commit issue=<PREFIX>-<N> sha=<sha> subject=<subj>` is the right tool — it's idempotent, handles the read/rewrite internally, and keeps the JSON response trail.
 
+## Body sections without a verb — use `op-set-section`
+
+The op workflow writes three body sections on every issue: `## Plan` at start, `### <ID>.<N>` blocks under `## Notes` as tasks complete, and `## Summary` at resolve. **Use `obsidian op-set-section issue=<ID> name=Plan|Notes|Summary content="…" [append=true]` for these.** It's the only path that's section-scoped — frontmatter, `# Title`, `## Scope`, `## Tasks`, and any other H2s are preserved — and `append=true` is the safe alternative to the racy read-modify-rewrite pattern (the verb does the read/append/write atomically inside the plugin).
+
+Older flows used `Edit` on the markdown file or `obsidian op-set-scope mode=body` (which clobbers everything outside `## Scope`). Both are footguns: parallel agents can race, and `mode=body` means a plan-mode agent persisting the Plan would also overwrite Tasks, Notes, and Summary. Don't reach for either when `op-set-section` fits.
+
+**Fallback (plugin missing/disabled).** If `op-obsidian` is not enabled and you can't enable it, fall back to `obsidian read` (full file) → splice the new section in memory → `obsidian append` or `Write` the full file back. There is no raw-CLI shortcut that mirrors `op-set-section`'s scoping. The verb's payload constraints — `name` ∈ `Plan|Notes|Summary` (use `op-set-evaluation` for `## Initial Evaluation`), no `## ` H2 outside a fenced code block in `content` — apply to the in-memory splice too.
+
 ## `op-append-commit` failure modes
 
 When a project's policy is to call `op-append-commit` after each commit (or batch at resolve), three failure shapes show up. The skill is workflow-agnostic about *when* you call it; this section covers what to do when the call itself fails.
