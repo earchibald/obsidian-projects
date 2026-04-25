@@ -30,6 +30,7 @@ vi.mock("./staleAgentBadges", () => ({
 }));
 
 import {
+  decideKeyAction,
   filterEntries,
   OpSidebarView,
   shouldShowProjectChip,
@@ -123,6 +124,68 @@ describe("shouldShowProjectChip", () => {
 
   it("treats an empty list as 'show' so the empty-state placeholder isn't rare-cased", () => {
     expect(shouldShowProjectChip("compact", [])).toBe(true);
+  });
+});
+
+describe("decideKeyAction", () => {
+  const k = (
+    key: string,
+    mods: Partial<{ alt: boolean; shift: boolean; meta: boolean; ctrl: boolean }> = {},
+  ) => ({
+    key,
+    altKey: !!mods.alt,
+    shiftKey: !!mods.shift,
+    metaKey: !!mods.meta,
+    ctrlKey: !!mods.ctrl,
+  });
+
+  it("plain ArrowDown / ArrowUp / Enter map to next / prev / open in both contexts", () => {
+    for (const inFilter of [false, true]) {
+      expect(decideKeyAction(k("ArrowDown"), { inFilter })).toBe("next");
+      expect(decideKeyAction(k("ArrowUp"), { inFilter })).toBe("prev");
+      expect(decideKeyAction(k("Enter"), { inFilter })).toBe("open");
+    }
+  });
+
+  it("Cmd+Enter and Ctrl+Enter both map to launch in both contexts", () => {
+    for (const inFilter of [false, true]) {
+      expect(decideKeyAction(k("Enter", { meta: true }), { inFilter })).toBe("launch");
+      expect(decideKeyAction(k("Enter", { ctrl: true }), { inFilter })).toBe("launch");
+    }
+  });
+
+  it("plain j / k / r map to next / prev / resolve when the filter input is unfocused", () => {
+    expect(decideKeyAction(k("j"), { inFilter: false })).toBe("next");
+    expect(decideKeyAction(k("k"), { inFilter: false })).toBe("prev");
+    expect(decideKeyAction(k("r"), { inFilter: false })).toBe("resolve");
+  });
+
+  it("ignores letter shortcuts when the filter input is focused so users can type", () => {
+    expect(decideKeyAction(k("j"), { inFilter: true })).toBe("ignore");
+    expect(decideKeyAction(k("k"), { inFilter: true })).toBe("ignore");
+    expect(decideKeyAction(k("r"), { inFilter: true })).toBe("ignore");
+  });
+
+  it("ignores modifier-laden letter keys to avoid hijacking Cmd-J / Shift-K / etc.", () => {
+    expect(decideKeyAction(k("j", { meta: true }), { inFilter: false })).toBe("ignore");
+    expect(decideKeyAction(k("j", { shift: true }), { inFilter: false })).toBe("ignore");
+    expect(decideKeyAction(k("k", { ctrl: true }), { inFilter: false })).toBe("ignore");
+    expect(decideKeyAction(k("r", { alt: true }), { inFilter: false })).toBe("ignore");
+  });
+
+  it("ignores unrelated keys (letters, function keys, punctuation)", () => {
+    expect(decideKeyAction(k("a"), { inFilter: false })).toBe("ignore");
+    expect(decideKeyAction(k("Escape"), { inFilter: false })).toBe("ignore");
+    expect(decideKeyAction(k("F1"), { inFilter: false })).toBe("ignore");
+    expect(decideKeyAction(k("/"), { inFilter: false })).toBe("ignore");
+  });
+
+  it("ignores Shift+Enter and Alt+Enter (only plain or Cmd/Ctrl+Enter trigger an action)", () => {
+    expect(decideKeyAction(k("Enter", { shift: true }), { inFilter: false })).toBe("ignore");
+    expect(decideKeyAction(k("Enter", { alt: true }), { inFilter: false })).toBe("ignore");
+    expect(decideKeyAction(k("Enter", { meta: true, alt: true }), { inFilter: false })).toBe(
+      "ignore",
+    );
   });
 });
 

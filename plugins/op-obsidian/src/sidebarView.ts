@@ -111,8 +111,9 @@ export class OpSidebarView extends ItemView {
     root.empty();
     root.addClass("op-sidebar");
     // Make the leaf focusable so j/k/Enter/r work without first clicking a
-    // row. Negative tabindex keeps the leaf out of the global Tab order while
-    // still allowing programmatic focus.
+    // row. tabindex=0 keeps the leaf in the natural Tab order so users can
+    // also reach it via keyboard from elsewhere in Obsidian; we additionally
+    // focus it programmatically in onOpen.
     root.setAttr("tabindex", "0");
 
     this.headerEl = root.createDiv({ cls: "op-sidebar__header" });
@@ -468,11 +469,12 @@ export class OpSidebarView extends ItemView {
   }
 
   /**
-   * Keyboard router. Three contexts in priority order:
+   * Keyboard router. Two contexts in priority order:
    *
-   *   1. Filter input focused — only navigation/open/launch keys; letters
-   *      go through to the input untouched.
-   *   2. Anything else inside the sidebar — full set including `j`/`k`/`r`.
+   *   1. Filter input focused — only navigation/open/launch keys (Arrows,
+   *      Enter, Cmd/Ctrl+Enter); letter keys (`j`/`k`/`r`) fall through
+   *      so typing a query stays unobstructed.
+   *   2. Anywhere else inside the sidebar — full set including `j`/`k`/`r`.
    *
    * Modifier rule: only the bare modifier set documented per binding triggers
    * the action. `Cmd+J` is a global Obsidian shortcut so we never claim it;
@@ -480,52 +482,26 @@ export class OpSidebarView extends ItemView {
    * after deciding to act, so unknown keys propagate normally.
    */
   private handleKeydown(ev: KeyboardEvent): void {
-    // Bail on IME composition so half-typed characters aren't intercepted.
     if (ev.isComposing) return;
-    const target = ev.target as Element | null;
-    const inFilter = target === this.filterInput;
-    const meta = ev.metaKey || ev.ctrlKey;
-    const plain = !ev.altKey && !ev.shiftKey && !ev.metaKey && !ev.ctrlKey;
-    const enterWithMeta = ev.key === "Enter" && meta && !ev.altKey && !ev.shiftKey;
-
-    if (ev.key === "ArrowDown" && plain) {
-      ev.preventDefault();
-      this.setSelectedIndex(this.selectedIndex + 1);
-      return;
-    }
-    if (ev.key === "ArrowUp" && plain) {
-      ev.preventDefault();
-      this.setSelectedIndex(this.selectedIndex - 1);
-      return;
-    }
-    if (ev.key === "Enter" && plain) {
-      ev.preventDefault();
-      void this.activateSelected();
-      return;
-    }
-    if (enterWithMeta) {
-      ev.preventDefault();
-      void this.launchSelected();
-      return;
-    }
-
-    // Letter keys: only honored when the filter input doesn't own focus, so
-    // typing a query stays unobstructed.
-    if (inFilter) return;
-    if (ev.key === "j" && plain) {
-      ev.preventDefault();
-      this.setSelectedIndex(this.selectedIndex + 1);
-      return;
-    }
-    if (ev.key === "k" && plain) {
-      ev.preventDefault();
-      this.setSelectedIndex(this.selectedIndex - 1);
-      return;
-    }
-    if (ev.key === "r" && plain) {
-      ev.preventDefault();
-      void this.resolveSelected();
-      return;
+    const action = decideKeyAction(ev, { inFilter: ev.target === this.filterInput });
+    if (action === "ignore") return;
+    ev.preventDefault();
+    switch (action) {
+      case "next":
+        this.setSelectedIndex(this.selectedIndex + 1);
+        return;
+      case "prev":
+        this.setSelectedIndex(this.selectedIndex - 1);
+        return;
+      case "open":
+        void this.activateSelected();
+        return;
+      case "launch":
+        void this.launchSelected();
+        return;
+      case "resolve":
+        void this.resolveSelected();
+        return;
     }
   }
 
@@ -605,6 +581,44 @@ export class OpResolveConfirmModal extends Modal {
   onClose(): void {
     this.contentEl.empty();
   }
+}
+
+export type SidebarKeyAction =
+  | "ignore"
+  | "next"
+  | "prev"
+  | "open"
+  | "launch"
+  | "resolve";
+
+/**
+ * Pure key-router decision. Inputs: the keyboard event and whether the filter
+ * input owns focus. Output: the action label the view should perform, or
+ * `"ignore"` to let the key propagate untouched.
+ *
+ * Lifted out of the class so the binding map is unit-testable without a DOM.
+ */
+export function decideKeyAction(
+  ev: Pick<KeyboardEvent, "key" | "altKey" | "shiftKey" | "metaKey" | "ctrlKey">,
+  opts: { inFilter: boolean },
+): SidebarKeyAction {
+  const { key, altKey, shiftKey, metaKey, ctrlKey } = ev;
+  const meta = metaKey || ctrlKey;
+  const plain = !altKey && !shiftKey && !metaKey && !ctrlKey;
+
+  if (key === "ArrowDown" && plain) return "next";
+  if (key === "ArrowUp" && plain) return "prev";
+  if (key === "Enter" && plain) return "open";
+  if (key === "Enter" && meta && !altKey && !shiftKey) return "launch";
+
+  // Letter shortcuts: skipped when the filter input owns focus so typing a
+  // query stays unobstructed.
+  if (opts.inFilter) return "ignore";
+  if (key === "j" && plain) return "next";
+  if (key === "k" && plain) return "prev";
+  if (key === "r" && plain) return "resolve";
+
+  return "ignore";
 }
 
 /**

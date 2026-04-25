@@ -82,9 +82,18 @@
   box-shadow: inset 0 0 0 1px var(--interactive-accent);
 }
 
-.op-sidebar:focus,
-.op-sidebar:focus-visible {
+/* Suppress the default ring when focus arrives via the auto-focus in
+ * onOpen — that focus is implicit and already telegraphed by the row's
+ * `.is-selected` highlight. Keep a visible ring for keyboard focus
+ * (`:focus-visible`) so Tab navigation still has an affordance. */
+.op-sidebar:focus {
   outline: none;
+}
+
+.op-sidebar:focus-visible {
+  outline: 1px solid var(--interactive-accent);
+  outline-offset: -1px;
+  border-radius: 4px;
 }
 
 .op-sidebar--density-compact .op-sidebar__item {
