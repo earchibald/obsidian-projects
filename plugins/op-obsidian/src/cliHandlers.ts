@@ -97,6 +97,29 @@ export function parseSetFlowParams(
   return { ok: true, value: out };
 }
 
+export function parseSetSectionParams(
+  params: Record<string, string>,
+): ParamsResult<{ id: string; name: "Plan" | "Notes" | "Summary"; content: string; append: boolean }> {
+  const id = params.issue ?? params.id;
+  const name = params.name;
+  const content = params.content;
+  if (!id || typeof name !== "string" || typeof content !== "string") {
+    return {
+      ok: false,
+      error: "op-set-section failed: --issue, --name, --content all required",
+    };
+  }
+  if (name !== "Plan" && name !== "Notes" && name !== "Summary") {
+    return {
+      ok: false,
+      error: `op-set-section failed: --name must be one of Plan|Notes|Summary (got ${JSON.stringify(name)})`,
+    };
+  }
+  const rawAppend = params.append;
+  const append = rawAppend === "1" || rawAppend === "true";
+  return { ok: true, value: { id, name, content, append } };
+}
+
 export function parseSetScopeParams(
   params: Record<string, string>,
 ): ParamsResult<{ id: string; scope: string; mode: "scope" | "body" }> {

@@ -6,6 +6,7 @@ import {
   handleOpAppendCommitUri,
   handleOpSetPrUri,
   handleOpSetScopeUri,
+  handleOpSetSectionUri,
   handleOpSetEvaluationUri,
   handleOpSetFlowUri,
   type UriHandlerDeps,
@@ -55,6 +56,14 @@ function makeDeps(overrides: Partial<UriHandlerDeps> = {}): UriHandlerDeps {
       path: e.path,
       evaluation,
       replaced: true,
+    }),
+    setSection: async (e, name, content, options) => ({
+      issueId: e.id,
+      path: e.path,
+      section: name as "Plan" | "Notes" | "Summary",
+      content,
+      replaced: true,
+      appended: options?.append === true,
     }),
     setFlow: async (e, input) => ({
       issueId: e.id,
@@ -205,6 +214,46 @@ describe("handleOpSetFlowUri", () => {
   it("passes 'null' through as null to clear", async () => {
     const r = await handleOpSetFlowUri(makeDeps(), { id: "OP-1", flow: "null" });
     expect(r.flow).toBeUndefined();
+  });
+});
+
+describe("handleOpSetSectionUri", () => {
+  it("requires id, name, content", async () => {
+    await expect(handleOpSetSectionUri(makeDeps(), {})).rejects.toThrow(
+      "op-set-section URI requires id, name, content",
+    );
+    await expect(
+      handleOpSetSectionUri(makeDeps(), { id: "OP-1", name: "Plan" }),
+    ).rejects.toThrow();
+  });
+  it("rejects name outside Plan|Notes|Summary", async () => {
+    await expect(
+      handleOpSetSectionUri(makeDeps(), { id: "OP-1", name: "Scope", content: "x" }),
+    ).rejects.toThrow(/Plan\|Notes\|Summary/);
+  });
+  it("happy path payload shape", async () => {
+    const r = await handleOpSetSectionUri(makeDeps(), {
+      id: "OP-1",
+      name: "Plan",
+      content: "approach",
+    });
+    expect(r).toMatchObject({
+      ok: true,
+      command: "op-set-section",
+      issueId: "OP-1",
+      section: "Plan",
+      replaced: true,
+      appended: false,
+    });
+  });
+  it("forwards append=true", async () => {
+    const r = await handleOpSetSectionUri(makeDeps(), {
+      id: "OP-1",
+      name: "Notes",
+      content: "### OP-1.1 — done",
+      append: "true",
+    });
+    expect(r).toMatchObject({ section: "Notes", appended: true });
   });
 });
 
