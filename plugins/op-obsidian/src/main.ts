@@ -263,6 +263,7 @@ export default class OpPlugin extends Plugin {
           this.bus,
           () => this.settings.view,
           (entry) => revealAgentSession(this.settings, entry.id),
+          (entry, mode) => void this.doOpenAgent(entry, { mode }),
         ),
     );
 
