@@ -769,20 +769,10 @@ export default class OpPlugin extends Plugin {
         });
       }
       if (opts.launchPlan) {
-        const entry = this.store.byPath(res.path);
-        if (entry && entry.type === "issue") {
-          void this.doOpenAgent(entry, { mode: "plan" });
-        } else {
-          new Notice(`op: could not resolve ${res.id} to launch plan-mode agent`);
-        }
+        void this.doOpenAgent(res.entry, { mode: "plan" });
       }
       if (opts.startFlow) {
-        const entry = this.store.byPath(res.path);
-        if (entry && entry.type === "issue") {
-          void this.runEvaluatorForIssue(entry, input);
-        } else {
-          new Notice(`op: could not resolve ${res.id} to launch evaluator`);
-        }
+        void this.runEvaluatorForIssue(res.entry, input);
       }
     } catch (err: any) {
       console.error("[op-obsidian] createIssue failed", err);
