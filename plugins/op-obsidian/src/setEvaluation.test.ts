@@ -87,9 +87,9 @@ the plan
   });
 
   it("does not match ## Initial   Evaluation (multiple spaces between words)", () => {
-    // escapeRegExp passes spaces through unchanged; `## Initial   Evaluation`
-    // differs from the literal `Initial Evaluation` in the regex and must not
-    // be treated as the target section.
+    // The heading regex is `^##\s+Initial Evaluation\s*$` — spaces in the section
+    // name are matched literally, so `## Initial   Evaluation` (extra space) must
+    // not be treated as the target section.
     const text = `${FM}
 # T
 

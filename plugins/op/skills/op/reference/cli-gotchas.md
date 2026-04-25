@@ -51,7 +51,7 @@ The op workflow writes three body sections on every issue: `## Plan` at start, `
 
 Older flows used `Edit` on the markdown file or `obsidian op-set-scope mode=body` (which clobbers everything outside `## Scope`). Both are footguns: parallel agents can race, and `mode=body` means a plan-mode agent persisting the Plan would also overwrite Tasks, Notes, and Summary. Don't reach for either when `op-set-section` fits.
 
-**Fallback (plugin missing/disabled).** If `op-obsidian` is not enabled and you can't enable it, fall back to `obsidian read` (full file) → splice the new section in memory → `obsidian append` or `Write` the full file back. There is no raw-CLI shortcut that mirrors `op-set-section`'s scoping. The verb's payload constraints — `name` ∈ `Plan|Notes|Summary`, no `## ` H2 in `content` — apply to the in-memory splice too.
+**Fallback (plugin missing/disabled).** If `op-obsidian` is not enabled and you can't enable it, fall back to `obsidian read` (full file) → splice the new section in memory → `obsidian append` or `Write` the full file back. There is no raw-CLI shortcut that mirrors `op-set-section`'s scoping. The verb's payload constraints — `name` ∈ `Plan|Notes|Summary` (use `op-set-evaluation` for `## Initial Evaluation`), no `## ` H2 outside a fenced code block in `content` — apply to the in-memory splice too.
 
 ## `op-append-commit` failure modes
 

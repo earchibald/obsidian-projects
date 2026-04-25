@@ -39,6 +39,18 @@ describe("normalizeSectionPayload", () => {
   it("normalizes CRLF to LF", () => {
     expect(normalizeSectionPayload("a\r\nb", "Summary")).toBe("a\nb");
   });
+  it("accepts ## inside a backtick fenced code block (not a real H2)", () => {
+    const payload = "intro\n```bash\n## this is a bash comment\n```\noutro";
+    expect(() => normalizeSectionPayload(payload, "Plan")).not.toThrow();
+  });
+  it("accepts ## inside a tilde fenced code block", () => {
+    const payload = "intro\n~~~\n## tilde fence content\n~~~\noutro";
+    expect(() => normalizeSectionPayload(payload, "Notes")).not.toThrow();
+  });
+  it("still rejects ## that appears outside a fenced block even when a fence is present", () => {
+    const payload = "```\nnot an h2\n```\n## Real H2\nafter";
+    expect(() => normalizeSectionPayload(payload, "Plan")).toThrow(/Plan payload must not contain H2 headings/);
+  });
 });
 
 describe("rewriteSection (replace mode)", () => {
@@ -98,6 +110,30 @@ old
     const { next, replaced } = rewriteSection(text, "Summary", "shipped");
     expect(replaced).toBe(true);
     expect(next).toMatch(/## Summary\n\nshipped\n$/);
+  });
+
+  it("does not treat ## inside a fenced code block in section body as section terminator", () => {
+    // ## Notes contains a fenced code block with a ## comment inside.
+    // ## Summary after the fence must still be treated as the section end.
+    const text = `${FM}
+# T
+
+## Notes
+
+\`\`\`bash
+## this is a bash comment, not a heading
+\`\`\`
+
+## Summary
+done
+`;
+    const { next, replaced } = rewriteSection(text, "Notes", "new notes body");
+    expect(replaced).toBe(true);
+    // Only ## Notes is replaced; ## Summary is preserved
+    expect(next).toContain("## Notes\n\nnew notes body\n");
+    expect(next).toContain("## Summary\ndone");
+    // Old fence content is gone
+    expect(next).not.toContain("bash comment");
   });
 });
 
