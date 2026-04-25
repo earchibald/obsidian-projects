@@ -256,3 +256,86 @@ a.op-sidebar__agent:hover {
   font-style: italic;
   padding: 0.5rem;
 }
+
+.op-pick-and-act__row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.op-pick-and-act__main {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.op-pick-and-act__id {
+  color: var(--text-muted);
+  font-family: var(--font-monospace, monospace);
+  font-weight: 600;
+}
+
+.op-pick-and-act__status {
+  font-size: var(--font-ui-smaller, 0.72rem);
+  text-transform: lowercase;
+  padding: 0 0.35rem;
+  border-radius: 3px;
+  color: var(--text-on-accent, #fff);
+  background: var(--background-modifier-border);
+  font-weight: 600;
+}
+
+.op-pick-and-act__status--in-progress { background: var(--color-blue, #1e88e5); }
+.op-pick-and-act__status--open        { background: var(--color-green, #2e7d32); }
+.op-pick-and-act__status--blocked     { background: var(--color-red, #c62828); }
+.op-pick-and-act__status--resolved    { background: var(--background-modifier-border); color: var(--text-muted); }
+.op-pick-and-act__status--wontfix     { background: var(--background-modifier-border); color: var(--text-muted); }
+
+.op-pick-and-act__hint {
+  border-top: 1px solid var(--background-modifier-border);
+}
+
+.op-pick-and-act__hint-note {
+  color: var(--text-faint);
+  font-style: italic;
+}
+
+.op-hotkey-preset__results {
+  margin-top: 0.5rem;
+}
+
+.op-hotkey-preset__row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.25rem 0;
+  border-bottom: 1px solid var(--background-modifier-border);
+}
+
+.op-hotkey-preset__row:last-child { border-bottom: none; }
+
+.op-hotkey-preset__keys {
+  font-family: var(--font-monospace, monospace);
+  color: var(--text-accent);
+  min-width: 6rem;
+}
+
+.op-hotkey-preset__cmd {
+  flex: 1;
+  min-width: 0;
+}
+
+.op-hotkey-preset__skip-reason {
+  color: var(--text-muted);
+  font-style: italic;
+}
+
+.op-hotkey-preset__snippet {
+  width: 100%;
+  min-height: 12rem;
+  font-family: var(--font-monospace, monospace);
+  font-size: var(--font-ui-smaller, 0.75rem);
+  margin-top: 0.5rem;
+}
