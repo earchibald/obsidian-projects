@@ -1,4 +1,5 @@
-import { App, FuzzySuggestModal, Modal, Notice, Setting } from "obsidian";
+import { App, FuzzySuggestModal, Modal, Setting } from "obsidian";
+import { notify } from "./notificationLog";
 import type { ProjectInfo } from "./projects";
 import type { Priority, CreateIssueInput } from "./createIssue";
 import type { IssueEntry } from "./types";
@@ -154,7 +155,7 @@ export class NewIssueModal extends Modal {
         priority: this.priority,
       });
       if (!result.ok) {
-        new Notice(result.error);
+        notify(result.error);
         return;
       }
       this.close();
@@ -240,7 +241,7 @@ export class AppendCommitModal extends Modal {
             const sha = validateSha(this.sha);
             const subject = validateSubject(this.subject);
             if (!sha.ok || !subject.ok) {
-              new Notice("Both SHA and subject are required");
+              notify("Both SHA and subject are required");
               return;
             }
             this.close();
@@ -286,7 +287,7 @@ export class SetPrModal extends Modal {
           .onClick(() => {
             const r = validatePrUrl(this.url);
             if (!r.ok) {
-              new Notice(r.error);
+              notify(r.error);
               return;
             }
             this.close();
@@ -336,7 +337,7 @@ export class SetGithubIssueModal extends Modal {
             const u = this.url.trim() || (this.issue.githubIssue ?? "");
             const r = validateGithubIssueUrl(u);
             if (!r.ok) {
-              new Notice(r.error);
+              notify(r.error);
               return;
             }
             this.close();
@@ -429,7 +430,7 @@ export class ScaffoldProjectModal extends Modal {
               seedPriority: this.seedPriority,
             });
             if (!r.ok) {
-              new Notice(r.error);
+              notify(r.error);
               return;
             }
             this.close();
@@ -478,7 +479,7 @@ export class FindIssueModal extends Modal {
   private submit(): void {
     const v = this.raw.trim();
     if (!v) {
-      new Notice("Enter a query");
+      notify("Enter a query");
       return;
     }
     this.close();

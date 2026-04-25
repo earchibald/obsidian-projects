@@ -1,4 +1,4 @@
-import { Notice, Plugin, TFile, WorkspaceLeaf } from "obsidian";
+import { Plugin, TFile, WorkspaceLeaf } from "obsidian";
 import { OP_SIDEBAR_VIEW_TYPE, OpSidebarView } from "./sidebarView";
 import { revealAgentSession } from "./revealAgentSession";
 import { EventBus } from "./eventBus";
@@ -88,7 +88,7 @@ import { installAgentHooks, type HookInstallResult } from "./agentHooks";
 import { userError } from "./userError";
 import { cleanupAgentSessions, tmuxSessionsForCleanup } from "./agentSessionCleanup";
 import { detectTmux } from "./tmuxDetect";
-import { showActionableNotice } from "./actionableNotices";
+import { notify, notifyAction, registerApp, unregisterApp, openNotificationLog } from "./notificationLog";
 import { probeLiveTmuxWindows, selectStaleAgentBadges } from "./staleAgentBadges";
 import { openErrorLog, writeErrorLog } from "./errorLog";
 import { configureClient } from "./iterm/client";
@@ -158,6 +158,11 @@ export default class OpPlugin extends Plugin {
    * command registration, reconciler after `onLayoutReady`).
    */
   async onload(): Promise<void> {
+    // Register the app for the persistent notification log before any
+    // `notify(...)` call below — early Notices (tmux auto-detect failure,
+    // detector probe, settings hydration warnings) are exactly the ones
+    // users tend to dismiss by accident, so they belong in the log too.
+    registerApp(this.app);
     this.settings = mergeSettings(await this.loadData());
     // OP-101: configure the iTerm WebSocket client with the plugin version so
     // its handshake includes a usable library-version header, and with a
@@ -178,7 +183,7 @@ export default class OpPlugin extends Plugin {
         await this.saveSettings();
         console.debug(`[op-obsidian] tmux auto-detected: ${prev} → ${found.path}`);
       } else {
-        showActionableNotice({
+        notifyAction({
           text: `op: tmux not found at ${this.settings.tmuxBinary} or common paths — agent launches will fail until you install tmux or set the path in Settings → op.`,
           actions: [
             {
@@ -243,7 +248,7 @@ export default class OpPlugin extends Plugin {
       if (!this.settings.github.closeGithubIssueOnResolve) return;
       const repoPath = resolveRepoPath(this.app, this.settings, entry.project);
       if (!repoPath) {
-        new Notice(`op: no repo_path for ${entry.project} — skipping gh issue close`);
+        notify(`op: no repo_path for ${entry.project} — skipping gh issue close`);
         return;
       }
       const reason = closeReasonForStatus(entry.status);
@@ -282,13 +287,13 @@ export default class OpPlugin extends Plugin {
         .then((result) => {
           if (!result.ok) {
             console.error("[op-obsidian] auto-resolve failed", args.path, result.error);
-            new Notice(`op: auto-resolve failed — ${result.error ?? "unknown error"}`);
+            notify(`op: auto-resolve failed — ${result.error ?? "unknown error"}`);
           }
         })
         .catch((err: any) => {
           const msg = err?.message ?? String(err);
           console.error("[op-obsidian] auto-resolve threw", args.path, msg);
-          new Notice(`op: auto-resolve threw — ${msg}`);
+          notify(`op: auto-resolve threw — ${msg}`);
         });
     });
 
@@ -318,6 +323,14 @@ export default class OpPlugin extends Plugin {
       id: "op-open-sidebar",
       name: "op: open sidebar",
       callback: () => this.revealSidebar(),
+    });
+
+    // OP-167: Notices dismiss on click; the log is how users (or a
+    // delegated agent) recover what they missed.
+    this.addCommand({
+      id: "op-open-notifications",
+      name: "op: open notifications log",
+      callback: () => void openNotificationLog(this.app),
     });
 
     this.addRibbonIcon("list-checks", "op: open sidebar", () => this.revealSidebar());
@@ -386,7 +399,7 @@ export default class OpPlugin extends Plugin {
       callback: async () => {
         const path = this.activeIssuePath();
         if (!path) {
-          new Notice("op: open an issue note first");
+          notify("op: open an issue note first");
           return;
         }
         await this.runResolveCommand({ path });
@@ -541,7 +554,7 @@ export default class OpPlugin extends Plugin {
             tasks: tasks.length,
             entries: [...issues, ...tasks],
           });
-          new Notice(`op: ${issues.length} issues, ${tasks.length} tasks (see console)`);
+          notify(`op: ${issues.length} issues, ${tasks.length} tasks (see console)`);
         },
       });
 
@@ -550,7 +563,7 @@ export default class OpPlugin extends Plugin {
         name: "op-dev: rebuild IssueStore",
         callback: () => {
           this.store.rebuild();
-          new Notice("op: store rebuilt");
+          notify("op: store rebuilt");
         },
       });
     }
@@ -562,7 +575,7 @@ export default class OpPlugin extends Plugin {
     this.registerObsidianProtocolHandler("op-new", (params) => {
       this.handleOpNewUri(normalizeUriParams(params)).catch((err) => {
         console.error("[op-obsidian] op-new URI failed", err);
-        new Notice(`op-new failed: ${err.message ?? err}`);
+        notify(`op-new failed: ${err.message ?? err}`);
       });
     });
 
@@ -925,6 +938,9 @@ export default class OpPlugin extends Plugin {
     // OP-101: drop any open iTerm WebSocket so plugin reload doesn't leak the
     // socket. Safe no-op when the WS path was never used in this session.
     closeTransport();
+    // Clear the registered App so any notify() calls that fire after unload
+    // don't attempt vault writes against a detached plugin context.
+    unregisterApp();
   }
 
   // Resolve the absolute filesystem path used for the `safeStorage`-encrypted
@@ -1002,7 +1018,7 @@ export default class OpPlugin extends Plugin {
     }
     const stale = selectStaleAgentBadges(issues, probe.live);
     for (const entry of stale) {
-      showActionableNotice({
+      notifyAction({
         text: `op: ${entry.id} has no live agent`,
         actions: [
           {
@@ -1038,14 +1054,14 @@ export default class OpPlugin extends Plugin {
           seedPriority: input.seedPriority,
         });
         const extra = res.seed ? ` · seeded ${res.seed.id}` : "";
-        new Notice(`op-scaffold: ${res.slug} (${res.prefix})${extra}`);
+        notify(`op-scaffold: ${res.slug} (${res.prefix})${extra}`);
         const status = this.app.vault.getAbstractFileByPath(res.statusPath);
         if (status instanceof TFile) {
           await this.app.workspace.getLeaf(false).openFile(status);
         }
       } catch (err: any) {
         console.error("[op-obsidian] op-scaffold failed", err);
-        new Notice(`op-scaffold failed: ${err?.message ?? err}`);
+        notify(`op-scaffold failed: ${err?.message ?? err}`);
       }
     }).open();
   }
@@ -1053,7 +1069,7 @@ export default class OpPlugin extends Plugin {
   private runNewIssueCommand(): void {
     const projects = applyProjectOrder(listProjects(this.app), this.settings.projectOrder);
     if (projects.length === 0) {
-      new Notice("No projects found under Projects/");
+      notify("No projects found under Projects/");
       return;
     }
     new ProjectSuggestModal(this.app, projects, (project) => {
@@ -1073,7 +1089,7 @@ export default class OpPlugin extends Plugin {
       const projects = listProjects(this.app);
       const result = findIssue(this.store, { raw, projects });
       if (result.matches.length === 0) {
-        new Notice(
+        notify(
           `op: no match for ${result.interpretation}. Try an ID (e.g. OP-12) or a title fragment.`,
         );
         return;
@@ -1095,7 +1111,7 @@ export default class OpPlugin extends Plugin {
     if (file instanceof TFile) {
       await this.app.workspace.getLeaf(false).openFile(file);
     } else {
-      new Notice(`op: file not found on disk: ${entry.path}`);
+      notify(`op: file not found on disk: ${entry.path}`);
     }
   }
 
@@ -1109,7 +1125,7 @@ export default class OpPlugin extends Plugin {
       if (file instanceof TFile) {
         await this.app.workspace.getLeaf(false).openFile(file);
       }
-      showActionableNotice({
+      notifyAction({
         text: `op: created ${res.id}`,
         actions: [
           {
@@ -1129,7 +1145,7 @@ export default class OpPlugin extends Plugin {
       if (!input.githubIssue && this.settings.github.autoCreateGithubIssue) {
         await this.autoCreateGithubIssueFor(res.path, res.id, input).catch((err) => {
           console.error("[op-obsidian] auto-create github issue failed", err);
-          new Notice(`op: gh create failed — ${err?.message ?? err}`);
+          notify(`op: gh create failed — ${err?.message ?? err}`);
         });
       }
       if (opts.launchPlan) {
@@ -1140,7 +1156,7 @@ export default class OpPlugin extends Plugin {
       }
     } catch (err: any) {
       console.error("[op-obsidian] createIssue failed", err);
-      new Notice(`op: create failed — ${err?.message ?? err}`);
+      notify(`op: create failed — ${err?.message ?? err}`);
     }
   }
 
@@ -1148,7 +1164,7 @@ export default class OpPlugin extends Plugin {
     entry: IssueEntry,
     input: CreateIssueInput,
   ): Promise<void> {
-    new Notice(`op: evaluating ${entry.id} — running op-evaluate…`, 6000);
+    notify(`op: evaluating ${entry.id} — running op-evaluate…`, 6000);
     const body = (input.scope ?? []).map((s) => `- ${s}`).join("\n");
     try {
       const result = await runEvaluatorFlow(
@@ -1160,13 +1176,13 @@ export default class OpPlugin extends Plugin {
         entry,
         body,
       );
-      new Notice(
+      notify(
         `op: ${entry.id} evaluated — complexity=${result.complexity}. Advance manually via the command palette.`,
         8000,
       );
     } catch (err: any) {
       console.error("[op-obsidian] evaluator flow failed", err);
-      new Notice(
+      notify(
         `op: evaluator failed for ${entry.id} — ${err?.message ?? err}. Leaving flow unset; retry manually.`,
         10000,
       );
@@ -1180,7 +1196,7 @@ export default class OpPlugin extends Plugin {
   ): Promise<void> {
     const repoPath = resolveRepoPath(this.app, this.settings, input.slug);
     if (!repoPath) {
-      new Notice(`op: no repo_path for ${input.slug} — skipping gh create`);
+      notify(`op: no repo_path for ${input.slug} — skipping gh create`);
       return;
     }
     const body = buildGithubBody(id, input);
@@ -1188,7 +1204,7 @@ export default class OpPlugin extends Plugin {
     const entry = this.store.byPath(path);
     if (entry && entry.type === "issue") {
       await setGithubIssue(this.app, entry, url);
-      new Notice(`op: linked ${id} → ${url}`);
+      notify(`op: linked ${id} → ${url}`);
     }
   }
 
@@ -1197,11 +1213,11 @@ export default class OpPlugin extends Plugin {
       try {
         const res = await workIssue(this.app, this.store, entry);
         const extra = res.createdTaskPath ? ` · created ${res.createdTaskPath.split("/").pop()}` : "";
-        new Notice(`op-work: ${res.issueId} → in-progress${extra}`);
+        notify(`op-work: ${res.issueId} → in-progress${extra}`);
         await this.openIssue(entry);
       } catch (err: any) {
         console.error("[op-obsidian] op-work failed", err);
-        new Notice(`op-work failed: ${err?.message ?? err}`);
+        notify(`op-work failed: ${err?.message ?? err}`);
       }
     });
   }
@@ -1211,14 +1227,14 @@ export default class OpPlugin extends Plugin {
       new AppendCommitModal(this.app, entry, async (sha, subject) => {
         try {
           const res = await appendCommit(this.app, entry, { sha, subject });
-          new Notice(
+          notify(
             res.added
               ? `op: appended commit to ${res.issueId}`
               : `op: commit already present on ${res.issueId}`,
           );
         } catch (err: any) {
           console.error("[op-obsidian] op-append-commit failed", err);
-          new Notice(`op-append-commit failed: ${err?.message ?? err}`);
+          notify(`op-append-commit failed: ${err?.message ?? err}`);
         }
       }).open();
     });
@@ -1229,10 +1245,10 @@ export default class OpPlugin extends Plugin {
       new SetPrModal(this.app, entry, async (url) => {
         try {
           const res = await setPr(this.app, entry, url);
-          new Notice(`op: pr set on ${res.issueId}`);
+          notify(`op: pr set on ${res.issueId}`);
         } catch (err: any) {
           console.error("[op-obsidian] op-set-pr failed", err);
-          new Notice(`op-set-pr failed: ${err?.message ?? err}`);
+          notify(`op-set-pr failed: ${err?.message ?? err}`);
         }
       }).open();
     });
@@ -1243,10 +1259,10 @@ export default class OpPlugin extends Plugin {
       new SetGithubIssueModal(this.app, entry, async (url) => {
         try {
           const res = await setGithubIssue(this.app, entry, url);
-          new Notice(`op: github_issue set on ${res.issueId}`);
+          notify(`op: github_issue set on ${res.issueId}`);
         } catch (err: any) {
           console.error("[op-obsidian] op-set-github-issue failed", err);
-          new Notice(`op-set-github-issue failed: ${err?.message ?? err}`);
+          notify(`op-set-github-issue failed: ${err?.message ?? err}`);
         }
       }).open();
     });
@@ -1257,17 +1273,17 @@ export default class OpPlugin extends Plugin {
       try {
         const repoPath = resolveRepoPath(this.app, this.settings, entry.project);
         if (!repoPath) {
-          new Notice(`op: no repo_path for ${entry.project}`);
+          notify(`op: no repo_path for ${entry.project}`);
           return;
         }
         const title = entry.title.replace(/^[A-Z]+-\d+\s+/, "");
         const body = await this.readIssueBody(entry.path);
         const url = await createGithubIssue({ repoPath, title, body });
         await setGithubIssue(this.app, entry, url);
-        new Notice(`op: created ${url}`);
+        notify(`op: created ${url}`);
       } catch (err: any) {
         console.error("[op-obsidian] op-create-github-issue failed", err);
-        new Notice(`op-create-github-issue failed: ${err?.message ?? err}`);
+        notify(`op-create-github-issue failed: ${err?.message ?? err}`);
       }
     };
     const activePath = this.activeIssuePath();
@@ -1283,7 +1299,7 @@ export default class OpPlugin extends Plugin {
     this.pickIssueInteractive((entry) => {
       const url = entry.githubIssue;
       if (!url) {
-        new Notice(`${entry.id} has no github_issue URL`);
+        notify(`${entry.id} has no github_issue URL`);
         return;
       }
       window.open(url, "_blank");
@@ -1304,7 +1320,7 @@ export default class OpPlugin extends Plugin {
       const projects = listProjects(this.app);
       const result = findIssue(this.store, { raw, projects });
       if (result.matches.length === 0) {
-        new Notice(
+        notify(
           `op: no match for ${result.interpretation}. Try an ID (e.g. OP-12) or a title fragment.`,
         );
         return;
@@ -1350,7 +1366,7 @@ export default class OpPlugin extends Plugin {
       .catch(async (err) => {
         console.error(`[op-obsidian] ${command} URI failed`, err);
         const msg = err?.message ?? String(err);
-        new Notice(`${command} failed: ${msg}`);
+        notify(`${command} failed: ${msg}`);
         await writeUriResponse(this.app, {
           ok: false,
           command,
@@ -1419,7 +1435,7 @@ export default class OpPlugin extends Plugin {
         if (!entry.githubIssue) return;
         const repoPath = resolveRepoPath(this.app, this.settings, entry.project);
         if (!repoPath) {
-          new Notice(`op: no repo_path for ${entry.project} — skipping gh issue close`);
+          notify(`op: no repo_path for ${entry.project} — skipping gh issue close`);
           return;
         }
         await closeGithubIssue(repoPath, entry.githubIssue, closeReasonForStatus(entry.status));
@@ -1474,7 +1490,7 @@ export default class OpPlugin extends Plugin {
       const status = result.status ?? "resolved";
       const movedTo = result.movedTo;
       const tail = trashed ? ` (${trashed} task${trashed === 1 ? "" : "s"} trashed)` : "";
-      showActionableNotice({
+      notifyAction({
         text: `op: ${id} ${status}${tail}`,
         actions: movedTo
           ? [
@@ -1544,12 +1560,12 @@ export default class OpPlugin extends Plugin {
           retryFired = true;
           void closeGithubIssue(repoPath, url, reason)
             .then(() => {
-              showActionableNotice({ text: `op: gh issue closed for ${entryId}` });
+              notifyAction({ text: `op: gh issue closed for ${entryId}` });
             })
             .catch((err: any) => {
               const msg = err?.message ?? String(err);
               console.error("[op-obsidian] gh issue close retry failed", msg);
-              showActionableNotice({
+              notifyAction({
                 text: `op: gh issue close retry failed — ${msg}`,
                 actions: logPath
                   ? [{ label: "Open log", onClick: () => void openErrorLog(this.app) }]
@@ -1562,7 +1578,7 @@ export default class OpPlugin extends Plugin {
     if (logPath) {
       actions.push({ label: "Open log", onClick: () => void openErrorLog(this.app) });
     }
-    showActionableNotice({
+    notifyAction({
       text: `op: gh issue close failed for ${args.entryId}`,
       actions,
     });
@@ -1593,7 +1609,7 @@ export default class OpPlugin extends Plugin {
     } catch (err: any) {
       console.error("[op-obsidian]", command, err);
       const msg = err?.message ?? String(err);
-      new Notice(`${command} failed: ${msg}`);
+      notify(`${command} failed: ${msg}`);
       await writeUriResponse(this.app, { ok: false, command, error: msg });
     }
   }
@@ -2057,10 +2073,10 @@ export default class OpPlugin extends Plugin {
       const parts = [`drift ${res.drift.length}`];
       if (repair) parts.push(`repaired ${res.repaired.length}`);
       if (dangling > 0) parts.push(`dangling ${dangling}`);
-      new Notice(`op-link-check: scanned ${res.scanned} · ${parts.join(" · ")}`);
+      notify(`op-link-check: scanned ${res.scanned} · ${parts.join(" · ")}`);
     } catch (err: any) {
       console.error("[op-obsidian] op-link-check failed", err);
-      new Notice(`op-link-check failed: ${err?.message ?? err}`);
+      notify(`op-link-check failed: ${err?.message ?? err}`);
     }
   }
 
@@ -2068,12 +2084,12 @@ export default class OpPlugin extends Plugin {
     try {
       const res = await migrateLinks(this.app, this.store);
       await writeUriResponse(this.app, { ...res });
-      new Notice(
+      notify(
         `op-migrate-links: scanned ${res.scanned} · rewrote ${res.rewrites.length}`,
       );
     } catch (err: any) {
       console.error("[op-obsidian] op-migrate-links failed", err);
-      new Notice(`op-migrate-links failed: ${err?.message ?? err}`);
+      notify(`op-migrate-links failed: ${err?.message ?? err}`);
     }
   }
 
@@ -2240,7 +2256,7 @@ export default class OpPlugin extends Plugin {
   private runEditWorkflowCommand(): void {
     const projects = applyProjectOrder(listProjects(this.app), this.settings.projectOrder);
     if (projects.length === 0) {
-      new Notice("op: no projects found under Projects/");
+      notify("op: no projects found under Projects/");
       return;
     }
     new ProjectSuggestModal(this.app, projects, (project) => {
@@ -2258,13 +2274,13 @@ export default class OpPlugin extends Plugin {
         slug,
       );
       if (res) {
-        new Notice(
+        notify(
           `op-edit-workflow: ${res.project} → ${res.agent} in ${res.workingDir} (tmux: ${res.tmuxSession}:${res.tmuxWindow})`,
         );
       }
     } catch (err: any) {
       console.error("[op-obsidian] op-edit-workflow failed", err);
-      new Notice(`op-edit-workflow failed: ${err?.message ?? err}`);
+      notify(`op-edit-workflow failed: ${err?.message ?? err}`);
     }
   }
 
@@ -2292,12 +2308,12 @@ export default class OpPlugin extends Plugin {
         agentId,
         debug: true,
       });
-      new Notice(
+      notify(
         `op-debug-agent-launch: ${issueId} (tmux: ${res.tmuxSession}:${res.tmuxWindow})`,
       );
     } catch (err: any) {
       console.error("[op-obsidian] op-debug-agent-launch failed", err);
-      new Notice(`op-debug-agent-launch failed: ${err?.message ?? err}`);
+      notify(`op-debug-agent-launch failed: ${err?.message ?? err}`);
     }
   }
 
@@ -2324,13 +2340,13 @@ export default class OpPlugin extends Plugin {
           res.mode === "work" || res.mode === "implement"
             ? ""
             : ` [${res.mode.toUpperCase()} MODE]`;
-        new Notice(
+        notify(
           `op-open-agent: ${res.issueId} → ${res.agent}${modeLabel} in ${res.workingDir} (tmux: ${res.tmuxSession}:${res.tmuxWindow})`,
         );
       }
     } catch (err: any) {
       console.error("[op-obsidian] op-open-agent failed", err);
-      new Notice(`op-open-agent failed: ${err?.message ?? err}`);
+      notify(`op-open-agent failed: ${err?.message ?? err}`);
     }
   }
 
@@ -2417,7 +2433,7 @@ export default class OpPlugin extends Plugin {
         advanced = await this.advanceFlowAndLaunch(entry, exitStatus);
       } catch (err: any) {
         console.error("[op-obsidian] flow auto-advance failed", err);
-        new Notice(`op: flow auto-advance failed — ${err?.message ?? err}`);
+        notify(`op: flow auto-advance failed — ${err?.message ?? err}`);
       }
     }
     return {
@@ -2464,13 +2480,13 @@ export default class OpPlugin extends Plugin {
       try {
         const decision = await this.advanceFlowAndLaunch(entry, "clean");
         if (!decision) {
-          new Notice(
+          notify(
             `op: ${entry.id} has no next flow stage to launch — set complexity, or current stage is terminal`,
           );
         }
       } catch (err: any) {
         console.error("[op-obsidian] op-launch-next-stage failed", err);
-        new Notice(`op-launch-next-stage failed: ${err?.message ?? err}`);
+        notify(`op-launch-next-stage failed: ${err?.message ?? err}`);
       }
     });
   }
@@ -2479,10 +2495,10 @@ export default class OpPlugin extends Plugin {
     this.pickIssueInteractive(async (entry) => {
       try {
         await setFlow(this.app, entry, { flow: null, complexity: null });
-        new Notice(`op: ${entry.id} flow + complexity cleared`);
+        notify(`op: ${entry.id} flow + complexity cleared`);
       } catch (err: any) {
         console.error("[op-obsidian] op-reset-flow failed", err);
-        new Notice(`op-reset-flow failed: ${err?.message ?? err}`);
+        notify(`op-reset-flow failed: ${err?.message ?? err}`);
       }
     });
   }
@@ -2606,11 +2622,11 @@ export default class OpPlugin extends Plugin {
         if (res.guardInstalled.length) guardParts.push(`guard on: ${res.guardInstalled.join(", ")}`);
         if (res.guardUninstalled.length) guardParts.push(`guard off: ${res.guardUninstalled.join(", ")}`);
         const guard = guardParts.length ? ` · ${guardParts.join(" · ")}` : "";
-        new Notice(`op: agent hooks ${summary}${skipped}${guard}`);
+        notify(`op: agent hooks ${summary}${skipped}${guard}`);
       }
     } catch (err: any) {
       console.error("[op-obsidian] agent hook install failed", err);
-      if (announce) new Notice(`op: agent hook install failed — ${err?.message ?? err}`);
+      if (announce) notify(`op: agent hook install failed — ${err?.message ?? err}`);
     }
   }
 
@@ -2640,7 +2656,7 @@ export default class OpPlugin extends Plugin {
       scopeBody,
       githubIssue,
     });
-    new Notice(`Created ${res.id}`);
+    notify(`Created ${res.id}`);
     const file = this.app.vault.getAbstractFileByPath(res.path);
     if (file instanceof TFile) {
       await this.app.workspace.getLeaf(false).openFile(file);

@@ -1,4 +1,5 @@
-import { App, Notice, TFile } from "obsidian";
+import { App, TFile } from "obsidian";
+import { notify } from "./notificationLog";
 import type { OpSettings } from "./settings";
 import {
   AGENT_IDS,
@@ -37,14 +38,14 @@ export async function editWorkflow(
 ): Promise<EditWorkflowResult | undefined> {
   const trimmed = slug.trim();
   if (!trimmed) {
-    new Notice("op-edit-workflow: project slug is required");
+    notify("op-edit-workflow: project slug is required");
     return undefined;
   }
 
   const detection = detector.get() ?? (await detector.refresh());
   const installed = AGENT_IDS.filter((id) => detection?.[id]?.installed);
   if (installed.length === 0) {
-    new Notice("op: no supported agent binaries found on PATH");
+    notify("op: no supported agent binaries found on PATH");
     return undefined;
   }
 
@@ -55,7 +56,7 @@ export async function editWorkflow(
 
   const det = detection[agentId];
   if (!det.installed) {
-    new Notice(`op: ${agentId} binary not found on PATH (looking for "${profile.binary}")`);
+    notify(`op: ${agentId} binary not found on PATH (looking for "${profile.binary}")`);
     return undefined;
   }
 

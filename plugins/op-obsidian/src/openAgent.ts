@@ -1,4 +1,5 @@
-import { App, Notice, TFile } from "obsidian";
+import { App, TFile } from "obsidian";
+import { notify } from "./notificationLog";
 import type { IssueStore } from "./issueStore";
 import type { IssueEntry } from "./types";
 import type { OpSettings } from "./settings";
@@ -83,7 +84,7 @@ export async function openAgent(
 
   const det = detection[agentId];
   if (!det.installed) {
-    new Notice(`op: ${agentId} binary not found on PATH (looking for "${profile.binary}")`);
+    notify(`op: ${agentId} binary not found on PATH (looking for "${profile.binary}")`);
     return undefined;
   }
 
@@ -114,7 +115,7 @@ export async function openAgent(
       args.entry.status = "in-progress";
     } catch (err) {
       console.error("[op-obsidian] op-open-agent: pre-launch op-work failed", err);
-      new Notice(`op: failed to mark ${args.entry.id} in-progress before launch — agent should run op-work itself`);
+      notify(`op: failed to mark ${args.entry.id} in-progress before launch — agent should run op-work itself`);
     }
   }
 
@@ -171,7 +172,7 @@ async function pickAgent(
 
   const installed = AGENT_IDS.filter((id) => detection?.[id]?.installed);
   if (installed.length === 0) {
-    new Notice("op: no supported agent binaries found on PATH");
+    notify("op: no supported agent binaries found on PATH");
     return undefined;
   }
 
