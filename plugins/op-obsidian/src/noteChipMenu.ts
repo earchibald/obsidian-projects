@@ -1,5 +1,8 @@
 import { App, Menu } from "obsidian";
+import { prefixedCommandId } from "./noteChipState";
 import type { ChipMenuItem, ChipState } from "./noteChipState";
+
+export { prefixedCommandId };
 
 /**
  * Build and show the overflow menu for a note-level chip (OP-151).
@@ -37,17 +40,30 @@ export function showChipMenu(
 }
 
 /**
+ * Thin typed wrapper around `app.commands.executeCommandById` that always
+ * applies `prefixedCommandId`. All chip and codeblock dispatch flows
+ * through here so there is no direct call site that can accidentally pass a
+ * bare id — a future fourth dispatch site that forgets `prefixedCommandId`
+ * would fail this function's own tests.
+ *
+ * Returns `true` when Obsidian accepted and ran the command, `false` when
+ * the command is unknown or its `checkCallback` declined (e.g. no active
+ * issue note).
+ */
+export function dispatchCommand(app: App, id: string): boolean {
+  return (app as unknown as {
+    commands: { executeCommandById: (id: string) => boolean };
+  }).commands.executeCommandById(prefixedCommandId(id));
+}
+
+/**
  * Run a chip command by id. Falls back to a Notice when the command is
  * absent or refused — keeps the chip from looking broken when, e.g.,
  * `op-clear-agent` lands in a future PR but the chip rendered against an
  * older command list.
  */
 export function dispatchChipCommand(app: App, item: ChipMenuItem): void {
-  // `executeCommandById` returns `false` when the command id is unknown
-  // *or* its checkCallback declines (no active issue note, etc).
-  const ok = (app as unknown as {
-    commands: { executeCommandById: (id: string) => boolean };
-  }).commands.executeCommandById(item.command);
+  const ok = dispatchCommand(app, item.command);
   if (!ok) {
     // Defer the import: `notify` lives in notificationLog.ts which pulls in
     // the Obsidian app — keep this module dependency-light for tests.
@@ -57,5 +73,7 @@ export function dispatchChipCommand(app: App, item: ChipMenuItem): void {
 
 async function notifyMissingCommand(item: ChipMenuItem): Promise<void> {
   const { notify } = await import("./notificationLog");
+  // Notice uses the bare id (matching what the chip-state matrix authors)
+  // so a developer seeing the message can grep noteChipState.ts directly.
   notify(`op: ${item.command} unavailable — open the issue note first.`);
 }

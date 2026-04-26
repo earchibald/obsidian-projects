@@ -145,4 +145,21 @@ describe("resolveChipState — every row of the chip-state matrix", () => {
     );
     expect(state?.action).toBe("start-agent");
   });
+
+  it("primaryCommand is always a bare id — no op-obsidian: prefix (dispatch contract)", () => {
+    // The chip-state matrix intentionally authors bare ids; `prefixedCommandId`
+    // is applied at dispatch time. If a future refactor flips the matrix to
+    // pre-prefix, this test fails loudly before the double-prefix reaches prod.
+    const cases = [
+      resolveChipState({ id: "OP-1", type: "issue", status: "open" }, true),
+      resolveChipState({ id: "OP-2", type: "issue", status: "open", agent: "claude" }, true),
+      resolveChipState({ id: "OP-3", type: "issue", status: "in-progress", agent: "claude" }, true),
+      resolveChipState({ id: "OP-4", type: "issue", status: "resolved" }, true),
+    ];
+    for (const state of cases) {
+      if (state?.primaryCommand) {
+        expect(state.primaryCommand).not.toContain(":");
+      }
+    }
+  });
 });

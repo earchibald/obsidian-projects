@@ -12,6 +12,30 @@
 
 import type { IssueStatus } from "./types";
 
+/**
+ * Plugin-id prefix for `executeCommandById`. Obsidian keys commands as
+ * `<plugin-id>:<command-id>` because `Plugin.addCommand({id: "foo"})`
+ * registers as `"<plugin-id>:foo"` — this is stable Obsidian API behaviour
+ * (https://github.com/obsidianmd/obsidian-api). The chip-state matrix and
+ * the `op-action` codeblock both author bare ids (`op-attach-current`,
+ * `op-open-agent`, …). Dispatch sites apply this prefix at call time —
+ * regression for OP-173, where every chip click silently failed because
+ * `executeCommandById("op-attach-current")` couldn't find a command at
+ * that bare key.
+ *
+ * Idempotent: a string already containing `:` (already prefixed, or
+ * addressing a foreign plugin such as `workspace:open-file`) is returned
+ * unchanged. Edge cases (empty string, strings beginning with `:`, strings
+ * with multiple `:`) are passed through per the same rule — they will
+ * produce a failed `executeCommandById` call that the `!ok` guard handles
+ * gracefully, just as any unknown command would.
+ */
+const PLUGIN_ID = "op-obsidian";
+
+export function prefixedCommandId(id: string): string {
+  return id.includes(":") ? id : `${PLUGIN_ID}:${id}`;
+}
+
 /** Subset of issue frontmatter the chip cares about. Mirrors `IssueEntry` but
  * stays decoupled so the resolver doesn't pull in the whole store type tree. */
 export interface ChipFrontmatter {
@@ -48,6 +72,11 @@ export interface ChipState {
   action: ChipAction;
   primaryLabel: string;
   primaryIcon: string;
+  /** Bare command id (no `op-obsidian:` prefix). Dispatch sites call
+   * `prefixedCommandId(primaryCommand)` when passing to
+   * `executeCommandById`. The matrix intentionally authors bare ids so the
+   * tests in `noteChipState.test.ts` can grep `noteChipState.ts` directly,
+   * and so that `prefixedCommandId` idempotency is never required here. */
   primaryCommand: string;
   /** Modifier classes to apply to the chip (`primary`, `stale`, `reopen`). */
   variant: "primary" | "stale" | "reopen";

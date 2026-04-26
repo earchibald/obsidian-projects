@@ -42,7 +42,7 @@ import {
   formatSegment,
   writeGhCache,
 } from "./noteStatusStrip";
-import { showChipMenu } from "./noteChipMenu";
+import { showChipMenu, dispatchCommand } from "./noteChipMenu";
 
 /**
  * Effect dispatched when external state (frontmatter, agent liveness, gh
@@ -105,12 +105,11 @@ export function renderChipDom(
     (ev) => {
       ev.preventDefault();
       ev.stopPropagation();
-      const ok = (deps.app as unknown as {
-        commands: { executeCommandById: (id: string) => boolean };
-      }).commands.executeCommandById(state.primaryCommand);
+      const ok = dispatchCommand(deps.app, state.primaryCommand);
       if (!ok) {
         // Command unavailable (typically: not the active leaf). Surface
         // it instead of failing silently — same UX as the menu items.
+        // Notice uses the bare id so the developer can grep noteChipState.ts.
         void import("./notificationLog").then(({ notify }) =>
           notify(`op: ${state.primaryCommand} unavailable — open the issue note first.`),
         );
@@ -461,10 +460,9 @@ export function makeOpActionCodeBlockProcessor(app: App) {
       button.addEventListener("click", (ev) => {
         ev.preventDefault();
         ev.stopPropagation();
-        const ok = (app as unknown as {
-          commands: { executeCommandById: (id: string) => boolean };
-        }).commands.executeCommandById(parsed.action);
+        const ok = dispatchCommand(app, parsed.action);
         if (!ok) {
+          // Notice uses the bare id so the developer can grep noteChipState.ts.
           void import("./notificationLog").then(({ notify }) =>
             notify(`op: ${parsed.action} unavailable.`),
           );
