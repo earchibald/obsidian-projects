@@ -276,30 +276,59 @@ interface ViewArgs {
 async function writeViewScript({ args, tmuxSession, tmuxWindow }: ViewArgs): Promise<string> {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), "op-view-"));
   const viewPath = path.join(dir, "view.command");
-  const tmux = shSingleQuote(args.tmuxBinary);
+  const script = buildViewScript({
+    tmuxBinary: args.tmuxBinary,
+    tmuxSession,
+    tmuxWindow,
+    issueId: args.issueId,
+    issueTitle: args.issueTitle,
+  });
+  await fs.writeFile(viewPath, script, { mode: 0o755 });
+  return viewPath;
+}
+
+interface BuildViewArgs {
+  tmuxBinary: string;
+  tmuxSession: string;
+  tmuxWindow: string;
+  issueId: string;
+  issueTitle?: string;
+}
+
+// OP-172: emit BOTH OSC 1 (icon/tab name = issue id) and OSC 2 (window title =
+// issue title) before `exec tmux attach`. Without OSC 1 the iTerm session-name
+// slot was being auto-set to the running command name ("tmux"), so every pane
+// label read "tmux" — `setSessionName` lands on iTerm's profile-name slot,
+// which is a different field from what the tab label tracks. OSC 1 pins the
+// tab label to `<issueId>` per-pane; tmux without `set-titles on` does not
+// re-emit OSC 1/2 across pane focus changes, so this stays sticky and avoids
+// the OP-103 regression where a focused pane's id leaked to the window title.
+export function buildViewScript({
+  tmuxBinary,
+  tmuxSession,
+  tmuxWindow,
+  issueId,
+  issueTitle,
+}: BuildViewArgs): string {
+  const tmux = shSingleQuote(tmuxBinary);
   const sess = shSingleQuote(tmuxSession);
-  const groupSess = shSingleQuote(`view-${args.issueId}`);
+  const groupSess = shSingleQuote(`view-${issueId}`);
   const win = shSingleQuote(tmuxWindow);
-  // Emit OSC 2 directly before exec so the iTerm session/pane title is set
-  // immediately to the issue title, even before tmux attaches. Do NOT enable
-  // tmux `set-titles` forwarding here: the iTerm window's title bar follows
-  // the focused pane's OSC 2, so continuous forwarding would make the window
-  // title flip to a surviving pane's title when an anchor pane closes.
-  // The one-shot OSC 2 is enough; setSessionName() pins the iTerm session
-  // name separately.
-  const sessionTitle = args.issueTitle && args.issueTitle.length > 0 ? args.issueTitle : args.issueId;
-  const titleShell = shSingleQuote(sessionTitle);
+  const tabName = shSingleQuote(issueId);
+  const windowTitle = shSingleQuote(
+    issueTitle && issueTitle.length > 0 ? issueTitle : issueId,
+  );
   const lines = [
     "#!/bin/bash",
     "set -e",
     `export PATH="/opt/homebrew/bin:/usr/local/bin:$HOME/.local/bin:$HOME/bin:$PATH"`,
     `${tmux} new-session -d -s ${groupSess} -t ${sess} 2>/dev/null || true`,
-    `printf '\\033]2;%s\\007' ${titleShell}`,
+    `printf '\\033]1;%s\\007' ${tabName}`,
+    `printf '\\033]2;%s\\007' ${windowTitle}`,
     `exec ${tmux} attach -t ${groupSess} \\; select-window -t ${groupSess}:${win}`,
     "",
   ];
-  await fs.writeFile(viewPath, lines.join("\n"), { mode: 0o755 });
-  return viewPath;
+  return lines.join("\n");
 }
 
 // Agent inner script: same shape as the pre-orchestrator launch path —

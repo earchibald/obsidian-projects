@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 
-import { firstEmptyCell, pruneDeadSessionSlots } from "./orchestrator";
+import { buildViewScript, firstEmptyCell, pruneDeadSessionSlots } from "./orchestrator";
 import type { RegistryData, WindowState } from "./layout/registry";
 
 function makeReg(win: WindowState, surfaces: RegistryData["surfaces"] = {}): RegistryData {
@@ -92,5 +92,58 @@ describe("pruneDeadSessionSlots", () => {
 
     expect(anyAlive).toBe(true);
     expect(win.sessionIds).toEqual(["alive", undefined, undefined, undefined]);
+  });
+});
+
+describe("buildViewScript", () => {
+  const baseArgs = {
+    tmuxBinary: "/opt/homebrew/bin/tmux",
+    tmuxSession: "op-agents-1",
+    tmuxWindow: "OP-172",
+    issueId: "OP-172",
+    issueTitle: "research - can we actually name iterm2 tmux windows",
+  };
+
+  it("emits OSC 1 (tab/icon name) with the issueId before exec", () => {
+    const out = buildViewScript(baseArgs);
+    expect(out).toContain(`printf '\\033]1;%s\\007' 'OP-172'`);
+    const oscIdx = out.indexOf(`printf '\\033]1;`);
+    const execIdx = out.indexOf("exec");
+    expect(oscIdx).toBeGreaterThan(-1);
+    expect(execIdx).toBeGreaterThan(oscIdx);
+  });
+
+  it("emits OSC 2 (window title) with the issueTitle when present", () => {
+    const out = buildViewScript(baseArgs);
+    expect(out).toContain(
+      `printf '\\033]2;%s\\007' 'research - can we actually name iterm2 tmux windows'`,
+    );
+  });
+
+  it("falls back to issueId for OSC 2 when issueTitle is empty", () => {
+    const out = buildViewScript({ ...baseArgs, issueTitle: "" });
+    expect(out).toContain(`printf '\\033]2;%s\\007' 'OP-172'`);
+  });
+
+  it("falls back to issueId for OSC 2 when issueTitle is missing", () => {
+    const { issueTitle, ...rest } = baseArgs;
+    const out = buildViewScript(rest);
+    expect(out).toContain(`printf '\\033]2;%s\\007' 'OP-172'`);
+  });
+
+  it("does not enable tmux set-titles forwarding (OP-103 regression guard)", () => {
+    const out = buildViewScript(baseArgs);
+    expect(out).not.toContain("set-titles on");
+    expect(out).not.toContain("set-titles-string");
+  });
+
+  it("creates the per-pane grouped session and attaches with select-window", () => {
+    const out = buildViewScript(baseArgs);
+    expect(out).toContain(
+      `'/opt/homebrew/bin/tmux' new-session -d -s 'view-OP-172' -t 'op-agents-1' 2>/dev/null || true`,
+    );
+    expect(out).toContain(
+      `exec '/opt/homebrew/bin/tmux' attach -t 'view-OP-172' \\; select-window -t 'view-OP-172':'OP-172'`,
+    );
   });
 });
