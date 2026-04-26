@@ -309,6 +309,21 @@ describe("mergeSettings", () => {
     expect(mergeSettings({ workflowVars: ["a", "b"] as unknown as object }).workflowVars).toEqual({});
   });
 
+  it("OP-198: workflowVars edge cases — empty string stored, long string stored, keys with dots/slashes stored", () => {
+    // Empty string is a valid string value — stored as-is so a module can
+    // render {{vars.foo}} → "" (suppress) rather than the raw placeholder.
+    expect(mergeSettings({ workflowVars: { silent: "" } }).workflowVars).toEqual({ silent: "" });
+    // Long strings (e.g. a template body): no cap in mergeSettings.
+    const long = "x".repeat(5000);
+    expect(mergeSettings({ workflowVars: { big: long } }).workflowVars).toEqual({ big: long });
+    // Keys with dots / slashes pass through — the template engine is
+    // responsible for namespace resolution; mergeSettings doesn't tokenise
+    // the key.
+    expect(
+      mergeSettings({ workflowVars: { "a.b": "v1", "x/y": "v2" } }).workflowVars,
+    ).toEqual({ "a.b": "v1", "x/y": "v2" });
+  });
+
   it("OP-198: existing user upgrading from a version pre-workflowMode loads cleanly with defaults", () => {
     // Simulates a real data.json blob captured before OP-198 — no
     // workflowMode / workflowVars keys at all. Both must default cleanly.

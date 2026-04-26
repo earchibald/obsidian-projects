@@ -456,6 +456,95 @@ describe("buildPrompt — OP-198 (2a)", () => {
     expect(out).toContain("Issue: OP-1 — Demo issue");
   });
 
+  it("modules mode: empty kickoff step (modules:[]) suppresses section — does NOT fall back to legacy", async () => {
+    // WORKFLOW.md exists, step is found, but `modules: []` — the composer
+    // returns an empty ComposedPrompt (text: ''). The caller must suppress
+    // the section without injecting the legacy inline blob. A user who opts
+    // into modules mode with an empty kickoff step is explicitly requesting
+    // no workflow injection at that step — silently getting the old inline
+    // blob would be surprising.
+    const app = fakeApp([
+      {
+        path: "Projects/demo/WORKFLOW.md",
+        frontmatter: {
+          type: "workflow",
+          schema: 1,
+          project: "demo",
+          default_agent: "claude",
+          default_model: "opus",
+          steps: [{ step: "kickoff", modules: [] }],
+        },
+        raw: "---\n# yaml omitted\n---\n",
+      },
+    ]);
+    const out = await buildPrompt(app, fakeStore(), {
+      entry: entry(),
+      profile: profile(),
+      injection: injection(),
+      vaultBasePath: "/Users/me/vault",
+      workflowMode: "modules",
+    });
+    // No workflow section at all — neither the legacy blob nor an empty header.
+    expect(out).not.toContain("## Project workflow");
+    // Header and meta still present.
+    expect(out).toContain("Issue: OP-1 — Demo issue");
+  });
+
+  it("modules mode: workflowStep param selects a non-kickoff step (OP-199 readiness)", async () => {
+    // Pre-wires the `workflowStep` param so OP-199 can pass 'plan' / 'review'
+    // without a signature change. Here we verify that 'plan' reads the plan
+    // step's modules, not the kickoff ones.
+    const app = fakeApp([
+      {
+        path: "Projects/demo/WORKFLOW.md",
+        frontmatter: {
+          type: "workflow",
+          schema: 1,
+          project: "demo",
+          default_agent: "claude",
+          default_model: "opus",
+          steps: [
+            { step: "kickoff", modules: ["kickoff-only"] },
+            { step: "plan", modules: ["plan-only"] },
+          ],
+        },
+        raw: "---\n# yaml omitted\n---\n",
+      },
+      {
+        path: "Projects/_op-modules/kickoff-only.md",
+        frontmatter: {
+          id: "kickoff-only",
+          title: "Kickoff",
+          type: "workflow-module",
+          scope: "kickoff",
+          vars: [],
+        },
+        raw: "---\n# yaml omitted\n---\nKickoff content.\n",
+      },
+      {
+        path: "Projects/_op-modules/plan-only.md",
+        frontmatter: {
+          id: "plan-only",
+          title: "Plan",
+          type: "workflow-module",
+          scope: "plan",
+          vars: [],
+        },
+        raw: "---\n# yaml omitted\n---\nPlan content.\n",
+      },
+    ]);
+    const out = await buildPrompt(app, fakeStore(), {
+      entry: entry(),
+      profile: profile(),
+      injection: injection(),
+      vaultBasePath: "/Users/me/vault",
+      workflowMode: "modules",
+      workflowStep: "plan",
+    });
+    expect(out).toContain("Plan content.");
+    expect(out).not.toContain("Kickoff content.");
+  });
+
   it("modules mode: when composer succeeds, includeWorkflow=false suppresses just like legacy", async () => {
     // includeWorkflow gates the entire workflow branch, modules or otherwise.
     const app = fakeApp(legacyWorkflowFiles());

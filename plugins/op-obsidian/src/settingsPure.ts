@@ -341,7 +341,8 @@ export function mergeSettings(loaded: unknown): OpSettings {
   if (l.workflowVars && typeof l.workflowVars === "object" && !Array.isArray(l.workflowVars)) {
     const out: Record<string, string> = {};
     for (const [k, v] of Object.entries(l.workflowVars as Record<string, unknown>)) {
-      if (typeof k !== "string") continue;
+      // `k` is always a string (Object.entries contract); `v` may be any type
+      // if written by a third-party tool — silently skip non-string values.
       if (typeof v !== "string") continue;
       out[k] = v;
     }

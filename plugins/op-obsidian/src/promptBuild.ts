@@ -24,6 +24,11 @@ export interface BuildPromptArgs {
   /** OP-198 (2a): vault-wide user vars threaded into the composer's Global
    *  precedence layer. Unused when `workflowMode === 'legacy'`. */
   workflowVars?: Record<string, string>;
+  /** OP-198 (2a): name of the workflow step to compose for this launch.
+   *  Defaults to `'kickoff'`. OP-199 (2b) will pass `'plan'`, `'review'`,
+   *  etc. so each launch mode can target its own step without a signature
+   *  change. */
+  workflowStep?: string;
 }
 
 export async function buildPrompt(
@@ -47,14 +52,19 @@ export async function buildPrompt(
 
     if (workflowMode === "modules") {
       // OP-198 (2a): swap the legacy inline blob for OP-197's composer.
-      // Falls through to the legacy block if the composer can't produce
-      // anything (no WORKFLOW.md, empty step) so users who flip the flag
-      // never lose workflow content silently.
+      // `composeKickoffSection` returns:
+      //   - null  → no WORKFLOW.md, fall through to legacy below
+      //   - ""    → WORKFLOW.md exists but step was empty, suppress
+      //   - text  → splice the composed section
       composedSection = await composeKickoffSection(app, args);
     }
 
     if (composedSection !== null) {
-      parts.push(composedSection);
+      // Composer ran: '' means WORKFLOW.md exists but the step had no output
+      // (e.g. `modules: []`). Don't push anything — the user opted into
+      // modules mode so silently injecting the legacy inline blob would be
+      // wrong. Non-empty: splice into the prompt as-is.
+      if (composedSection) parts.push(composedSection);
     } else {
       // Legacy path — kept byte-identical (OP-198 acceptance criterion).
       const workflowPath = `Projects/${entry.project}/WORKFLOW.md`;
@@ -117,11 +127,17 @@ export async function buildPrompt(
 }
 
 /**
- * OP-198 (2a): compose the kickoff workflow section via OP-197's modular
- * engine. Returns the `## Project workflow` block ready to splice into
- * `parts`, or `null` if the composer produced nothing usable (no
- * `WORKFLOW.md`, empty steps, or the step yielded an empty body) so the
- * caller can fall back to the legacy inline path.
+ * OP-198 (2a): compose the workflow section for this launch via OP-197's
+ * modular engine. Returns:
+ *  - a non-empty `## Project workflow\n\n...` string when the step produced
+ *    content;
+ *  - `""` when WORKFLOW.md exists but the step had no output (e.g.
+ *    `modules: []`, or every module rendered to whitespace after var
+ *    substitution) — caller suppresses the section without falling back to
+ *    legacy, because the user explicitly chose modules mode;
+ *  - `null` when WORKFLOW.md was not found (or couldn't be loaded) — caller
+ *    falls back to the legacy inline path so users without a WORKFLOW.md
+ *    see the same prompt they'd get in `'legacy'` mode.
  *
  * The `RenderContext` is built minimally here: 2a only owns the kickoff
  * splice and the global-vars thread, so launch-context fields (`branch`,
@@ -137,10 +153,11 @@ async function composeKickoffSection(
   const { entry, profile, injection, vaultBasePath } = args;
   if (!entry.project) return null;
 
+  const step = args.workflowStep ?? "kickoff";
   const render = buildKickoffRenderContext(app, args, vaultBasePath);
   const { composed } = await loadAndComposeWorkflow(app, {
     project: entry.project,
-    step: "kickoff",
+    step,
     ctx: {
       render,
       globalVars: args.workflowVars ?? {},
@@ -148,9 +165,15 @@ async function composeKickoffSection(
     },
   });
 
+  // `null` means WORKFLOW.md was not found — signal the caller to fall
+  // back to the legacy inline blob.
   if (!composed) return null;
+
   const text = composed.text.trim();
-  if (!text) return null;
+  // Non-null but empty: WORKFLOW.md exists, but the step produced nothing
+  // (e.g. `modules: []` or all modules rendered to whitespace). Return ""
+  // so the caller suppresses the section without injecting legacy content.
+  if (!text) return "";
   return `## Project workflow\n\n${text}`;
 }
 
@@ -182,9 +205,11 @@ function buildKickoffRenderContext(
 }
 
 function today(): string {
-  // ISO YYYY-MM-DD slice. Caller-side wrapper so tests can shim `Date` if
-  // they ever need to assert against the literal date — current tests
-  // assert against structure, not the date string.
+  // ISO YYYY-MM-DD slice of the current UTC date. Using UTC is intentional:
+  // it keeps the value consistent and reproducible regardless of the user's
+  // local timezone, and avoids ambiguity at midnight. Modules that render
+  // {{today}} and whose authors care about local date can override the value
+  // via workflowVars (OP-199 per-launch override layer).
   return new Date().toISOString().slice(0, 10);
 }
 
