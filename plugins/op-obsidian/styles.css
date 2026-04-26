@@ -451,3 +451,140 @@ a.op-sidebar__agent:hover {
   white-space: pre-wrap;
   word-break: break-word;
 }
+
+/* --- OP-151 / §2 — note-level primary action chip ----------------------- */
+/* --- OP-162 / §11 — note-level status strip ----------------------------- */
+
+.op-note-chip-wrap {
+  /* Above-H1 wrapper. Block layout so the H1 wraps below; tight margins so
+   * we don't push the H1 visibly down on first paint. */
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  margin: 0.25rem 0 0.5rem 0;
+  font-family: var(--font-interface);
+}
+
+.op-note-chip-wrap--cm6 {
+  /* CM6 widgets get a tiny extra top margin to sit cleanly above the
+   * editor's gutter line — Reading mode doesn't need this. */
+  margin-top: 0.5rem;
+}
+
+/* Hide the chip on very narrow leaves — the H1 is the priority on a
+ * sidebar-narrow leaf. 320px matches the spec's default min-width. */
+@container (max-width: 320px) {
+  .op-note-chip-wrap { display: none; }
+}
+.markdown-source-view.is-live-preview .cm-content[style*="width"] .op-note-chip-wrap { /* fallback when @container isn't supported */ }
+
+.op-note-chip-row {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  flex-wrap: nowrap;
+}
+
+.op-note-chip {
+  /* Inherit theme accents so the chip matches the user's palette. */
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  max-width: 32ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding: 0.15rem 0.6rem;
+  font-size: var(--font-ui-smaller, 0.8rem);
+  line-height: 1.4;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: var(--radius-s, 6px);
+  background: var(--background-secondary);
+  color: var(--text-normal);
+  cursor: pointer;
+  user-select: none;
+  font-weight: 500;
+}
+
+.op-note-chip:hover {
+  background: var(--background-modifier-hover);
+}
+
+.op-note-chip:focus-visible {
+  outline: 2px solid var(--interactive-accent);
+  outline-offset: 1px;
+}
+
+.op-note-chip--primary {
+  background: var(--interactive-accent);
+  color: var(--text-on-accent);
+  border-color: var(--interactive-accent);
+}
+
+.op-note-chip--primary:hover {
+  background: var(--interactive-accent-hover);
+}
+
+.op-note-chip--stale {
+  background: var(--background-modifier-error-rgb, var(--background-secondary));
+  color: var(--text-warning, var(--text-normal));
+  border-color: var(--background-modifier-border);
+  font-style: italic;
+}
+
+.op-note-chip--reopen {
+  background: var(--background-secondary);
+  color: var(--text-muted);
+}
+
+.op-note-chip--overflow {
+  padding: 0.15rem 0.5rem;
+  min-width: 1.6rem;
+  justify-content: center;
+}
+
+.op-note-strip {
+  display: flex;
+  align-items: center;
+  gap: 0.2rem;
+  flex-wrap: wrap;
+  font-size: var(--font-ui-smaller, 0.75rem);
+  color: var(--text-muted);
+}
+
+.op-note-strip__seg {
+  cursor: pointer;
+  padding: 0.05rem 0.25rem;
+  border-radius: var(--radius-s, 4px);
+}
+
+.op-note-strip__seg:hover {
+  background: var(--background-modifier-hover);
+  color: var(--text-normal);
+}
+
+.op-note-strip__seg--commit {
+  font-family: var(--font-monospace, monospace);
+}
+
+.op-note-strip__seg--pending {
+  opacity: 0.6;
+  font-style: italic;
+}
+
+.op-note-strip__sep {
+  color: var(--text-faint);
+  user-select: none;
+}
+
+.op-note-chip-wrap--action {
+  /* Used by the README's `op-action` codeblock chips. Center the button
+   * inside the rendered code-block container. */
+  margin: 0.4rem 0;
+}
+
+.op-action-block--error {
+  color: var(--text-error);
+  font-family: var(--font-monospace, monospace);
+  font-size: var(--font-ui-smaller, 0.75rem);
+}
