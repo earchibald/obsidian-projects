@@ -333,7 +333,15 @@ export function buildViewScript({
     "set -e",
     `export PATH="/opt/homebrew/bin:/usr/local/bin:$HOME/.local/bin:$HOME/bin:$PATH"`,
     `${tmux} new-session -d -s ${groupSess} -t ${sess} 2>/dev/null || true`,
-    `${tmux} set-hook -t ${groupSessTarget} window-unlinked ${shSingleQuote(hookCmd)}`,
+    // OP-178: make set-hook non-fatal so a session-already-gone race (agent
+    // crashed before this script reached set-hook) doesn't show an error
+    // before the subsequent exec-attach also fails and the pane closes.
+    `${tmux} set-hook -t ${groupSessTarget} window-unlinked ${shSingleQuote(hookCmd)} 2>/dev/null || true`,
+    // OP-178 race guard: if the agent window died between new-session and
+    // set-hook while sibling windows kept the session alive, the hook is now
+    // installed but will never fire (window already gone). Kill the session
+    // immediately so exec-attach never runs and the pane closes cleanly.
+    `${tmux} select-window -t ${groupSessTarget}:${win} 2>/dev/null || { ${tmux} kill-session -t ${groupSessTarget} 2>/dev/null || true; }`,
     `printf '\\033]1;%s\\007' ${tabName}`,
     `printf '\\033]2;%s\\007' ${windowTitle}`,
     `exec ${tmux} attach -t ${groupSess} \\; select-window -t ${groupSess}:${win}`,
