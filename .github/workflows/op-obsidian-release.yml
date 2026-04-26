@@ -2,38 +2,78 @@ name: Release op-obsidian
 
 on:
   push:
-    tags:
-      - "op-obsidian-v*"
+    branches:
+      - main
 
 permissions:
   contents: write
 
+concurrency:
+  group: op-obsidian-release
+  cancel-in-progress: false
+
 jobs:
-  build:
+  release:
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: plugins/op-obsidian
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Read manifest version
+        id: version
+        run: |
+          version=$(jq -r .version plugins/op-obsidian/manifest.json)
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "tag=op-obsidian-v$version" >> "$GITHUB_OUTPUT"
+
+      - name: Skip if tag already exists
+        id: guard
+        env:
+          TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          if git rev-parse --verify --quiet "refs/tags/$TAG" >/dev/null; then
+            echo "Tag $TAG already exists; nothing to release."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Setup Node
+        if: steps.guard.outputs.skip == 'false'
         uses: actions/setup-node@v4
         with:
           node-version: "20"
 
       - name: Install
-        run: npm install
+        if: steps.guard.outputs.skip == 'false'
+        working-directory: plugins/op-obsidian
+        run: npm ci
 
       - name: Build
+        if: steps.guard.outputs.skip == 'false'
+        working-directory: plugins/op-obsidian
         run: npm run build
 
+      - name: Create and push tag
+        if: steps.guard.outputs.skip == 'false'
+        env:
+          TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag "$TAG"
+          git push origin "$TAG"
+
       - name: Create release
+        if: steps.guard.outputs.skip == 'false'
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAG: ${{ github.ref_name }}
+          TAG: ${{ steps.version.outputs.tag }}
+          VERSION: ${{ steps.version.outputs.version }}
         run: |
           gh release create "$TAG" \
-            --title "$TAG" \
-            --notes "op-obsidian $TAG" \
-            main.js manifest.json
+            --title "op-obsidian v$VERSION" \
+            --generate-notes \
+            plugins/op-obsidian/main.js \
+            plugins/op-obsidian/manifest.json
