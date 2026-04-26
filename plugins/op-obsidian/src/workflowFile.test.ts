@@ -187,18 +187,20 @@ describe("loadWorkflowFile — legacy fallback shapes", () => {
     expect((r.diagnostics[0].extra as Record<string, unknown>).actual).toBe("project");
   });
 
-  it("(5) frontmatter parses to null → legacy-5 synthetic step (models real Obsidian: getFileCache returns null)", async () => {
-    // Real Obsidian: for `---\n---` the YAML engine yields undefined, so
-    // `getFileCache(file)?.frontmatter` is `undefined`.  The fakeApp models
-    // this by returning `null` for getFileCache (no cache entry), which makes
-    // `fmCached = undefined` after the optional-chain.  The raw-starts-with-`---`
-    // check then maps it to `null` → shape 5.
+  it("(5) frontmatter parses to null → legacy-5 synthetic step (fmCached=undefined via fakeApp)", async () => {
+    // Real Obsidian: for `---\n---` the YAML engine yields undefined for the
+    // fence content, so `getFileCache(file)?.frontmatter` is `undefined`.
+    // fakeApp models this by returning `null` from getFileCache when `frontmatter`
+    // is `undefined` in the fixture (simulating "no usable frontmatter"), which
+    // makes `getFileCache(file)?.frontmatter` evaluate to `undefined` via the
+    // optional chain.  The raw-starts-with-`---` check then maps fmCached=undefined
+    // to fmInput=null → shape 5.
     const raw = "---\n---\nbody after empty fence\n";
     const app = fakeApp([
       {
         path: "Projects/demo/WORKFLOW.md",
         raw,
-        frontmatter: undefined, // getFileCache returns null → fmCached = undefined → fmInput = null
+        frontmatter: undefined, // fakeApp returns null for getFileCache → null?.frontmatter = undefined = fmCached
       },
     ]);
     const r = await loadWorkflowFile(app, "demo");
@@ -207,14 +209,15 @@ describe("loadWorkflowFile — legacy fallback shapes", () => {
   });
 
   it("(5-null) defensive: fmCached=null also routes to legacy-5", async () => {
-    // Obsidian never returns null for frontmatter, but the disambiguation code
-    // handles it correctly (null != undefined, so fmInput = null → shape 5).
+    // Obsidian never returns null for frontmatter (typed FrontMatterCache | undefined),
+    // but the disambiguation code handles it gracefully (fmCached=null satisfies
+    // `!== undefined`, so fmInput = null → classifyLegacy(raw, null) → shape 5).
     const raw = "---\n---\nbody after empty fence\n";
     const app = fakeApp([
       {
         path: "Projects/demo/WORKFLOW.md",
         raw,
-        frontmatter: null, // getFileCache returns { frontmatter: null } → fmCached = null → fmInput = null
+        frontmatter: null, // fakeApp returns { frontmatter: null } → fmCached = null → fmInput = null
       },
     ]);
     const r = await loadWorkflowFile(app, "demo");
