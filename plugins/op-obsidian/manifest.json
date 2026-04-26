@@ -1,7 +1,7 @@
 {
   "id": "op-obsidian",
   "name": "Obsidian Projects (op)",
-  "version": "0.63.0",
+  "version": "0.63.1",
   "minAppVersion": "1.5.0",
   "description": "Jira-lite issue tracker for Obsidian vaults — deterministic commands backing the op workflow.",
   "author": "Eugene Archibald",

@@ -26,7 +26,25 @@ export interface WorkflowDiagnostic {
   stepId?: string;
   moduleId?: string;
   varName?: string;
-  /** Code-specific extras (e.g., `bad-model` carries `{ allowedAliases, … }`). */
+  /**
+   * Code-specific structured payload. Consumers MUST use these fields rather
+   * than parsing `message` — the message is for human display only and may be
+   * reformatted without notice.
+   *
+   * Guaranteed keys by code:
+   *   - `malformed-frontmatter` (from `parseModule` / `parseVarDecls`):
+   *       - `path` (string) — vault-relative source file path (always present)
+   *       - `field` (string) — frontmatter field name (present when the error
+   *         is a scalar-field violation; absent for id-mismatch and
+   *         vars-list errors)
+   *       - `expected` (string) — human description of the expected type/value
+   *         (present when `field` is present; for id-mismatch: the expected id)
+   *       - `actual` (string) — `describe(value)` of the bad value (same
+   *         presence rule as `expected`)
+   *   - `intra-scope-collision`:
+   *       - `scope` (string) — the scope key where the collision occurred
+   *       - `moduleIds` (string[]) — sorted ids of the colliding modules
+   */
   extra?: Record<string, unknown>;
 }
 

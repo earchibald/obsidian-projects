@@ -136,6 +136,14 @@ describe("parseVarDecl — malformed", () => {
     expect(r.diagnostics[0].code).toBe("malformed-frontmatter");
   });
 
+  it("= only (no name, no value)", () => {
+    // eqIdx=0, rawName="" → empty name → malformed.  Verify no off-by-one
+    // that would let name="" slip through as a valid bare.
+    const r = parseVarDecl("=");
+    expect(r.decl).toBeNull();
+    expect(r.diagnostics[0].code).toBe("malformed-frontmatter");
+  });
+
   it("=value (empty name)", () => {
     const r = parseVarDecl("=value");
     expect(r.decl).toBeNull();
@@ -267,6 +275,26 @@ describe("parseVarDecls — list-level", () => {
     }
   });
 
+  it("bare x beats empty-default x= on duplicate (first-wins, not most-specific)", () => {
+    // `["x", "x="]` → bare is first, empty-default is duplicate → bare wins.
+    // The composer (1d) must satisfy a bare from a higher-precedence source;
+    // the empty-default would have supplied "". First-wins is the documented
+    // rule; there is no "more-specific wins" tie-break.
+    const r = parseVarDecls(["x", "x="]);
+    expect(r.decls).toEqual([{ kind: "bare", name: "x" }]);
+    expect(r.diagnostics).toHaveLength(1);
+    expect(r.diagnostics[0].code).toBe("malformed-frontmatter");
+    expect(r.diagnostics[0].varName).toBe("x");
+  });
+
+  it("empty-default x= beats bare x on duplicate when empty-default is listed first", () => {
+    // Symmetry check: whichever appears first in the list wins.
+    const r = parseVarDecls(["x=", "x"]);
+    expect(r.decls).toEqual([{ kind: "default", name: "x", value: "" }]);
+    expect(r.diagnostics).toHaveLength(1);
+    expect(r.diagnostics[0].varName).toBe("x");
+  });
+
   it("string + object mix preserves order", () => {
     const r = parseVarDecls([
       "first",
@@ -361,6 +389,18 @@ describe("parseModule", () => {
     expect(r.diagnostics[0].extra?.actual).toBe("different");
   });
 
+  it("rejects id missing entirely from frontmatter (not just wrong value)", () => {
+    // Delete `id` so it is absent — different code path from an id mismatch.
+    const fm = { ...fmBase() };
+    delete fm.id;
+    const r = parseModule({ id: "sample", frontmatter: fm, source: GLOBAL_SOURCE });
+    expect(r.module).toBeNull();
+    expect(r.diagnostics[0].code).toBe("malformed-frontmatter");
+    // Should surface a clear "field: id" payload so consumers can distinguish
+    // this from an id-mismatch.
+    expect(r.diagnostics[0].extra?.field).toBe("id");
+  });
+
   it("rejects missing title / scope", () => {
     const r1 = parseModule({
       id: "sample",
@@ -396,6 +436,41 @@ describe("parseModule", () => {
     expect(r.module?.project).toBeUndefined();
     expect(r.module?.agent).toBeUndefined();
     expect(r.module?.order).toBe(0);
+  });
+
+  it("project: '' is treated as absent (not a hard-fail)", () => {
+    // Authors sometimes write `project: ""` to mean "no restriction".
+    // The loader must not hard-fail the module for this — treat it as absent.
+    const r = parseModule({
+      id: "sample",
+      frontmatter: fmBase({ project: "" }),
+      source: GLOBAL_SOURCE,
+    });
+    expect(r.module).not.toBeNull();
+    expect(r.module?.project).toBeUndefined();
+    expect(r.diagnostics).toEqual([]);
+  });
+
+  it("agent: '' is treated as absent (not a hard-fail)", () => {
+    const r = parseModule({
+      id: "sample",
+      frontmatter: fmBase({ agent: "" }),
+      source: GLOBAL_SOURCE,
+    });
+    expect(r.module).not.toBeNull();
+    expect(r.module?.agent).toBeUndefined();
+    expect(r.diagnostics).toEqual([]);
+  });
+
+  it("project: non-string (e.g. 42) is still a hard-fail", () => {
+    const r = parseModule({
+      id: "sample",
+      frontmatter: fmBase({ project: 42 }),
+      source: GLOBAL_SOURCE,
+    });
+    expect(r.module).toBeNull();
+    expect(r.diagnostics[0].code).toBe("malformed-frontmatter");
+    expect(r.diagnostics[0].extra?.field).toBe("project");
   });
 
   it("vars-level diagnostics do not disqualify the module", () => {

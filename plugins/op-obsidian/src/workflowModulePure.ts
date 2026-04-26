@@ -352,11 +352,13 @@ export function parseModule(args: ParseModuleArgs): ParseModuleResult {
   if (Object.prototype.hasOwnProperty.call(frontmatter, "project")) {
     const v = frontmatter.project;
     if (v !== undefined && v !== null) {
-      if (typeof v !== "string" || v.length === 0) {
+      if (typeof v !== "string") {
         diagnostics.push(invalidFieldDiag(path, id, "project", v, "non-empty string"));
-      } else {
+      } else if (v.trim().length > 0) {
         project = v;
       }
+      // empty / whitespace-only string is silently treated as absent — authors
+      // sometimes write `project: ""` to mean "no restriction"; honour that intent.
     }
   }
 
@@ -364,11 +366,12 @@ export function parseModule(args: ParseModuleArgs): ParseModuleResult {
   if (Object.prototype.hasOwnProperty.call(frontmatter, "agent")) {
     const v = frontmatter.agent;
     if (v !== undefined && v !== null) {
-      if (typeof v !== "string" || v.length === 0) {
+      if (typeof v !== "string") {
         diagnostics.push(invalidFieldDiag(path, id, "agent", v, "non-empty string"));
-      } else {
+      } else if (v.trim().length > 0) {
         agent = v;
       }
+      // empty / whitespace-only string treated as absent (same reasoning as project).
     }
   }
 

@@ -65,10 +65,12 @@ generic {{var}} template engine from OP-194.
 - **`project`** (string) — restricts a global module to a specific project
   slug. Per-project modules already live under their slug, so they don't need
   this field; if set, the value should match the enclosing slug or the module
-  is filtered out at load time.
+  is filtered out at load time. An empty or whitespace-only value (`project:
+  ""`) is silently treated as absent — the field is ignored and the module
+  applies to all projects.
 - **`agent`** (string) — restricts the module to a specific agent id
   (`claude`, `gemini`, `copilot`, custom). Loader doesn't filter on this
-  today; consumers may apply it.
+  today; consumers may apply it. Same empty-string rule as `project`.
 - **`order`** (integer, default `0`) — sort key within a scope.
 - **`vars`** (list of `VarDecl`) — see below.
 
@@ -101,6 +103,12 @@ The first `=` splits name from default value. The empty-default form
 caller must supply a value"; empty-default means "the default is the empty
 string".
 
+**Value whitespace is preserved verbatim.** `bar=  hi  ` yields a default
+of `"  hi  "` (two leading spaces, two trailing). If your intent is "empty
+default", write `bar=` (no trailing space). Spaces inside the name
+segment (before `=`) are trimmed, but spaces in the value segment
+(after `=`) are not.
+
 #### YAML auto-coercion gotcha
 
 YAML coerces some bare scalars to non-string types — most commonly ISO dates
@@ -125,6 +133,18 @@ vars:
 `name:` is required and must be a non-empty string. `default:` and
 `description:` are optional and must be strings. Unknown keys are tolerated
 (forward-compat for future fields like `enum:` or `required:`).
+
+**Watch out for typos.** `defualt:` vs `default:` won't emit an error —
+unknown keys are silently accepted. If a default value appears to be
+ignored, double-check the key spelling.
+
+### Var name identifiers
+
+Variable names are not validated against an identifier regex at parse time.
+However, the OP-194 renderer uses `[a-zA-Z_][a-zA-Z0-9_]*` to match
+`{{var}}` placeholders — names containing hyphens or starting with a digit
+will parse and load successfully but will **not** be expanded by the renderer.
+Use names that match `[a-zA-Z_][a-zA-Z0-9_]*` for full compatibility.
 
 ### Duplicate names
 

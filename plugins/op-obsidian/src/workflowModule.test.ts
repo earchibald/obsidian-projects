@@ -126,6 +126,32 @@ describe("loadModules — shadowing", () => {
     const r = loadModules(app);
     expect(r.modules.map((m) => m.id).sort()).toEqual(["a", "b"]);
   });
+
+  it("bucketing is order-independent: mixed globals and per-project files in any order", () => {
+    // Exercises the loop over getMarkdownFiles() with many files interleaved —
+    // result must be identical regardless of which order the vault returns them.
+    const files: FakeFile[] = [
+      { path: "Projects/_op-modules/g1.md", frontmatter: moduleFm({ id: "g1", title: "Global 1" }) },
+      { path: "Projects/alpha/MODULES/p1.md", frontmatter: moduleFm({ id: "p1", title: "Alpha p1" }) },
+      { path: "Projects/_op-modules/g2.md", frontmatter: moduleFm({ id: "g2", title: "Global 2" }) },
+      { path: "Projects/beta/MODULES/p2.md", frontmatter: moduleFm({ id: "p2", title: "Beta p2" }) },
+      // g1 is shadowed by a per-project copy from beta:
+      { path: "Projects/beta/MODULES/g1.md", frontmatter: moduleFm({ id: "g1", title: "Beta override of g1" }) },
+      // Noise: out-of-band files that must be ignored
+      { path: "Projects/alpha/ISSUES/OP-1.md", frontmatter: moduleFm({ id: "OP-1" }) },
+      { path: "Projects/_op-modules/sub/deep.md", frontmatter: moduleFm({ id: "deep" }) },
+    ];
+    const r = loadModules(fakeApp(files));
+    // 4 unique ids: g1 (shadowed to beta), g2, p1, p2
+    expect(r.modules).toHaveLength(4);
+    const byId = Object.fromEntries(r.modules.map((m) => [m.id, m]));
+    expect(byId["g1"].title).toBe("Beta override of g1");
+    expect(byId["g1"].source.kind).toBe("project");
+    expect(byId["g2"].source.kind).toBe("global");
+    expect(byId["p1"].source).toMatchObject({ kind: "project", projectSlug: "alpha" });
+    expect(byId["p2"].source).toMatchObject({ kind: "project", projectSlug: "beta" });
+    expect(r.diagnostics).toEqual([]);
+  });
 });
 
 describe("loadModules — project filter", () => {
