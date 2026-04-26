@@ -251,6 +251,91 @@ describe("mergeSettings", () => {
     expect(mergeSettings({ projectOrder: ["  baz  "] }).projectOrder).toEqual(["baz"]);
   });
 
+  it("OP-198: workflowMode defaults to 'legacy' on fresh install", () => {
+    expect(DEFAULT_SETTINGS.workflowMode).toBe("legacy");
+    expect(mergeSettings({}).workflowMode).toBe("legacy");
+    expect(mergeSettings(null).workflowMode).toBe("legacy");
+  });
+
+  it("OP-198: workflowMode accepts 'legacy' / 'modules'; rejects unknown literals and non-strings", () => {
+    expect(mergeSettings({ workflowMode: "modules" }).workflowMode).toBe("modules");
+    expect(mergeSettings({ workflowMode: "legacy" }).workflowMode).toBe("legacy");
+    // Unknown literal — falls back to default.
+    expect(
+      mergeSettings({ workflowMode: "experimental" as unknown as "legacy" }).workflowMode,
+    ).toBe("legacy");
+    // Non-string — falls back to default.
+    expect(
+      mergeSettings({ workflowMode: 1 as unknown as "legacy" }).workflowMode,
+    ).toBe("legacy");
+    expect(
+      mergeSettings({ workflowMode: null as unknown as "legacy" }).workflowMode,
+    ).toBe("legacy");
+  });
+
+  it("OP-198: workflowVars defaults to {} on fresh install; not shared with DEFAULT_SETTINGS", () => {
+    expect(DEFAULT_SETTINGS.workflowVars).toEqual({});
+    const out = mergeSettings({});
+    expect(out.workflowVars).toEqual({});
+    expect(out.workflowVars).not.toBe(DEFAULT_SETTINGS.workflowVars);
+  });
+
+  it("OP-198: workflowVars accepts a string-keyed string-valued map", () => {
+    const out = mergeSettings({
+      workflowVars: { repo_path: "/Users/x/projects/foo", reviewer_handle: "@you" },
+    });
+    expect(out.workflowVars).toEqual({
+      repo_path: "/Users/x/projects/foo",
+      reviewer_handle: "@you",
+    });
+  });
+
+  it("OP-198: workflowVars drops non-string values; rejects non-object input", () => {
+    const out = mergeSettings({
+      workflowVars: {
+        good: "ok",
+        num: 42 as unknown as string,
+        nope: null as unknown as string,
+        nested: { not: "flat" } as unknown as string,
+        arr: ["a"] as unknown as string,
+        also_good: "yes",
+      },
+    });
+    expect(out.workflowVars).toEqual({ good: "ok", also_good: "yes" });
+    // Non-object inputs fall through to default empty map.
+    expect(mergeSettings({ workflowVars: "garbage" as unknown as object }).workflowVars).toEqual({});
+    expect(mergeSettings({ workflowVars: 42 as unknown as object }).workflowVars).toEqual({});
+    // Arrays are objects but not records — rejected, default stays.
+    expect(mergeSettings({ workflowVars: ["a", "b"] as unknown as object }).workflowVars).toEqual({});
+  });
+
+  it("OP-198: workflowVars edge cases — empty string stored, long string stored, keys with dots/slashes stored", () => {
+    // Empty string is a valid string value — stored as-is so a module can
+    // render {{vars.foo}} → "" (suppress) rather than the raw placeholder.
+    expect(mergeSettings({ workflowVars: { silent: "" } }).workflowVars).toEqual({ silent: "" });
+    // Long strings (e.g. a template body): no cap in mergeSettings.
+    const long = "x".repeat(5000);
+    expect(mergeSettings({ workflowVars: { big: long } }).workflowVars).toEqual({ big: long });
+    // Keys with dots / slashes pass through — the template engine is
+    // responsible for namespace resolution; mergeSettings doesn't tokenise
+    // the key.
+    expect(
+      mergeSettings({ workflowVars: { "a.b": "v1", "x/y": "v2" } }).workflowVars,
+    ).toEqual({ "a.b": "v1", "x/y": "v2" });
+  });
+
+  it("OP-198: existing user upgrading from a version pre-workflowMode loads cleanly with defaults", () => {
+    // Simulates a real data.json blob captured before OP-198 — no
+    // workflowMode / workflowVars keys at all. Both must default cleanly.
+    const out = mergeSettings({
+      defaultAgent: "claude",
+      injection: { maxBodyChars: 8000 },
+      workingDirs: { foo: "/code/foo" },
+    });
+    expect(out.workflowMode).toBe("legacy");
+    expect(out.workflowVars).toEqual({});
+  });
+
   it("firstRunCompleted: fresh empty data.json keeps default false; explicit false allowed; existing user inferred true", () => {
     // Fresh install: data.json is empty — firstRunCompleted stays false so
     // the README is scaffolded on first load.

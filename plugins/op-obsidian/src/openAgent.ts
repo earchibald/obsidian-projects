@@ -127,6 +127,8 @@ export async function openAgent(
     injection: settings.injection,
     vaultBasePath,
     mode,
+    workflowMode: settings.workflowMode,
+    workflowVars: settings.workflowVars,
   });
 
   const { scriptPath, tmuxSession, tmuxWindow } = await launchInTerminal({
