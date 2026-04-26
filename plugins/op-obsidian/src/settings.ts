@@ -17,6 +17,11 @@ import type { WorkflowDiagnostic } from "./workflowDiagnostic";
 import { EXAMPLE_MODULES, installExampleLibrary } from "./workflowExamples";
 import { PreviewWorkflowModal } from "./previewWorkflowModal";
 import {
+  docUrl,
+  sectionDocAnchor,
+  type DocLinkSectionId,
+} from "./docLinks";
+import {
   applyPreset,
   defaultPreset,
   revertPreset,
@@ -93,6 +98,15 @@ type SectionId =
 
 /** Subset of SectionId covering only the collapsible Advanced subsections. */
 type AdvancedSectionId = (typeof ADVANCED_SECTIONS)[number]["id"];
+
+/**
+ * Advanced section ids that have a registered help-link target in
+ * `docLinks.ts`. Listed explicitly (not derived) so adding a new doc
+ * mapping is a single-file edit in `docLinks.ts` plus this constant.
+ */
+const ADVANCED_SECTIONS_WITH_DOCS: ReadonlySet<AdvancedSectionId> = new Set([
+  "injection",
+]);
 
 const ADVANCED_SECTIONS: ReadonlyArray<{
   id: SectionId;
@@ -204,7 +218,9 @@ export class OpSettingsTab extends PluginSettingTab {
       cls: "op-settings__group op-settings__group--workflows",
     });
     workflows.dataset.opSection = "workflows";
-    workflows.createEl("h2", { text: "Workflows" });
+    const workflowsHeading = workflows.createDiv({ cls: "op-settings__heading-row" });
+    workflowsHeading.createEl("h2", { text: "Workflows" });
+    addDocLink(workflowsHeading, "workflows");
     workflows.createEl("p", {
       cls: "setting-item-description op-settings__group-blurb",
       text:
@@ -233,6 +249,12 @@ export class OpSettingsTab extends PluginSettingTab {
       // "What is this?" expandable directly under the H2 — short blurb that
       // de-densifies setDesc strings without losing the glossary context.
       addHelpExpandable(collapsible.body, "What is this?", section.blurb);
+      // OP-215: in-product help link for sections registered in
+      // `docLinks.ts`. Only sections with a registered (file, anchor)
+      // get a "?" icon — others stay link-less.
+      if (ADVANCED_SECTIONS_WITH_DOCS.has(section.id)) {
+        addDocLink(collapsible.header, section.id as DocLinkSectionId);
+      }
       this.mountSection(collapsible.body, section.id, (el) => this.renderAdvancedSection(section.id, el));
       // Tag the wrapper for the smoke-test recipe (CLAUDE.md): tests can
       // querySelector('[data-op-section="workingDirs"]') and click the
@@ -537,6 +559,7 @@ export class OpSettingsTab extends PluginSettingTab {
       { startOpen: false },
     );
     varsCollapsible.root.dataset.opSection = "workflowsVars";
+    addDocLink(varsCollapsible.header, "workflowsVars");
     addHelpExpandable(
       varsCollapsible.body,
       "What is this?",
@@ -1741,6 +1764,27 @@ function detectionSummary(plugin: OpPlugin): string {
  * Keyboard-accessible: head has `role="button"` / `tabindex="0"` and
  * responds to Enter and Space, matching the ARIA Button pattern.
  */
+/**
+ * Render a small "?" icon link that opens the relevant doc anchor on
+ * GitHub in a new tab. Used to wire OP-215 in-product help links from
+ * settings sections to `docs/workflow-modules/`. The link's (file,
+ * anchor) target lives in the central `docLinks.ts` registry — the
+ * `docLinks.test.ts` CI guard asserts every anchor exists in the doc
+ * tree, so a doc rename surfaces as a unit-test failure here.
+ */
+function addDocLink(parentEl: HTMLElement, sectionId: DocLinkSectionId): void {
+  const target = sectionDocAnchor(sectionId);
+  const link = parentEl.createEl("a", {
+    cls: "op-doc-link",
+    text: "?",
+    href: docUrl(target),
+  });
+  link.setAttribute("target", "_blank");
+  link.setAttribute("rel", "noopener");
+  link.setAttribute("aria-label", `Open the docs for this section`);
+  link.setAttribute("title", "Open the docs for this section ↗");
+}
+
 function addHelpExpandable(parentEl: HTMLElement, title: string, body: string): void {
   const wrap = parentEl.createDiv({ cls: "op-help-expandable" });
   const head = wrap.createDiv({ cls: "op-help-expandable__head" });

@@ -296,8 +296,10 @@ describe("diagnosticToBlock", () => {
   it("omits the location line when there is no location info", () => {
     const block = diagnosticToBlock(diag());
     const lines = block.split("\n");
-    // Expected lines: codeLabel+severity, message, hint. No location.
-    expect(lines).toHaveLength(3);
+    // Expected lines (OP-215): codeLabel+severity, message, hint, More:.
+    // No location, no scope.
+    expect(lines).toHaveLength(4);
+    expect(lines.some((l) => l.startsWith("More: "))).toBe(true);
   });
 
   it("omits the scope line when no precedence scope is attached", () => {
