@@ -105,6 +105,31 @@ const EXAMPLES: ExampleSpec[] = [
   },
 ];
 
+// The workflow-library subtree ships two project slugs side-by-side
+// (`code-project` extends the global default; `docs-project` is
+// standalone with a shorter step list). Each slug needs its own
+// fake-vault load + compose pass, so we expand them as two manifest
+// entries rather than overloading `ExampleSpec` with multi-project
+// support. The on-disk-vs-manifest parity test below treats both
+// entries as collapsing to the same `workflow-library` directory.
+EXAMPLES.push(
+  {
+    name: "workflow-library",
+    project: "code-project",
+    // The library's `plan` step is intentionally `modules: []` (a slot
+    // for projects to fill in their own planning checklist), so we
+    // don't compose at it — assertExampleClean asserts non-empty
+    // composed text per step, and an empty modules list is, correctly,
+    // empty.
+    composeAtSteps: ["evaluate", "implement", "review", "finalize"],
+  },
+  {
+    name: "workflow-library",
+    project: "docs-project",
+    composeAtSteps: ["evaluate", "implement"],
+  },
+);
+
 const EXAMPLES_ROOT = resolve(__dirname, "..", "..", "..", "docs", "examples");
 
 // --------------------------------------------------------------------------
@@ -322,7 +347,11 @@ async function assertExampleClean(spec: ExampleSpec) {
 
 describe("docs/examples — every shipped tutorial example loads + composes cleanly", () => {
   for (const spec of EXAMPLES) {
-    it(`example "${spec.name}" produces zero error-severity diagnostics`, async () => {
+    // Some example trees ship multiple project slugs (e.g. workflow-library
+    // ships `code-project` and `docs-project` side-by-side); include the
+    // slug in the test label so duplicates remain distinguishable.
+    const label = spec.project ? `${spec.name} (${spec.project})` : spec.name;
+    it(`example "${label}" produces zero error-severity diagnostics`, async () => {
       await assertExampleClean(spec);
     });
   }
@@ -334,7 +363,9 @@ describe("docs/examples — manifest is in sync with the filesystem", () => {
       .filter((d) => d.isDirectory())
       .map((d) => d.name)
       .sort();
-    const inManifest = EXAMPLES.map((e) => e.name).sort();
+    // Dedupe — a single example tree may have multiple manifest entries
+    // when it ships multiple project slugs (see workflow-library).
+    const inManifest = Array.from(new Set(EXAMPLES.map((e) => e.name))).sort();
     expect(onDisk).toEqual(inManifest);
   });
 });

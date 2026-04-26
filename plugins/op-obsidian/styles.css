@@ -1399,3 +1399,38 @@ a.op-sidebar__agent:hover {
   overflow: hidden;
   text-overflow: ellipsis;
 }
+
+/* OP-215: in-product help-link "?" icon next to settings section headers. */
+.op-settings__heading-row {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+}
+
+.op-doc-link {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 1.4em;
+  height: 1.4em;
+  padding: 0 0.4em;
+  border-radius: 999px;
+  border: 1px solid var(--background-modifier-border);
+  background: var(--background-secondary);
+  color: var(--text-muted);
+  text-decoration: none;
+  font-size: var(--font-ui-smaller, 0.8rem);
+  font-weight: 600;
+  line-height: 1;
+}
+
+.op-doc-link:hover {
+  color: var(--text-normal);
+  background: var(--background-modifier-hover);
+  text-decoration: none;
+}
+
+.op-doc-link:focus-visible {
+  outline: 2px solid var(--interactive-accent);
+  outline-offset: 2px;
+}
