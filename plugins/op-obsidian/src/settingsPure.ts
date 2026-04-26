@@ -310,3 +310,19 @@ export function mergeSettings(loaded: unknown): OpSettings {
   }
   return base;
 }
+
+export type SettingMatcherFactory = (query: string) => (text: string) => unknown;
+
+export function matchSettingRow(
+  name: string,
+  desc: string,
+  query: string,
+  makeMatcher: SettingMatcherFactory,
+): boolean {
+  const q = query.trim();
+  if (!q) return true;
+  const haystack = `${name} ${desc}`.trim();
+  if (!haystack) return false;
+  const result = makeMatcher(q)(haystack);
+  return result !== null && result !== undefined;
+}

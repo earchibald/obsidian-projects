@@ -43,10 +43,19 @@ Always, in order:
 5. **Smoke-test Settings UIs.** When the change touches the op-obsidian Settings tab — Project order, working dirs, agent overlays, flow chaining, GitHub integration — `executeCommandById` won't reach it. Use `app.setting.openTabById` to render the tab synchronously and assert against the live DOM:
 
    ```bash
-   obsidian eval code='(()=>{ app.setting.open(); app.setting.openTabById("op-obsidian"); return document.querySelectorAll(".op-project-order__item").length; })()'
+   # Daily-group rows (Default agent / Terminal / Sidebar tab / Onboarding / Hotkey preset) — visible from open:
+   obsidian eval code='(()=>{ app.setting.open(); app.setting.openTabById("op-obsidian"); return document.querySelectorAll(".op-settings__group--daily .setting-item").length; })()'
+
+   # Advanced subsections (each is its own collapsible) — count the wrappers:
+   obsidian eval code='(()=>{ app.setting.open(); app.setting.openTabById("op-obsidian"); return document.querySelectorAll(".op-settings__group--advanced .op-collapsible").length; })()'
+
+   # Project-order drag rows: post-OP-164 they live INSIDE the "Working directories & project order" collapsible, which starts collapsed. Expand it first by clicking the header, then count:
+   obsidian eval code='(()=>{ app.setting.open(); app.setting.openTabById("op-obsidian"); document.querySelector("[data-op-section=\"workingDirs\"] .op-collapsible__header").click(); return document.querySelectorAll(".op-project-order__item").length; })()'
    ```
 
    Returns synchronously — no `await` needed. Use it to verify drag-row count, `draggable=true` flags, prefix badges, reset-button presence, etc. without touching the GUI. Worked example: after a change to the "Project order" section, the count above should equal the number of discovered projects (one `.op-project-order__item` per project). Swap the selector for the section you actually changed.
+
+   **OP-164 layout note.** Sections are tagged with `data-op-section="<id>"` on the collapsible wrapper. IDs are: `injection`, `workingDirs`, `orchestrator`, `profileOverlays`, `worktreeEnforcement`, `flowChaining`, `github`, `developer`. Each starts collapsed; click its `.op-collapsible__header` to expand before asserting against rows inside. The fuzzy search box at the top auto-expands matching collapsibles when its `value` is set and an `input` event is dispatched.
 
    Cross-reference: OPD-8 captures the generic obsidian-plugin-creator skill update for this recipe (also covers the async-modal-probe hang). The snippet here is the OP-side mirror so agents working op tasks aren't blocked on the OPD skill being updated first.
 
