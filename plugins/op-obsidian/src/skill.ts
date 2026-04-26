@@ -18,7 +18,7 @@ export function getSkill(name: string): GetSkillResult {
   const target = trimmed === "" ? "skill" : trimmed;
   if (!isSkillName(target)) {
     throw new Error(
-      `op-get-skill: unknown name ${JSON.stringify(target)} (expected one of ${SKILL_NAMES.join("|")})`,
+      `unknown name ${JSON.stringify(target)} (expected one of ${SKILL_NAMES.join("|")})`,
     );
   }
   const content = CONTENT[target];

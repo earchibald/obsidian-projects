@@ -5,7 +5,7 @@ description: Run the Obsidian Projects workflow — scaffold new projects, creat
 
 # Obsidian Projects (op) workflow
 
-You are operating on an Obsidian vault that uses the **Projects schema** — a Jira-lite issue tracker where each project is a folder under `Projects/` and each issue/task/doc is a markdown note with structured frontmatter. Schema details live in [`reference/schema.md`](reference/schema.md); read it on first use or when frontmatter shape comes up.
+You are operating on an Obsidian vault that uses the **Projects schema** — a Jira-lite issue tracker where each project is a folder under `Projects/` and each issue/task/doc is a markdown note with structured frontmatter. Schema details live in `reference/schema.md` inside the op skill folder (the path your Claude Code surfaced this body from); read it on first use or when frontmatter shape comes up.
 
 ## Scope of this skill
 
@@ -19,7 +19,7 @@ All vault mutations go through the **`op-obsidian`** plugin. Probe once per sess
 obsidian eval code='({enabled: app.plugins.enabledPlugins.has("op-obsidian"), version: app.plugins.plugins["op-obsidian"]?.manifest?.version})'
 ```
 
-If the plugin is missing or disabled, **stop and ask the user to install/enable it** rather than improvising with raw `obsidian` CLI primitives — the plugin owns filename sanitization, ID numbering, frontmatter shape, atomic move-and-trash on resolve, and the JSON response payload. For emergencies where the user can't enable it, [`reference/cli-gotchas.md`](reference/cli-gotchas.md) documents the raw-CLI fallbacks (including the read-append-rewrite recipe for appending to `commits:` without `op-append-commit`).
+If the plugin is missing or disabled, **stop and ask the user to install/enable it** rather than improvising with raw `obsidian` CLI primitives — the plugin owns filename sanitization, ID numbering, frontmatter shape, atomic move-and-trash on resolve, and the JSON response payload. For emergencies where the user can't enable it, the op skill's `reference/cli-gotchas.md` documents the raw-CLI fallbacks (including the read-append-rewrite recipe for appending to `commits:` without `op-append-commit`).
 
 **Delegating vault/CLI work.** This plugin ships an `obsidian-ops-specialist` subagent. When you're a coding agent working an issue and the next step is a raw Obsidian CLI call, a vault introspection, or a mutation the plugin owns, prefer delegating it via the Agent tool (`subagent_type: obsidian-ops-specialist`) over running the CLI yourself. The specialist knows the CLI gotchas, the op-obsidian dispatch surface, and keeps vault-side behavior consistent with this skill's lifecycle rules. You still own the skill's invariants — the specialist executes, you orchestrate.
 
@@ -155,7 +155,7 @@ obsidian op-set-pr issue=<PREFIX>-<N> url=<pr-url>
 
 **When and whether to call these is project policy** — the project's `CLAUDE.md` decides whether `commits:` is mirrored 1:1 to commits, batch-filled at resolve, or never populated at all; whether PRs are required or skipped; whether commit subjects must reference the issue id. If the project says nothing, ask the user rather than inventing a cadence.
 
-For diagnostic detail on what to do when these calls fail (git not a repo, missing id, plugin unreachable mid-session), see [`reference/cli-gotchas.md`](reference/cli-gotchas.md).
+For diagnostic detail on what to do when these calls fail (git not a repo, missing id, plugin unreachable mid-session), see the op skill's `reference/cli-gotchas.md`.
 
 ### Linking issues
 

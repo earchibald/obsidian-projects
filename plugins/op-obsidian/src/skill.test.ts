@@ -23,7 +23,7 @@ describe("getSkill", () => {
   });
 
   it("rejects unknown names with a clear error", () => {
-    expect(() => getSkill("nope")).toThrow(/unknown name "nope"/);
+    expect(() => getSkill("nope")).toThrow(/^unknown name "nope" \(expected one of skill\)$/);
   });
 
   it("rejects future names that are not yet implemented", () => {
