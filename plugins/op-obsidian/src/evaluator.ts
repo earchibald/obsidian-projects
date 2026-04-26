@@ -2,7 +2,11 @@ import type { IssueEntry } from "./types";
 import type { Complexity } from "./setFlow";
 import type { SetEvaluationResult } from "./setEvaluation";
 import type { SetFlowResult } from "./setFlow";
-import type { LaunchHeadlessInput, LaunchHeadlessResult } from "./launchHeadless";
+import type {
+  LaunchHeadlessSubtaskInput,
+  LaunchHeadlessSubtaskResult,
+} from "./launchHeadlessSubtask";
+import type { RelaySession } from "./relaySession";
 
 const EVALUATOR_AGENT_NAME = "op-evaluate";
 
@@ -75,12 +79,20 @@ export function buildEvaluatorPrompt(entry: IssueEntry, body: string): string {
 }
 
 export interface EvaluatorFlowDeps {
-  launch: (input: LaunchHeadlessInput) => Promise<LaunchHeadlessResult>;
+  launch: (input: LaunchHeadlessSubtaskInput) => Promise<LaunchHeadlessSubtaskResult>;
   setEvaluation: (entry: IssueEntry, evaluation: string) => Promise<SetEvaluationResult>;
   setFlow: (
     entry: IssueEntry,
     input: { flow?: "evaluate"; complexity?: Complexity },
   ) => Promise<SetFlowResult>;
+  /**
+   * Visibility-tenet relay that the headless evaluator subtask streams into.
+   * Production callers construct a tmux-shaped relay backed by `Notice` +
+   * `console.log` (see `main.ts:runEvaluatorForIssue`); tests construct
+   * `makeTestRelay()` and assert on the captured event stream. Required —
+   * the typechecker rejects deps that omit it.
+   */
+  relaySession: RelaySession;
 }
 
 export interface EvaluatorFlowResult {
@@ -90,7 +102,7 @@ export interface EvaluatorFlowResult {
   setFlowResult: SetFlowResult;
 }
 
-// Orchestrates launchHeadless → setEvaluation → setFlow. On any failure the
+// Orchestrates launchHeadlessSubtask → setEvaluation → setFlow. On any failure the
 // error is rethrown so the caller can surface it via Notice and skip the
 // frontmatter writes (flow/complexity stay unset).
 export async function runEvaluatorFlow(
@@ -105,6 +117,7 @@ export async function runEvaluatorFlow(
     agent: EVALUATOR_AGENT_NAME,
     permissionMode: "dontAsk",
     allowedTools: EVALUATOR_AGENT_DEFINITION.tools,
+    relaySession: deps.relaySession,
   });
   const parsed = parseEvaluatorClassification(launchResult.text);
   const setEvaluationResult = await deps.setEvaluation(entry, parsed.evaluation);

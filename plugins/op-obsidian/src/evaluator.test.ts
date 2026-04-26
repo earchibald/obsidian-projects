@@ -5,6 +5,7 @@ import {
   runEvaluatorFlow,
 } from "./evaluator";
 import type { IssueEntry } from "./types";
+import { makeTestRelay } from "./relaySession";
 
 const entry: IssueEntry = {
   id: "OP-99",
@@ -93,7 +94,7 @@ describe("runEvaluatorFlow", () => {
       complexity: "simple",
     });
     const res = await runEvaluatorFlow(
-      { launch, setEvaluation, setFlow },
+      { launch, setEvaluation, setFlow, relaySession: makeTestRelay() },
       entry,
       "scope",
     );
@@ -116,7 +117,7 @@ describe("runEvaluatorFlow", () => {
     const setEvaluation = vi.fn();
     const setFlow = vi.fn();
     await expect(
-      runEvaluatorFlow({ launch, setEvaluation, setFlow }, entry, ""),
+      runEvaluatorFlow({ launch, setEvaluation, setFlow, relaySession: makeTestRelay() }, entry, ""),
     ).rejects.toThrow(/boom/);
     expect(setEvaluation).not.toHaveBeenCalled();
     expect(setFlow).not.toHaveBeenCalled();
@@ -134,7 +135,7 @@ describe("runEvaluatorFlow", () => {
     const setEvaluation = vi.fn();
     const setFlow = vi.fn();
     await expect(
-      runEvaluatorFlow({ launch, setEvaluation, setFlow }, entry, ""),
+      runEvaluatorFlow({ launch, setEvaluation, setFlow, relaySession: makeTestRelay() }, entry, ""),
     ).rejects.toThrow(/COMPLEXITY/);
     expect(setEvaluation).not.toHaveBeenCalled();
     expect(setFlow).not.toHaveBeenCalled();
@@ -152,7 +153,7 @@ describe("runEvaluatorFlow", () => {
     const setEvaluation = vi.fn().mockRejectedValue(new Error("vault locked"));
     const setFlow = vi.fn();
     await expect(
-      runEvaluatorFlow({ launch, setEvaluation, setFlow }, entry, ""),
+      runEvaluatorFlow({ launch, setEvaluation, setFlow, relaySession: makeTestRelay() }, entry, ""),
     ).rejects.toThrow(/vault locked/);
     expect(setFlow).not.toHaveBeenCalled();
   });

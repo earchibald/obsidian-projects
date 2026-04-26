@@ -14,7 +14,12 @@ export type WorkflowDiagnosticCode =
   | "schema-mismatch"
   | "import-collision"
   | "intra-scope-collision"
-  | "malformed-frontmatter";
+  | "malformed-frontmatter"
+  // OP-197 (1d): info-severity notice when a composed prompt exceeds
+  // `maxWorkflowChars`. Modern models tolerate the size comfortably; the cap
+  // is a guardrail that surfaces "this got bigger than you might have
+  // expected" rather than a constraint that blocks the launch.
+  | "size-budget";
 
 export type WorkflowDiagnosticSeverity = "error" | "warning" | "info";
 

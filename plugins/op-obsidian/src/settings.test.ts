@@ -35,9 +35,22 @@ describe("mergeSettings", () => {
     expect(out.injection.maxBodyChars).toBe(1234);
     expect(out.injection.injectBody).toBe(DEFAULT_SETTINGS.injection.injectBody);
     expect(out.injection.extraPreamble).toBe(DEFAULT_SETTINGS.injection.extraPreamble);
+    // OP-197: maxWorkflowChars default raised to 50000 — caller didn't supply
+    // an override, so the merged value matches the (new) default.
+    expect(out.injection.maxWorkflowChars).toBe(50000);
     expect(out.github.autoCreateGithubIssue).toBe(true);
     expect(out.github.closeGithubIssueOnResolve).toBe(DEFAULT_SETTINGS.github.closeGithubIssueOnResolve);
     expect(out.agents.enforceWorktree).toBe(true);
+  });
+
+  it("OP-197: maxWorkflowChars default is 50000 but explicit user values pass through unchanged", () => {
+    // Fresh install: no value saved, sees the new default.
+    expect(mergeSettings({}).injection.maxWorkflowChars).toBe(50000);
+    // Existing install: user explicitly saved the old default; mergeSettings
+    // preserves their value (no surprise upgrade).
+    expect(mergeSettings({ injection: { maxWorkflowChars: 2000 } }).injection.maxWorkflowChars).toBe(2000);
+    // User saved a custom value: also preserved.
+    expect(mergeSettings({ injection: { maxWorkflowChars: 12345 } }).injection.maxWorkflowChars).toBe(12345);
   });
 
   it("flow settings default to off / 10min, accept partial overrides", () => {

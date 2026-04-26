@@ -139,7 +139,14 @@ export const DEFAULT_SETTINGS: OpSettings = {
     includeRecentCommits: 5,
     extraPreamble: "",
     includeWorkflow: true,
-    maxWorkflowChars: 2000,
+    // OP-197 (1d) raised this default from 2000 to 50000 (≈ 12.5k tokens).
+    // OP-181 plan §"Risks" 1: modern models we target run 200k–1M context
+    // windows so the budget is generous; the cap remains a guardrail (info-
+    // severity diagnostic on overrun via `composeWorkflow`'s `size-budget`
+    // code) rather than a constraint that blocks the launch. Existing user
+    // `data.json` blobs preserve their explicitly-saved value through
+    // `mergeSettings` below — only fresh installs see the new default.
+    maxWorkflowChars: 50000,
   },
   workingDirs: {},
   terminal: "Terminal",
