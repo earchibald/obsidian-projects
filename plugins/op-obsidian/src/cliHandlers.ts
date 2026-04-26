@@ -302,6 +302,93 @@ export function parseExplainWorkflowParams(
   return { ok: true, value: out };
 }
 
+export function parseExportModuleParams(
+  params: Record<string, string>,
+): ParamsResult<
+  | { mode: "id"; moduleId: string }
+  | { mode: "project"; projectSlug: string }
+> {
+  const moduleId = nonEmptyTrim(params.id ?? params.module);
+  const projectSlug = nonEmptyTrim(params.project ?? params.slug);
+  if (moduleId && projectSlug) {
+    return {
+      ok: false,
+      error:
+        "op-export-module failed: pass either --id (single module) or --project (bundle), not both.",
+    };
+  }
+  if (moduleId) return { ok: true, value: { mode: "id", moduleId } };
+  if (projectSlug) return { ok: true, value: { mode: "project", projectSlug } };
+  return {
+    ok: false,
+    error: "op-export-module failed: --id or --project is required.",
+  };
+}
+
+export function parseImportModuleParams(
+  params: Record<string, string>,
+): ParamsResult<{
+  sourcePath: string;
+  scope?: "global" | "project";
+  project?: string;
+  varAnswers: Record<string, string>;
+}> {
+  const sourcePath = nonEmptyTrim(params.path ?? params.source);
+  if (!sourcePath) {
+    return { ok: false, error: "op-import-module failed: --path is required." };
+  }
+  let scope: "global" | "project" | undefined;
+  if (params.scope !== undefined) {
+    const v = params.scope.trim().toLowerCase();
+    if (v !== "global" && v !== "project") {
+      return {
+        ok: false,
+        error: `op-import-module failed: --scope must be \"global\" or \"project\" (got ${JSON.stringify(params.scope)}).`,
+      };
+    }
+    scope = v;
+  }
+  const project = nonEmptyTrim(params.project ?? params.slug);
+  if (scope === "project" && !project) {
+    return {
+      ok: false,
+      error: "op-import-module failed: --project is required when --scope=project.",
+    };
+  }
+  // Per-var prefix-keyed answers (var.<name>=<value>) and packed `vars=name=val\nname2=val2`.
+  // Both forms accepted (matches OP-204's parseLaunchVarsFromUri pattern); the
+  // CLI surface shares the contract with the URI handler.
+  const varAnswers: Record<string, string> = {};
+  const nameRe = /^[A-Za-z_][A-Za-z0-9_-]*$/;
+  for (const [k, v] of Object.entries(params)) {
+    if (!k.startsWith("var.")) continue;
+    const name = k.slice(4);
+    if (!name || !nameRe.test(name)) continue;
+    if (typeof v !== "string") continue;
+    varAnswers[name] = v;
+  }
+  // Packed form via `vars=` packed list.
+  const packed = nonEmptyTrim(params.vars);
+  if (packed) {
+    for (const entry of packed.split(/[\n,]/).map((s) => s.trim()).filter(Boolean)) {
+      const eq = entry.indexOf("=");
+      if (eq <= 0) continue;
+      const name = entry.slice(0, eq).trim();
+      if (!nameRe.test(name)) continue;
+      varAnswers[name] = entry.slice(eq + 1);
+    }
+  }
+  const out: {
+    sourcePath: string;
+    scope?: "global" | "project";
+    project?: string;
+    varAnswers: Record<string, string>;
+  } = { sourcePath, varAnswers };
+  if (scope) out.scope = scope;
+  if (project) out.project = project;
+  return { ok: true, value: out };
+}
+
 export function parseListVarsParams(
   params: Record<string, string>,
 ): ParamsResult<{ project?: string; issue?: string }> {

@@ -15,6 +15,8 @@ import {
   parseGetSkillParams,
   parseExplainWorkflowParams,
   parseListVarsParams,
+  parseExportModuleParams,
+  parseImportModuleParams,
 } from "./cliHandlers";
 
 describe("parseWorkParams", () => {
@@ -356,5 +358,71 @@ describe("parseListVarsParams", () => {
     expect(r.ok && r.value).toEqual({ project: "obsidian-projects", issue: "OP-1" });
     const blank = parseListVarsParams({ project: "   ", issue: "   " });
     expect(blank.ok && blank.value).toEqual({});
+  });
+});
+
+describe("parseExportModuleParams", () => {
+  it("requires id or project", () => {
+    const r = parseExportModuleParams({});
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.error).toMatch(/--id or --project/);
+  });
+  it("accepts id mode", () => {
+    const r = parseExportModuleParams({ id: "orient" });
+    expect(r.ok && r.value).toEqual({ mode: "id", moduleId: "orient" });
+  });
+  it("accepts project mode", () => {
+    const r = parseExportModuleParams({ project: "foo" });
+    expect(r.ok && r.value).toEqual({ mode: "project", projectSlug: "foo" });
+  });
+  it("rejects both id and project", () => {
+    const r = parseExportModuleParams({ id: "orient", project: "foo" });
+    expect(r.ok).toBe(false);
+  });
+});
+
+describe("parseImportModuleParams", () => {
+  it("requires path", () => {
+    const r = parseImportModuleParams({});
+    expect(r.ok).toBe(false);
+  });
+  it("accepts a bare path with no scope (caller resolves)", () => {
+    const r = parseImportModuleParams({ path: "Projects/_op-export/x.md" });
+    expect(r.ok && r.value).toEqual({
+      sourcePath: "Projects/_op-export/x.md",
+      varAnswers: {},
+    });
+  });
+  it("requires project when scope=project", () => {
+    const r = parseImportModuleParams({ path: "x.md", scope: "project" });
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.error).toMatch(/--project is required/);
+  });
+  it("rejects an invalid scope", () => {
+    const r = parseImportModuleParams({ path: "x.md", scope: "weird" });
+    expect(r.ok).toBe(false);
+  });
+  it("collects per-var prefix-keyed answers", () => {
+    const r = parseImportModuleParams({
+      path: "x.md",
+      "var.tone": "loud",
+      "var.lang": "fr",
+    });
+    expect(r.ok && r.value.varAnswers).toEqual({ tone: "loud", lang: "fr" });
+  });
+  it("collects packed vars=", () => {
+    const r = parseImportModuleParams({
+      path: "x.md",
+      vars: "tone=loud\nlang=fr",
+    });
+    expect(r.ok && r.value.varAnswers).toEqual({ tone: "loud", lang: "fr" });
+  });
+  it("packed vars beat per-var keys (last-wins)", () => {
+    const r = parseImportModuleParams({
+      path: "x.md",
+      "var.tone": "loud",
+      vars: "tone=quiet",
+    });
+    expect(r.ok && r.value.varAnswers.tone).toBe("quiet");
   });
 });
