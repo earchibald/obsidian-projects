@@ -408,7 +408,7 @@ export class OpSettingsTab extends PluginSettingTab {
     new Setting(containerEl)
       .setName("Terminal app")
       .setDesc(
-        "All agents share a single tmux session (`op-agents`), one window per issue (window name = issue id). Agents survive the terminal closing — reattach with `tmux attach -t op-agents`. iTerm uses tmux control mode (`tmux -CC`); Terminal.app uses plain tmux.",
+        "iTerm is the primary, daily-driver terminal — orchestrator, tmux `-CC` control mode, background launch and AppleScript paths all assume it. Terminal.app is a second-class fallback (plain tmux via `open -a Terminal`; no orchestrator, no `-CC`, no background launch). Other terminals (Kitty, Alacritty, Ghostty, WezTerm, …) are not supported; op still routes through Terminal.app or iTerm regardless of your default terminal. All agents share a single tmux session (`op-agents`), one window per issue (window name = issue id). Agents survive the terminal closing — reattach with `tmux attach -t op-agents`.",
       )
       .addDropdown((d) =>
         d
