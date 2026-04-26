@@ -46,3 +46,41 @@ jobs:
         if: steps.op_changes.outputs.relevant == 'true'
         working-directory: plugins/op-obsidian
         run: npm ci --dry-run
+
+  workflow-docs-drift:
+    name: Workflow docs drift (auto-generated reference tables)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # Always-run job with step-level if: gating, same shape as the
+      # lockfile-sync job above so the check shows up cleanly in
+      # required-status UX without blocking unrelated PRs.
+      - name: Detect workflow-docs-relevant changes
+        id: docs_changes
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          if git diff --name-only "$BASE_SHA" "$HEAD_SHA" \
+               | grep -qE '^plugins/op-obsidian/src/(pluginVarRegistry|modelRegistry)\.ts$|^scripts/check-workflow-docs\.mjs$|^docs/workflow-modules/reference/|^\.github/workflows/op-obsidian-pr-checks\.yml$'; then
+            echo "relevant=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "relevant=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Setup Node
+        if: steps.docs_changes.outputs.relevant == 'true'
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      # Regenerates the auto-generated tables in docs/workflow-modules/reference/
+      # from the registry sources, then `git diff --exit-code`s the affected
+      # paths. Fails CI when the registry was edited without running the
+      # generator — prevents the "single source of truth" claim from drifting.
+      - name: check-workflow-docs --check
+        if: steps.docs_changes.outputs.relevant == 'true'
+        run: node scripts/check-workflow-docs.mjs --check
