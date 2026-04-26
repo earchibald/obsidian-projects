@@ -130,7 +130,26 @@ export function backupPathFor(workflowPath: string, timestamp: string): string {
   return `${workflowPath}.bak-${timestamp}`;
 }
 
-const BACKUP_SUFFIX_RE = /\.bak-(\d{8}-\d{6})$/;
+/**
+ * The timestamp portion of a backup path. The base shape is `YYYYMMDD-HHmmss`
+ * (8 digits, hyphen, 6 digits). A collision-avoidance counter suffix `-NNN`
+ * may be appended (see `createBackupUnique` in `recoveryPatchApply.ts`).
+ *
+ * This pattern is also the lex-sort key used by `findLatestBackup`: with the
+ * `YYYYMMDD-HHmmss` prefix, lex order === chronological order; the optional
+ * `-NNN` counter keeps same-second backups in creation order.
+ */
+const BACKUP_TIMESTAMP_RE = /\.bak-(\d{8}-\d{6}(?:-\d{3})?)$/;
+
+/**
+ * Extract the timestamp (plus optional counter suffix) from a backup path
+ * such as `Projects/x/WORKFLOW.md.bak-20260426-123456` or
+ * `Projects/x/WORKFLOW.md.bak-20260426-123456-001`.
+ * Returns `null` when the path doesn't match the backup-path shape.
+ */
+export function parseBackupTimestamp(backupPath: string): string | null {
+  return backupPath.match(BACKUP_TIMESTAMP_RE)?.[1] ?? null;
+}
 
 /**
  * Pick the most recent backup for `workflowPath` from the given list of
@@ -142,7 +161,7 @@ const BACKUP_SUFFIX_RE = /\.bak-(\d{8}-\d{6})$/;
 export function findLatestBackup(siblingPaths: string[], workflowPath: string): string | null {
   const prefix = `${workflowPath}.bak-`;
   const candidates = siblingPaths.filter(
-    (p) => p.startsWith(prefix) && BACKUP_SUFFIX_RE.test(p),
+    (p) => p.startsWith(prefix) && BACKUP_TIMESTAMP_RE.test(p),
   );
   if (candidates.length === 0) return null;
   candidates.sort();

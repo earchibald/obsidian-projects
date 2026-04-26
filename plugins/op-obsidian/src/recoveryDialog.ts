@@ -43,7 +43,7 @@ import {
   type VaultLike,
   type VaultFileLike,
 } from "./recoveryPatchApply";
-import { findLatestBackup, formatUnifiedDiff, planBadModelPatch } from "./recoveryPatch";
+import { findLatestBackup, formatUnifiedDiff, parseBackupTimestamp, planBadModelPatch } from "./recoveryPatch";
 import type { WorkflowDiagnostic } from "./workflowDiagnostic";
 
 export type RecoveryDialogMode = "launch" | "advisory";
@@ -377,7 +377,7 @@ class RecoveryDialogModal extends Modal {
       return;
     }
     row.style.display = "";
-    const ts = latest.match(/\.bak-([\d-]+)$/)?.[1] ?? "<unknown>";
+    const ts = parseBackupTimestamp(latest) ?? "<unknown>";
     label.textContent = `Last backup: ${ts}`;
   }
 
@@ -525,8 +525,8 @@ class RecoveryDialogModal extends Modal {
       const diff = formatUnifiedDiff(currentContent, backupContent, wf.path);
       new RevertConfirmModal(this.app, {
         diff,
-        backupTimestamp: latestBak.match(/\.bak-([\d-]+(?:-\d{3})?)$/)?.[1] ?? "<unknown>",
-        onConfirm: () => void this.commitRevert(wf, row, label),
+        backupTimestamp: parseBackupTimestamp(latestBak) ?? "<unknown>",
+        onConfirm: () => { this.commitRevert(wf, row, label).catch((e) => console.error("[op-obsidian] recoveryDialog.commitRevert unexpected", e)); },
       }).open();
     } catch (err) {
       console.error("[op-obsidian] recoveryDialog.handleRevert failed", err);

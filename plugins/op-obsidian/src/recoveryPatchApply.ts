@@ -101,8 +101,15 @@ async function createBackupUnique(
       await vault.create(path, raw);
       return path;
     } catch (err) {
+      // Check `err.code` first (Node.js / Obsidian adapter style), then fall
+      // back to message substring matching for vault implementations that wrap
+      // the underlying fs error in a generic Error without preserving `code`.
+      const code = (err as { code?: string }).code;
       const msg = (err as Error)?.message ?? String(err);
-      const isExist = msg.includes("EEXIST") || msg.includes("already exists");
+      const isExist =
+        code === "EEXIST" ||
+        msg.includes("EEXIST") ||
+        msg.includes("already exists");
       if (isExist && i < maxAttempts - 1) continue;
       throw err;
     }

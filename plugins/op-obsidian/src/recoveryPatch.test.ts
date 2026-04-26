@@ -4,6 +4,7 @@ import {
   findLatestBackup,
   formatBackupTimestamp,
   formatUnifiedDiff,
+  parseBackupTimestamp,
   planBadModelPatch,
 } from "./recoveryPatch";
 
@@ -320,5 +321,34 @@ describe("findLatestBackup", () => {
     expect(findLatestBackup(siblings, W)).toBe(
       "Projects/x/WORKFLOW.md.bak-20260101-000000",
     );
+  });
+
+  it("lex-sorts counter-suffixed backups after plain backups of the same second", () => {
+    const siblings = [
+      `${W}.bak-20260426-123456`,
+      `${W}.bak-20260426-123456-001`,
+      `${W}.bak-20260426-123456-002`,
+    ];
+    // -002 is lexicographically last → most recent
+    expect(findLatestBackup(siblings, W)).toBe(`${W}.bak-20260426-123456-002`);
+  });
+});
+
+describe("parseBackupTimestamp", () => {
+  it("extracts the plain timestamp", () => {
+    expect(parseBackupTimestamp("Projects/x/WORKFLOW.md.bak-20260426-123456")).toBe(
+      "20260426-123456",
+    );
+  });
+
+  it("extracts a timestamp with counter suffix", () => {
+    expect(parseBackupTimestamp("Projects/x/WORKFLOW.md.bak-20260426-123456-001")).toBe(
+      "20260426-123456-001",
+    );
+  });
+
+  it("returns null for a non-backup path", () => {
+    expect(parseBackupTimestamp("Projects/x/WORKFLOW.md")).toBeNull();
+    expect(parseBackupTimestamp("Projects/x/WORKFLOW.md.bak-foo")).toBeNull();
   });
 });
