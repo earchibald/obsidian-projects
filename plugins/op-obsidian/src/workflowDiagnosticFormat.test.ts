@@ -22,6 +22,7 @@ const ALL_CODES: WorkflowDiagnosticCode[] = [
   "import-collision",
   "intra-scope-collision",
   "malformed-frontmatter",
+  "size-budget",
 ];
 
 const ALL_SCOPES: PrecedenceScope[] = ["module", "global", "project", "launch"];
@@ -95,6 +96,7 @@ describe("codeLabel", () => {
     expect(codeLabel("import-collision")).toBe("Import collision");
     expect(codeLabel("intra-scope-collision")).toBe("Intra-scope collision");
     expect(codeLabel("malformed-frontmatter")).toBe("Malformed frontmatter");
+    expect(codeLabel("size-budget")).toBe("Workflow size notice");
   });
 
   it("never returns the raw kebab-case code (verifies humanization happened)", () => {
@@ -167,6 +169,30 @@ describe("formatDiagnostic — location summary", () => {
       diag({ moduleId: "x", extra: { path: 42 } }),
     );
     expect(f.location).toBe("module x");
+  });
+});
+
+// ─── Direct accessor fields (moduleId / varName) ─────────────────────────
+
+describe("formatDiagnostic — direct accessors", () => {
+  it("populates moduleId and varName when present in source diagnostic", () => {
+    const f = formatDiagnostic(
+      diag({ moduleId: "my-module", varName: "my_var" }),
+    );
+    expect(f.moduleId).toBe("my-module");
+    expect(f.varName).toBe("my_var");
+  });
+
+  it("omits moduleId and varName when absent in source diagnostic", () => {
+    const f = formatDiagnostic(diag());
+    expect(f.moduleId).toBeUndefined();
+    expect(f.varName).toBeUndefined();
+  });
+
+  it("moduleId in FormattedDiagnostic matches moduleId in location string", () => {
+    const f = formatDiagnostic(diag({ moduleId: "review-mod" }));
+    expect(f.moduleId).toBe("review-mod");
+    expect(f.location).toContain("review-mod");
   });
 });
 

@@ -128,6 +128,13 @@ export interface FormattedDiagnostic {
    */
   scopeAbbrev?: PrecedenceScopeAbbrev;
   /**
+   * Direct stable accessors — avoid parsing the `location` string in
+   * programmatic consumers (OP-203 CLI, OP-207 squiggles, etc.). Populated
+   * from the source diagnostic's own fields when present.
+   */
+  moduleId?: string;
+  varName?: string;
+  /**
    * Optional one-line hint for what the user can do about this diagnostic.
    * Surface it as a secondary line in modals; omit in compact contexts.
    */
@@ -142,6 +149,7 @@ const CODE_LABELS: Readonly<Record<WorkflowDiagnosticCode, string>> = Object.fre
   "import-collision": "Import collision",
   "intra-scope-collision": "Intra-scope collision",
   "malformed-frontmatter": "Malformed frontmatter",
+  "size-budget": "Workflow size notice",
 });
 
 export function codeLabel(code: WorkflowDiagnosticCode): string {
@@ -163,6 +171,8 @@ const HINTS: Readonly<Record<WorkflowDiagnosticCode, string>> = Object.freeze({
     "Multiple modules declare the same scope key. Make the scope strings distinct, or merge the modules.",
   "malformed-frontmatter":
     "Open the module file and fix the highlighted field — the existing value is the wrong type.",
+  "size-budget":
+    "The composed workflow exceeds the recommended character budget. Modern models handle this well — consider splitting the workflow into smaller modules if latency increases.",
 });
 
 /**
@@ -183,6 +193,7 @@ export function formatDiagnostic(d: WorkflowDiagnostic): FormattedDiagnostic {
     case "import-collision":
     case "intra-scope-collision":
     case "malformed-frontmatter":
+    case "size-budget":
       return buildFormatted(d);
     default:
       return assertNeverCode(code);
@@ -203,6 +214,8 @@ function buildFormatted(d: WorkflowDiagnostic): FormattedDiagnostic {
     location: buildLocation(d),
     hint: HINTS[d.code],
   };
+  if (d.moduleId) out.moduleId = d.moduleId;
+  if (d.varName) out.varName = d.varName;
   const scope = readPrecedenceScope(d);
   if (scope) {
     out.scopeLabel = precedenceScopeLabel(scope);

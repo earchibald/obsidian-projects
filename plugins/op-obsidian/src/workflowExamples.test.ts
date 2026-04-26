@@ -20,15 +20,18 @@ function makeFakeApp(initial: Partial<FakeAdapterState> = {}) {
   };
   const adapter = {
     exists: async (p: string) => state.files.has(p) || state.dirs.has(p),
-    write: async (p: string, content: string) => {
+  };
+  const vault = {
+    adapter,
+    create: async (p: string, content: string) => {
       state.files.set(p, content);
     },
-    mkdir: async (p: string) => {
+    createFolder: async (p: string) => {
       state.dirs.add(p);
     },
   };
-  const app = { vault: { adapter } } as unknown;
-  return { app: app as any, state, adapter };
+  const app = { vault } as unknown;
+  return { app: app as any, state, adapter, vault };
 }
 
 describe("EXAMPLE_MODULES", () => {
@@ -76,13 +79,13 @@ describe("installExampleLibrary", () => {
     expect(state.dirs.has("Projects/_op-modules/")).toBe(true);
   });
 
-  it("does not call mkdir when the directory already exists", async () => {
-    const { app, state } = makeFakeApp({
+  it("does not call createFolder when the directory already exists", async () => {
+    const { app, state, vault } = makeFakeApp({
       dirs: new Set(["Projects/_op-modules/"]),
     });
-    const mkdirSpy = vi.spyOn(app.vault.adapter, "mkdir");
+    const createFolderSpy = vi.spyOn(vault, "createFolder");
     await installExampleLibrary(app);
-    expect(mkdirSpy).not.toHaveBeenCalled();
+    expect(createFolderSpy).not.toHaveBeenCalled();
     expect(state.dirs.size).toBe(1);
   });
 
@@ -99,12 +102,12 @@ describe("installExampleLibrary", () => {
   });
 
   it("is idempotent — running twice produces no new writes the second time", async () => {
-    const { app } = makeFakeApp();
+    const { app, vault } = makeFakeApp();
     await installExampleLibrary(app);
-    const writeSpy = vi.spyOn(app.vault.adapter, "write");
+    const createSpy = vi.spyOn(vault, "create");
     const second = await installExampleLibrary(app);
     expect(second.installed).toEqual([]);
     expect(second.skipped.length).toBe(EXAMPLE_MODULES.length);
-    expect(writeSpy).not.toHaveBeenCalled();
+    expect(createSpy).not.toHaveBeenCalled();
   });
 });

@@ -89,35 +89,36 @@ export interface InstallExamplesResult {
  * learn from it, and clicking the button again should not silently throw
  * that work away. The skipped list lets the caller surface a Notice
  * distinguishing "installed N" from "skipped N already-present".
+ *
+ * Uses `vault.create` (not `adapter.write`) so newly-written files are
+ * immediately registered with `metadataCache` — `loadModules` will see them
+ * on the re-render that follows without waiting for the file-watcher cycle.
  */
 export async function installExampleLibrary(app: App): Promise<InstallExamplesResult> {
-  const adapter = app.vault.adapter;
   const installed: string[] = [];
   const skipped: string[] = [];
   await ensureDir(app, EXAMPLES_DIR);
   for (const ex of EXAMPLE_MODULES) {
-    const path = `${EXAMPLES_DIR}${ex.id}.md`;
-    if (await adapter.exists(path)) {
-      skipped.push(path);
+    const filePath = `${EXAMPLES_DIR}${ex.id}.md`;
+    if (await app.vault.adapter.exists(filePath)) {
+      skipped.push(filePath);
       continue;
     }
-    await adapter.write(path, ex.content);
-    installed.push(path);
+    await app.vault.create(filePath, ex.content);
+    installed.push(filePath);
   }
   return { installed, skipped };
 }
 
 async function ensureDir(app: App, dir: string): Promise<void> {
-  const adapter = app.vault.adapter;
-  // `mkdir` is idempotent on Obsidian's adapter — it's a no-op if the dir
-  // already exists. Wrap in try/catch defensively in case future adapter
-  // implementations diverge.
-  if (await adapter.exists(dir)) return;
+  // Use the adapter for the existence check (filesystem truth) but the
+  // vault-layer createFolder so the folder is indexed immediately.
+  if (await app.vault.adapter.exists(dir)) return;
   try {
-    await adapter.mkdir(dir);
+    await app.vault.createFolder(dir);
   } catch {
     // Another concurrent caller (or pre-existing folder we somehow missed)
     // — re-check and only re-throw if it's still missing.
-    if (!(await adapter.exists(dir))) throw new Error(`Could not create ${dir}`);
+    if (!(await app.vault.adapter.exists(dir))) throw new Error(`Could not create ${dir}`);
   }
 }
