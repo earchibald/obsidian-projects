@@ -142,21 +142,23 @@ plumbing.
 
 ## Troubleshooting
 
-**The preview says "no composed prompt — no WORKFLOW.md found".**
-Your project doesn't have a `WORKFLOW.md`. Re-do step 2.
+**The preview says "(no composed prompt — no WORKFLOW.md found for this
+project; create one under Projects/\<project\>/ to enable prompt
+composition)".** Your project doesn't have a `WORKFLOW.md`. Re-do step 2.
 
-**The preview says "no composed prompt — WORKFLOW.md loaded but the
-kickoff step produced empty output".** The workflow file loaded but the
-kickoff step's `modules:` list either is empty or names modules that
-didn't load. Check that the global default's `steps:` includes
+**The preview says "(no composed prompt — WORKFLOW.md loaded but the
+kickoff step produced empty output; check module bodies and variable
+bindings)".** The workflow file loaded but the kickoff step's
+`modules:` list either is empty or names modules that didn't load.
+Check that the global default's `steps:` includes
 `{ step: kickoff, modules: [branching] }` and that the per-project
 workflow's `extends:` actually points at it.
 
-**The preview is empty and the modules count is `0`.** Almost always
-one of:
+**The preview shows "Workflow modules disabled (Settings →
+workflowMode = legacy)".** You're still in legacy mode — re-do step 1.
 
-- Workflow mode is still on **legacy** (re-do step 1 — the launch modal
-  short-circuits to legacy when the setting hasn't flipped).
+**The preview count shows `0 modules`.** Almost always one of:
+
 - The module's filename basename doesn't match its `id:` field.
 - The module's `scope:` doesn't match any step in the workflow file.
 
