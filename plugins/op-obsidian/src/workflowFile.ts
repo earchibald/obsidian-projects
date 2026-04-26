@@ -115,10 +115,16 @@ async function loadAtPath(app: App, args: LoadAtPathArgs): Promise<LoadWorkflowR
   }
   const raw = await app.vault.read(file);
   // metadataCache.getFileCache(file)?.frontmatter:
-  //   - `undefined` when frontmatter is absent or YAML parsed to null
-  //   - the parsed object otherwise (`{}` for an empty fence)
-  // We disambiguate "no fence at all" from "fence with null/empty content"
-  // using the raw content's leading `---`.
+  //   - `undefined` when the frontmatter fence is absent OR when the fence's
+  //     YAML content is empty / parses to a scalar (e.g. `---\n---`).
+  //     Obsidian's YAML engine yields `undefined` in both cases.
+  //   - A FrontMatterCache object (extends Record<string, any>, includes a
+  //     `position` key) when the fence contains parseable key-value YAML.
+  //
+  // We disambiguate "no fence at all" (shape 1) from "fence with empty/null
+  // YAML" (shape 5) using the raw content's leading `---`, mapping Obsidian's
+  // `undefined` → `null` so `classifyLegacy` can tell shape 1 from shape 5
+  // without inspecting the raw string a second time.
   const fmCached = app.metadataCache.getFileCache(file)?.frontmatter;
   const fmInput: Record<string, unknown> | null | undefined = raw.startsWith("---")
     ? fmCached === undefined
@@ -183,6 +189,18 @@ async function loadAtPath(app: App, args: LoadAtPathArgs): Promise<LoadWorkflowR
         severity: "warning",
         message: `${args.path}: nested extends is not supported (v1 allows one level only). Ignoring grandparent.`,
         extra: { path: args.path, field: "extends", expected: "absent for parent files", actual: workflow.extendsPath },
+      });
+    } else if (normalizePath(workflow.extendsPath) === args.path) {
+      // Self-reference: the file's `extends:` points at itself. Without this
+      // guard the recursive load would re-read the same file (with
+      // `allowExtends: false`), surface a misleading "nested extends" warning,
+      // and then merge the workflow with itself (an idempotent but confusing
+      // no-op). Emit a clear error and skip the merge.
+      diagnostics.push({
+        code: "schema-mismatch",
+        severity: "error",
+        message: `${args.path}: extends points at the same file (self-reference is not permitted). Ignoring.`,
+        extra: { path: args.path, field: "extends", expected: "a different file path", actual: workflow.extendsPath },
       });
     } else {
       const parentLoad = await loadAtPath(app, {

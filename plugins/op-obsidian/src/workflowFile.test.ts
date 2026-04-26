@@ -19,10 +19,19 @@ interface FakeFile {
   path: string;
   raw: string;
   /**
-   * `null` means the metadataCache call should return `{ frontmatter: null }`
-   * (matches Obsidian's behaviour for an empty fence in some scenarios). To
-   * model "no cache entry", use `undefined`. To model "no frontmatter at all",
-   * pair `raw: "no fence text"` with `undefined`.
+   * Models what `metadataCache.getFileCache(file)?.frontmatter` returns:
+   *
+   * - `undefined` (default): Obsidian has no cache entry for the file, or the
+   *   YAML between fences is empty / parses to a scalar. The IO loader sees
+   *   `undefined` for `fmCached`. This is the correct model for shape 1 (no
+   *   fence) and shape 5 (empty/null-YAML fence) — the two are distinguished
+   *   solely by whether `raw` starts with `---`.
+   * - `null`: a non-standard sentinel retained for defensive testing; Obsidian
+   *   never returns `null` for `frontmatter` (typed `FrontMatterCache | undefined`),
+   *   but the disambiguation code handles it correctly anyway.
+   * - A record: simulates a successfully-parsed frontmatter object (the loader
+   *   code strips Obsidian's injected `position` key, so it need not be present
+   *   in fixtures).
    */
   frontmatter?: Record<string, unknown> | null | undefined;
 }
@@ -178,13 +187,34 @@ describe("loadWorkflowFile — legacy fallback shapes", () => {
     expect((r.diagnostics[0].extra as Record<string, unknown>).actual).toBe("project");
   });
 
-  it("(5) frontmatter parses to null → legacy-5 synthetic step", async () => {
+  it("(5) frontmatter parses to null → legacy-5 synthetic step (models real Obsidian: getFileCache returns null)", async () => {
+    // Real Obsidian: for `---\n---` the YAML engine yields undefined, so
+    // `getFileCache(file)?.frontmatter` is `undefined`.  The fakeApp models
+    // this by returning `null` for getFileCache (no cache entry), which makes
+    // `fmCached = undefined` after the optional-chain.  The raw-starts-with-`---`
+    // check then maps it to `null` → shape 5.
     const raw = "---\n---\nbody after empty fence\n";
     const app = fakeApp([
       {
         path: "Projects/demo/WORKFLOW.md",
         raw,
-        frontmatter: null,
+        frontmatter: undefined, // getFileCache returns null → fmCached = undefined → fmInput = null
+      },
+    ]);
+    const r = await loadWorkflowFile(app, "demo");
+    expect(r.workflow!.source.isLegacy).toBe(true);
+    expect(r.workflow!.steps[0].legacyKickoffBody).toBe("body after empty fence\n");
+  });
+
+  it("(5-null) defensive: fmCached=null also routes to legacy-5", async () => {
+    // Obsidian never returns null for frontmatter, but the disambiguation code
+    // handles it correctly (null != undefined, so fmInput = null → shape 5).
+    const raw = "---\n---\nbody after empty fence\n";
+    const app = fakeApp([
+      {
+        path: "Projects/demo/WORKFLOW.md",
+        raw,
+        frontmatter: null, // getFileCache returns { frontmatter: null } → fmCached = null → fmInput = null
       },
     ]);
     const r = await loadWorkflowFile(app, "demo");
@@ -281,6 +311,31 @@ describe("loadWorkflowFile — extends inheritance", () => {
           d.message.includes("nested extends"),
       ),
     ).toBe(true);
+  });
+
+  it("self-reference: extends pointing at the same file emits schema-mismatch error (not 'nested extends')", async () => {
+    // A workflow that extends itself must not loop, and must get a clear
+    // "self-reference" diagnostic rather than the confusing "nested extends"
+    // warning that would fire if the guard were absent.
+    const selfRaw = modernRaw({
+      extends: "Projects/demo/WORKFLOW.md", // same path as the file itself
+    });
+    const app = fakeApp([
+      { path: "Projects/demo/WORKFLOW.md", raw: selfRaw.raw, frontmatter: selfRaw.fm },
+    ]);
+    const r = await loadWorkflowFile(app, "demo");
+    // The workflow still parses; the self-merge is skipped.
+    expect(r.workflow).not.toBeNull();
+    expect(
+      r.diagnostics.some(
+        (d) =>
+          d.code === "schema-mismatch" &&
+          d.severity === "error" &&
+          d.message.includes("self-reference"),
+      ),
+    ).toBe(true);
+    // Must NOT emit a "nested extends" warning (that's the wrong diagnosis).
+    expect(r.diagnostics.some((d) => d.message.includes("nested extends"))).toBe(false);
   });
 
   it("missing parent file emits schema-mismatch but child still loads", async () => {
