@@ -11,6 +11,7 @@ import {
   type ExplainWorkflowPayload,
 } from "./explainWorkflowPure";
 import { buildListVarsPayload, type ListVarsPayload } from "./listVarsPure";
+import type { WorkflowDiagnostic } from "./workflowDiagnostic";
 
 // IO seam for OP-203's two diagnostic CLIs. Both verbs need the same
 // composed-prompt pipeline that the launcher uses (so output matches what the
@@ -43,12 +44,13 @@ export async function explainWorkflow(
   }
 
   const agentRaw = args.agent ?? entry.agent ?? deps.settings.defaultAgent;
+  const agentExplicit = args.agent !== undefined;
   const profile = resolveProfileById(deps.settings, agentRaw);
 
   const renderContext = buildIssueRenderContext(app, deps.settings, entry, profile, args.mode);
   const projectVars = readProjectVars(app, project);
 
-  const { composed } = await loadAndComposeWorkflow(app, {
+  const { composed, bundle } = await loadAndComposeWorkflow(app, {
     project,
     step: args.mode,
     ctx: {
@@ -60,18 +62,38 @@ export async function explainWorkflow(
     },
   });
 
+  // Build the agent-unrecognized warning once — it may apply to both the
+  // !composed path (no WORKFLOW.md) and the normal path.
+  const agentDiags: WorkflowDiagnostic[] =
+    agentExplicit && !(AGENT_IDS as readonly string[]).includes(agentRaw)
+      ? [
+          {
+            code: "schema-mismatch",
+            severity: "warning",
+            message: `op-explain-workflow: agent "${agentRaw}" is not a known agent id (${AGENT_IDS.join(", ")}); using default "${profile.id}".`,
+            extra: { requestedAgent: agentRaw, resolvedAgent: profile.id },
+          },
+        ]
+      : [];
+
   if (!composed) {
-    return {
+    // WORKFLOW.md was not found or could not be salvaged. Surface the loader's
+    // diagnostics through the unified formatter so the caller sees them —
+    // previously this path returned an empty diagnostics array, silently
+    // dropping errors like "WORKFLOW.md not found" or "schema-mismatch".
+    return buildExplainPayload({
       issueId: args.issueId,
       project,
       mode: args.mode,
-      agent: profile.id,
-      composed: { text: "", sizeChars: 0, chunks: [] },
-      vars: [],
-      diagnostics: [],
-      diagnosticLines: [],
-      diagnosticBlocks: "",
-    };
+      context: renderContext,
+      composed: {
+        text: "",
+        orderedChunks: [],
+        perVarSourceMap: {},
+        sizeChars: 0,
+        diagnostics: [...agentDiags, ...bundle.diagnostics],
+      },
+    });
   }
 
   return buildExplainPayload({
@@ -79,7 +101,10 @@ export async function explainWorkflow(
     project,
     mode: args.mode,
     context: renderContext,
-    composed,
+    composed:
+      agentDiags.length > 0
+        ? { ...composed, diagnostics: [...agentDiags, ...composed.diagnostics] }
+        : composed,
   });
 }
 
@@ -94,9 +119,10 @@ export async function listVars(
   args: { project?: string; issue?: string },
 ): Promise<ListVarsPayload> {
   if (!args.issue) {
-    // No issue context: registry-only payload. The optional `project`
-    // argument doesn't change rendering — every PluginVar's `compute` reads
-    // off RenderContext, and we don't synthesize one without an issue.
+    // No issue context. If `project` is supplied, pass it as a partial context
+    // so vars whose `compute` only needs `project` will resolve; all others stay
+    // null and `context.hasContext` will be `true`. Without `project`, this is a
+    // pure registry-only payload with `hasContext: false`.
     return buildListVarsPayload(args.project ? { project: args.project } : undefined);
   }
 

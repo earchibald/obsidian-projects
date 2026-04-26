@@ -419,6 +419,78 @@ describe("buildExplainPayload — golden snapshot", () => {
   });
 });
 
+describe("buildExplainPayload — empty composed with loader diagnostics", () => {
+  it("surfaces loader diagnostics even when composed text is empty (no WORKFLOW.md path)", () => {
+    // Simulates what explainWorkflow does when loadAndComposeWorkflow returns
+    // composed=null — it now calls buildExplainPayload with bundle.diagnostics
+    // instead of silently returning an empty diagnostics array.
+    const p = buildExplainPayload({
+      issueId: "OP-203",
+      project: "obsidian-projects",
+      mode: "kickoff",
+      context: CTX,
+      composed: {
+        text: "",
+        orderedChunks: [],
+        perVarSourceMap: {},
+        sizeChars: 0,
+        diagnostics: [
+          {
+            code: "schema-mismatch",
+            severity: "error",
+            message: "WORKFLOW.md not found for project obsidian-projects.",
+            extra: { project: "obsidian-projects" },
+          },
+        ],
+      },
+    });
+
+    expect(p.composed.text).toBe("");
+    expect(p.vars).toEqual([]);
+    expect(p.diagnostics).toHaveLength(1);
+    expect(p.diagnostics[0].code).toBe("schema-mismatch");
+    expect(p.diagnostics[0].severity).toBe("error");
+    expect(p.diagnosticLines).toHaveLength(1);
+    expect(p.diagnosticLines[0]).toMatch(/^\[E\] /);
+    expect(p.diagnosticBlocks).not.toBe("");
+  });
+
+  it("surfaces agent-unrecognized warning when prepended to composed diagnostics", () => {
+    // Simulates what explainWorkflow does when agent= is an unknown value —
+    // it prepends a schema-mismatch warning before calling buildExplainPayload.
+    const m = makeModule({ id: "orient" });
+    const workflow = makeWorkflow([{ step: "kickoff", modules: ["orient"] }]);
+    const composed = composeWorkflow({
+      loadedModules: [{ module: m, body: "All good." }],
+      workflow,
+      step: "kickoff",
+      ctx: { render: CTX },
+    });
+    const agentWarning = {
+      code: "schema-mismatch" as const,
+      severity: "warning" as const,
+      message: `op-explain-workflow: agent "badagent" is not a known agent id (claude, gemini, copilot); using default "claude".`,
+      extra: { requestedAgent: "badagent", resolvedAgent: "claude" },
+    };
+    const p = buildExplainPayload({
+      issueId: "OP-203",
+      project: "obsidian-projects",
+      mode: "kickoff",
+      context: CTX,
+      composed: {
+        ...composed,
+        diagnostics: [agentWarning, ...composed.diagnostics],
+      },
+    });
+
+    // Agent warning is first diagnostic; normal composition still succeeds.
+    expect(p.diagnostics[0].code).toBe("schema-mismatch");
+    expect(p.diagnostics[0].severity).toBe("warning");
+    expect(p.composed.text).toBe("All good.");
+    expect(p.diagnosticLines[0]).toMatch(/^\[W\] .*badagent/);
+  });
+});
+
 describe("summarizeExplainPayload", () => {
   it("counts severities + var refs in one line", () => {
     const fake: ExplainWorkflowPayload = {
