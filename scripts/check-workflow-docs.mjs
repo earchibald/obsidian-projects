@@ -56,6 +56,12 @@ const MODEL_REGISTRY_PATH =
 
 const REFERENCE_DIR = join(REPO_ROOT, "docs/workflow-modules/reference");
 
+// Sentinel patterns reused by the balance pre-check and the replacement engine.
+// A key is one or more word characters or hyphens: `[\w-]+`.
+const SENTINEL_OPEN_RE = /<!-- AUTO-GENERATED:([\w-]+) -->/g;
+const SENTINEL_CLOSE_RE = /<!-- \/AUTO-GENERATED:([\w-]+) -->/g;
+const SENTINEL_BLOCK_RE = /<!-- AUTO-GENERATED:([\w-]+) -->([\s\S]*?)<!-- \/AUTO-GENERATED:\1 -->/g;
+
 // ---------------------------------------------------------------------------
 // Source extraction — pluginVarRegistry.ts
 // ---------------------------------------------------------------------------
@@ -128,6 +134,8 @@ function extractPluginVars(src, sentinels) {
   // entries than there are `compute:` fields, some entries were skipped because
   // their keys are in a different order — that's a silent partial failure that
   // the `entries.length === 0` guard alone would not catch.
+  // Note: TypeScript object literals use bare (unquoted) property names, so
+  // `compute:` always appears without quotes — the \b word boundary is correct.
   const computeCount = (block.match(/\bcompute\s*:/g) || []).length;
   if (entries.length === 0) {
     fail(
@@ -269,6 +277,8 @@ function extractModelRegistry(src) {
   // agent entries. Each agent record has exactly one `versioned:` field.
   // Fewer captured agents than `versioned:` fields means a partial extraction
   // due to key ordering — the `agents.length === 0` guard alone misses this.
+  // Note: TypeScript object literals use bare (unquoted) property names, so
+  // `versioned:` always appears without quotes — the \b word boundary is correct.
   const versionedCount = (block.match(/\bversioned\s*:/g) || []).length;
   if (agents.length === 0) {
     fail(
@@ -355,11 +365,15 @@ function renderModelRegistryTable(agents) {
 }
 
 function escapeCell(s) {
+  // Escape in HTML-safe order: & first, then < and >, then Markdown chars.
+  // If & were last, a description containing e.g. "&lt;" would become
+  // "&amp;lt;" (double-escaped) instead of the expected "&amp;lt;".
   return s
-    .replaceAll("|", "\\|")
-    .replaceAll("\n", " ")
+    .replaceAll("&", "&amp;")
     .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;");
+    .replaceAll(">", "&gt;")
+    .replaceAll("|", "\\|")
+    .replaceAll("\n", " ");
 }
 
 // ---------------------------------------------------------------------------
@@ -391,11 +405,11 @@ function rewriteOnePage(path, content, blocks) {
   // Pre-check: every open sentinel must have a matching close and vice versa.
   // The replacement regex below only matches complete open/close pairs, so an
   // open marker without a close is silently skipped — unless we check here.
-  const openRe = /<!-- AUTO-GENERATED:([\w-]+) -->/g;
-  const closeRe = /<!-- \/AUTO-GENERATED:([\w-]+) -->/g;
   const balance = {};
-  for (const m of content.matchAll(openRe)) balance[m[1]] = (balance[m[1]] || 0) + 1;
-  for (const m of content.matchAll(closeRe)) balance[m[1]] = (balance[m[1]] || 0) - 1;
+  for (const m of content.matchAll(new RegExp(SENTINEL_OPEN_RE.source, "g")))
+    balance[m[1]] = (balance[m[1]] || 0) + 1;
+  for (const m of content.matchAll(new RegExp(SENTINEL_CLOSE_RE.source, "g")))
+    balance[m[1]] = (balance[m[1]] || 0) - 1;
   for (const [key, delta] of Object.entries(balance)) {
     if (delta !== 0) {
       const dir = delta > 0 ? "open marker without a matching close" : "close marker without a matching open";
@@ -403,7 +417,7 @@ function rewriteOnePage(path, content, blocks) {
     }
   }
 
-  const re = /<!-- AUTO-GENERATED:([\w-]+) -->([\s\S]*?)<!-- \/AUTO-GENERATED:\1 -->/g;
+  const re = new RegExp(SENTINEL_BLOCK_RE.source, "g");
   let found = 0;
   const seen = new Set();
   const out = content.replace(re, (full, key) => {
