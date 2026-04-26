@@ -60,8 +60,8 @@ All `op-*` commands take `key=value` arguments (not `--flag`). Each prints a one
 | `op-get-workflow` | `project` | — | reads `Projects/<project>/WORKFLOW.md` (the project's workflow file — modern `type: workflow` / `schema: 1` shape preferred; legacy plain prose still parses via the fallback ladder). Returns `{exists, path, content, size}`. Read-only. |
 | `op-edit-workflow` | `project` | — | launches an agent in tmux to interview the user and author/refine `Projects/<project>/WORKFLOW.md` as a modern workflow file (frontmatter `type: workflow`, `schema: 1`, `default_agent`, `default_model`, ordered `steps:` referencing module ids; optional `extends:` to a global default). Window naming `op-workflow-<slug>` keeps it distinct from issue sessions. The session has full edit capability but is bounded to writing the workflow file (no `op-work` / `op-resolve` / version bump). |
 | `op-edit-module` | `module` | `scope=global\|project`, `project` | launches an agent in tmux to author/refine a workflow module file. `scope=global` writes to `Projects/_op-modules/<id>.md`; `scope=project` writes to `Projects/<project>/MODULES/<id>.md` and requires `project=`. The session is bounded to a single module file — no `op-work` / `op-resolve` / version bump. Like `op-edit-workflow`, this is the editor entry point; agents working an issue should not call it directly without user intent. |
-| `op-explain-workflow` | `issue`, `mode` | `agent`, `model`, `launchVars` | renders the composed prompt for `<issue>` at `mode=kickoff\|evaluate\|plan\|implement\|review\|finalize` and returns it alongside the resolved per-step agent/model and any `WorkflowDiagnostic[]` from the load. **Read-only and non-destructive.** Use it to verify what an agent launch would inject before launching, or as a smoke probe after editing modules / workflow files. JSON payload includes the rendered text, the active workflow path, the resolved variables (with their precedence layer), and the diagnostic stream. |
-| `op-list-vars` | `project` | `issue`, `agent` | enumerates every `{{var}}` reachable from the active workflow's modules with its resolved value, the precedence layer that supplied it (`module-default` < `global-user` < `project-default` < `project-user` < `launch`), and the declaring module. Returns `{ vars: [{name, value, source, declaringModule, description?, isResolved}], diagnostics }`. **Read-only.** The diagnostic surface for "why is this variable empty / unexpected?" |
+| `op-explain-workflow` | `issue`, `mode` | `agent` | renders the composed prompt for `<issue>` at `mode=kickoff\|evaluate\|plan\|implement\|review\|finalize`. **Read-only and non-destructive.** Use it to verify what an agent launch would inject before launching, or as a smoke probe after editing modules / workflow files. JSON payload: `composed.text` (verbatim launch text), `composed.chunks` (per-module breakdown with id / scope / sizeChars), `vars` (one row per **referenced user var** with its resolved value and the precedence layer that supplied it — `module` / `global` / `project` / `launch` / `null` if unresolved), `diagnostics` formatted through the unified WorkflowDiagnostic stream, plus the resolved `agent` and (when selectable) `model`. Does not return the workflow file path. |
+| `op-list-vars` | — | `project`, `issue` | enumerates the **plugin var registry** (`PLUGIN_VAR_REGISTRY` — the always-on namespace covering `{{id}}`, `{{repo_path}}`, `{{today}}`, etc.), with `name`, `description`, `example`, and `currentValue` (resolved against the supplied `project=` / `issue=` context, or `null` when context-less or `compute` returned undefined). **Read-only.** This is the registry browser and the same data the Settings → "Available variables" reference panel renders. For **user-var** introspection (module-declared `vars:` and the four-layer precedence chain), use `op-explain-workflow` — its `vars` array has the per-var precedence breakdown. |
 | `op-export-module` | `module`, `dest` | `scope=global\|project`, `project`, `include_used_workflow=true\|false` | bundles a module file into a single self-contained markdown export at `dest`. Includes the module's frontmatter + body, optionally appends the workflow file that uses it (when `include_used_workflow=true`). The bundle is plain-text-shareable across vaults; the receiving side imports with `op-import-module`. The export records its source path in the bundle so a round-trip is traceable. |
 | `op-import-module` | `path` | `scope=global\|project`, `project`, `vars` | imports a bundle written by `op-export-module` into the current vault. Prompts for any module-supplied `name=VALUE` defaults that aren't already set unless `vars=` provides them. **Atomic + recorded:** every imported file is logged in a transaction record so `op-undo-last-import` can reverse exactly the last import. Conflicts (same module id already present) are surfaced as `module-conflict` diagnostics — resolve by editing locally, not by re-importing. |
 | `op-undo-last-import` | — | — | reverses the most recent `op-import-module` transaction. Idempotent if no import has happened since the last undo (returns `noop`). Only the **most recent** import is undoable — no multi-step history. Use immediately after a regretted import; don't expect it to bail out yesterday's mistake. |
@@ -102,20 +102,22 @@ Module files are markdown with a small frontmatter block (`id`, `title`, `type: 
 
 Full file-format references live at `docs/specs/workflow-module-schema.md` and `docs/specs/workflow-file-schema.md`. Conceptual docs are at `docs/workflow-modules/`.
 
-### Four-layer precedence for `{{var}}` resolution
+### Two template-var namespaces
 
-Module bodies are templated through the `{{var}}` renderer. Variable values come from four layers, in order — **higher layers override lower**:
+Module bodies are templated through two distinct `{{…}}` namespaces — they look similar but resolve differently:
 
-1. **Module default** — `vars: [- name=value]` declared in the module's own frontmatter.
-2. **Global user** — `workflowVars` in the plugin's settings (`Settings → Workflows → Global variables`).
-3. **Project user** — the `vars:` map in `Projects/<slug>/STATUS.md`.
-4. **Launch override** — values supplied through the launch modal's variable override panel for this single launch.
+- **Plugin vars** — `{{id}}`, `{{repo_path}}`, `{{today}}`, `{{project}}`, `{{agent}}`, etc. These are the bare-name tokens. They come from a fixed registry (`PLUGIN_VAR_REGISTRY`) baked into the plugin and resolved at render time from the launch's `RenderContext`. **Not subject to precedence layers** — the registry is the only source. `op-list-vars [project=<slug>] [issue=<ID>]` is the registry browser and shows each var's resolved current value against the supplied context.
+- **User vars** — `{{vars.<name>}}` (note the `vars.` prefix). Declared by workflow modules in their `vars:` frontmatter and resolved through a four-layer precedence chain — **higher layers override lower**:
+  1. **Module default** — entries in a module's `vars:` list, written `name=value` in shorthand or `{ name: x, default: v }` in object form. Inline-list shape is `vars: [name=value]`; block-list shape is `vars:\n  - name=value`.
+  2. **Global user** — `workflowVars` in the plugin's settings (`Settings → Workflows → Global variables`).
+  3. **Project user** — the `vars:` map in `Projects/<slug>/STATUS.md`.
+  4. **Launch override** — values supplied through the launch modal's variable override panel for this single launch.
 
-Use `op-list-vars project=<slug> [issue=<ID>]` to dump every reachable variable plus the layer that resolved it; this is the diagnostic surface for "why did `{{pkg}}` render empty / not what I expected?"
+`op-explain-workflow issue=<ID> mode=<step>` is the diagnostic surface for user vars: its `vars` array reports each referenced user var, the resolved value, and the precedence scope that supplied it (or `null` when unresolved).
 
-### `scope:` is the partition key
+### `scope:` is metadata, not step routing
 
-A module's `scope:` field decides **which step** in the workflow file the module's body lands at. The shipped conventions are `kickoff` / `plan` / `evaluate` / `implement` / `review` / `finalize`, but the composer is agnostic — invent whatever step ids your workflow file declares and tag matching modules with the same scope. A module whose scope doesn't match any step in the active workflow is loaded but never injected (useful during migration).
+A module's `scope:` field is **not** what routes its body into a workflow step. Routing happens via the workflow file's `steps[].modules` list — the composer walks each step's named module ids and concatenates their bodies. A module's `scope:` is metadata used for two things: surfacing on chunk records / diagnostics, and partitioning the intra-scope-collision check that flags two modules at the same `scope:` declaring the same user-var name. The set of valid scope names is open-ended; conventions emerging in shipped fixtures are `kickoff` / `plan` / `evaluate` / `implement` / `review` / `finalize`, but you can invent your own. **Setting `scope: foo` does not inject the module at step `foo` — listing the module id under `steps[].modules` does.**
 
 ### Per-step agent / model selection
 
@@ -158,14 +160,14 @@ OP-181 §"Visibility tenet": **every step is observable**. The plugin's `launchH
 Two non-destructive CLIs let you preview what a launch would do without launching:
 
 ```bash
-# Render the composed prompt for an issue at a given step.
+# Render the composed prompt + per-referenced-user-var precedence breakdown.
 obsidian vault=<name> op-explain-workflow issue=<PREFIX>-<N> mode=kickoff
 
-# Enumerate every variable reachable from the active workflow + which layer set it.
+# Browse the plugin var registry (the {{id}} / {{repo_path}} / {{today}} namespace).
 obsidian vault=<name> op-list-vars project=<slug> issue=<PREFIX>-<N>
 ```
 
-Both write a JSON payload to `Projects/_scratch/op-last-response.md` and emit a one-line summary. Use them as smoke probes after editing modules or the workflow file, and as the first stop when an agent's behavior diverges from the rules you thought you were sending.
+Both write a JSON payload to `Projects/_scratch/op-last-response.md` and emit a one-line summary. Use `op-explain-workflow` as the smoke probe after editing modules or the workflow file (it reports diagnostics and shows exactly which body chunks would be injected and which user vars resolved at which precedence layer); use `op-list-vars` to confirm a plugin var resolves the way you expect against a given issue/project context.
 
 ### Sharing modules across vaults
 
