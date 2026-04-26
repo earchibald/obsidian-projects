@@ -582,6 +582,18 @@ export class OpSettingsTab extends PluginSettingTab {
           }),
       );
 
+    new Setting(containerEl)
+      .setName("Launch agent without stealing focus")
+      .setDesc(
+        "When on, op cold-starts iTerm via `open -ga` and creates the agent's tab via the WebSocket API without bringing iTerm to the foreground — Obsidian keeps focus. Off: iTerm comes forward as today. iTerm only; Terminal.app has no equivalent non-activating launch path. (OP-155 §4 Step 1)",
+      )
+      .addToggle((t) =>
+        t.setValue(s.backgroundLaunch).onChange(async (v) => {
+          s.backgroundLaunch = v;
+          await this.plugin.saveSettings();
+        }),
+      );
+
     containerEl.createEl("h2", { text: "iTerm layout orchestrator" });
     containerEl.createEl("p", {
       text: "When enabled, op lays out agent panes in the current iTerm window per the chosen layout. Overflow spills to a new iTerm window backed by a fresh tmux session. macOS + iTerm only.",

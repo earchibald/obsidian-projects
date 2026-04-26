@@ -18,6 +18,7 @@ import { launchInTerminal } from "./terminalLaunch";
 import type { AgentDetector } from "./agentDetect";
 import { AgentPickerModal } from "./modals";
 import { userError } from "./userError";
+import { iTermDefaultsDomainPresent, showITermTmuxPrefsNotice } from "./iTermPrefs";
 
 /** Arguments accepted by {@link openAgent}. */
 export interface OpenAgentArgs {
@@ -139,6 +140,7 @@ export async function openAgent(
     issueId: args.entry.id,
     issueTitle: args.entry.title,
     agentId,
+    backgroundLaunch: settings.backgroundLaunch,
     orchestrator: {
       settings,
       registry: {
@@ -151,6 +153,17 @@ export async function openAgent(
     },
   });
 
+  // OP-155 §4 Step 4: first iTerm launch — surface the one-time prefs Notice
+  // and persist the bit. Flip the bit synchronously *before* yielding to the
+  // event loop so a second concurrent op-open-agent invocation (near-
+  // simultaneous user actions) sees the gate closed and doesn't double-fire
+  // the Notice. maybeShowITermPrefsNotice rolls it back to false if iTerm is
+  // absent (so the Notice can fire on the next launch) or if saving fails.
+  if (settings.terminal === "iTerm" && !settings.iTermPrefsNoticeShown) {
+    settings.iTermPrefsNoticeShown = true; // optimistic — rolled back on failure
+    void maybeShowITermPrefsNotice(settings, saveSettings);
+  }
+
   return {
     issueId: args.entry.id,
     agent: agentId,
@@ -160,6 +173,25 @@ export async function openAgent(
     tmuxSession,
     tmuxWindow,
   };
+}
+
+async function maybeShowITermPrefsNotice(
+  settings: OpSettings,
+  saveSettings: () => Promise<void>,
+): Promise<void> {
+  try {
+    if (!(await iTermDefaultsDomainPresent())) {
+      // iTerm absent — roll back optimistic bit so the Notice can fire again
+      // when iTerm is eventually installed.
+      settings.iTermPrefsNoticeShown = false;
+      return;
+    }
+    showITermTmuxPrefsNotice();
+    await saveSettings();
+  } catch (err) {
+    settings.iTermPrefsNoticeShown = false; // roll back so retry is possible
+    console.warn("[op-obsidian] iTerm prefs Notice failed:", err);
+  }
 }
 
 async function pickAgent(

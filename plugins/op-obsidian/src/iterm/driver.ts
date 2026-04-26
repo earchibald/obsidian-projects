@@ -20,12 +20,19 @@ export async function closeWindow(windowId: string): Promise<void> {
   return wsClient.closeWindow(windowId);
 }
 
-export async function createWindow(command: string): Promise<CreateWindowResult> {
-  return wsClient.createWindow(command);
+export async function createWindow(
+  command: string,
+  opts: { activate?: boolean } = {},
+): Promise<CreateWindowResult> {
+  return wsClient.createWindow(command, opts);
 }
 
-export async function createTab(command: string, windowId: string): Promise<CreateWindowResult> {
-  return wsClient.createTab(command, windowId);
+export async function createTab(
+  command: string,
+  windowId: string,
+  opts: { activate?: boolean } = {},
+): Promise<CreateWindowResult> {
+  return wsClient.createTab(command, windowId, opts);
 }
 
 export async function activeWindowId(): Promise<string | undefined> {

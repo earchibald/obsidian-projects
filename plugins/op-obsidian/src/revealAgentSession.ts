@@ -5,6 +5,7 @@ import { notify } from "./notificationLog";
 import type { OpSettings } from "./settings";
 import { findAgentTmuxLocation } from "./agentTmuxLocation";
 import { selectSession, sessionExists } from "./iterm/driver";
+import { activateApp } from "./crossAppActivate";
 
 const pExecFile = promisify(execFile);
 
@@ -43,12 +44,10 @@ export async function revealAgentSession(
 }
 
 async function activateTerminalApp(app: "Terminal" | "iTerm"): Promise<void> {
-  const target = app === "iTerm" ? "iTerm2" : "Terminal";
-  const script = `tell application "${target}" to activate`;
-  try {
-    await pExecFile("/usr/bin/osascript", ["-e", script]);
-  } catch {
-    // Best effort — if the terminal isn't running there's nothing to
-    // reveal anyway; the tmux window exists but is detached.
-  }
+  // OP-155 §4 Step 3: cross-app activation via `open -a` instead of
+  // `tell application "…" to activate`. `activateApp` swallows ENOENT/Etc
+  // already, so the best-effort semantics are unchanged. Note `open -a`
+  // matches the user-visible app name, not the bundle identifier — pass
+  // "iTerm" (not "iTerm2"); macOS resolves it via LaunchServices.
+  await activateApp(app);
 }

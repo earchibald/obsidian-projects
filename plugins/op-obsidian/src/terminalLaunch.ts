@@ -52,6 +52,12 @@ export interface LaunchArgs {
     settings: import("./settingsPure").OpSettings;
     registry: import("./orchestrator").RegistryIO;
   };
+  // OP-155 §4 Step 1: when true and `terminalApp === "iTerm"`, the launch
+  // does not bring iTerm to the foreground. iTerm is started (if needed)
+  // via `open -ga iTerm` and the WebSocket `CreateTab`/`CreateWindow` call
+  // skips the `ActivateRequest`. No effect on Terminal.app — Terminal has
+  // no equivalent non-activating launch path. Defaults to false.
+  backgroundLaunch?: boolean;
 }
 
 export interface LaunchResult {
@@ -93,6 +99,7 @@ export async function launchInTerminal(args: LaunchArgs): Promise<LaunchResult> 
         debug: args.debug,
         tmuxBinary: args.tmuxBinary,
         baseTmuxSession: SHARED_TMUX_SESSION,
+        backgroundLaunch: args.backgroundLaunch,
       },
       args.orchestrator.settings,
       args.orchestrator.registry,
@@ -117,19 +124,31 @@ export async function launchInTerminal(args: LaunchArgs): Promise<LaunchResult> 
       return { scriptPath: innerPath, tmuxSession: session, tmuxWindow: windowName };
     }
 
+    // OP-155 §4 Step 1: in background-launch mode, ensure iTerm is running
+    // without activating it (`-g` = launch in background, `-a` = by app name)
+    // before opening the WS connection. Skipping this on a cold-start would
+    // race the WS connect against macOS's app-launch slot — and even when
+    // iTerm comes up, the connect might happen before the API server is
+    // listening. `open -ga` returns synchronously once the app has been
+    // launched; the WS client then activates iTerm via Activate{App} only if
+    // we ask it to (we don't, in background mode).
+    const wsActivate = !args.backgroundLaunch;
+    if (args.backgroundLaunch) {
+      await pExecFile("/usr/bin/open", ["-ga", "iTerm"]);
+    }
     const command = buildITermAttachCommand(args.tmuxBinary, session);
     if (args.iTermPlacement === "new-tab") {
       const targetWindow = await activeWindowId();
       if (targetWindow) {
-        await createTab(command, targetWindow);
+        await createTab(command, targetWindow, { activate: wsActivate });
       } else {
         // No iTerm window is currently key (iTerm not running, all windows
         // minimized, etc.) — fall back to opening a new window. Mirrors the
         // legacy AppleScript `if (count of windows) = 0 then create window`.
-        await createWindow(command);
+        await createWindow(command, { activate: wsActivate });
       }
     } else {
-      await createWindow(command);
+      await createWindow(command, { activate: wsActivate });
     }
     return { scriptPath: innerPath, tmuxSession: session, tmuxWindow: windowName };
   }

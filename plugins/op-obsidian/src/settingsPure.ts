@@ -92,6 +92,18 @@ export interface OpSettings {
   workingDirs: Record<string, string>;
   terminal: "Terminal" | "iTerm";
   iTermPlacement: ITermPlacement;
+  /** OP-155 §4 Step 1: when true, agent launches do not bring the terminal
+   * app to the foreground. iTerm path uses `open -ga iTerm` (cold-start
+   * without activation) and skips the WS `ActivateRequest`. Default false —
+   * matches today's behavior, which most users expect when they hit
+   * "launch agent". On for users who launch from inside a flow and want
+   * Obsidian to keep focus. */
+  backgroundLaunch: boolean;
+  /** OP-155 §4 Step 4: one-shot bit gating the iTerm-tmux-prefs Notice.
+   * Flipped to true after the Notice has been surfaced (or skipped because
+   * all prefs already match the recommended values) on the first iTerm
+   * tmux-CC launch. Persists across reloads so the Notice never repeats. */
+  iTermPrefsNoticeShown: boolean;
   tmuxBinary: string;
   view: ViewSettings;
   github: GithubSettings;
@@ -132,6 +144,8 @@ export const DEFAULT_SETTINGS: OpSettings = {
   workingDirs: {},
   terminal: "Terminal",
   iTermPlacement: "new-tab",
+  backgroundLaunch: false,
+  iTermPrefsNoticeShown: false,
   tmuxBinary: "/opt/homebrew/bin/tmux",
   view: {
     defaultTab: "issues",
@@ -193,6 +207,10 @@ export function mergeSettings(loaded: unknown): OpSettings {
   if (l.terminal === "Terminal" || l.terminal === "iTerm") base.terminal = l.terminal;
   if (l.iTermPlacement === "new-tab" || l.iTermPlacement === "new-window") {
     base.iTermPlacement = l.iTermPlacement;
+  }
+  if (typeof l.backgroundLaunch === "boolean") base.backgroundLaunch = l.backgroundLaunch;
+  if (typeof l.iTermPrefsNoticeShown === "boolean") {
+    base.iTermPrefsNoticeShown = l.iTermPrefsNoticeShown;
   }
   if (typeof l.tmuxBinary === "string" && l.tmuxBinary.trim()) {
     base.tmuxBinary = l.tmuxBinary.trim();
