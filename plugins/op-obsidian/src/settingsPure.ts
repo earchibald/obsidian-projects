@@ -40,6 +40,11 @@ export interface ViewSettings {
   /** Delay (ms) between mouseenter and the tmux capture call. Clamped to
    * [0, 2000]. Default 400. */
   agentHoverDelayMs: number;
+  /** OP-162 / §11: when true, the inline note-level status strip omits PR
+   * and GitHub-issue segments (the lazy `gh` fetch never fires). The
+   * commit segment still renders. Default false. Useful for users without
+   * `gh` configured or in air-gapped environments. */
+  disableInlineGithubStatus: boolean;
 }
 
 export const AGENT_HOVER_LINES_MIN = 1;
@@ -103,6 +108,12 @@ export interface OpSettings {
   // click. Most-recent first, capped at RECENCY_CAP, dedup by issue id.
   // Drives `op: resume last` and the sidebar Last-touched chip (OP-150).
   recent: RecencyEntry[];
+  // OP-161 / §10: flipped to `true` once the first-run README is written
+  // into the vault at `Projects/_op-readme.md`. Manually deleting the
+  // README does not flip this back — that's the intended dismissal
+  // gesture. Set explicitly to `false` (or run the `op: reset onboarding`
+  // command, when wired) to re-trigger.
+  firstRunCompleted: boolean;
 }
 
 export const DEFAULT_SETTINGS: OpSettings = {
@@ -130,6 +141,7 @@ export const DEFAULT_SETTINGS: OpSettings = {
     agentHoverPreview: true,
     agentHoverLines: 30,
     agentHoverDelayMs: 400,
+    disableInlineGithubStatus: false,
   },
   github: {
     autoCreateGithubIssue: false,
@@ -155,6 +167,7 @@ export const DEFAULT_SETTINGS: OpSettings = {
   orchestratorState: emptyRegistry(),
   projectOrder: [],
   recent: [],
+  firstRunCompleted: false,
 };
 
 const SIDEBAR_TABS: ReadonlySet<SidebarTab> = new Set(["issues", "in-flight", "resolved"]);
@@ -207,6 +220,19 @@ export function mergeSettings(loaded: unknown): OpSettings {
         base.view.agentHoverDelayMs = n;
       }
     }
+    if (typeof v.disableInlineGithubStatus === "boolean") {
+      base.view.disableInlineGithubStatus = v.disableInlineGithubStatus;
+    }
+  }
+  if (typeof (l as { firstRunCompleted?: unknown }).firstRunCompleted === "boolean") {
+    base.firstRunCompleted = (l as { firstRunCompleted: boolean }).firstRunCompleted;
+  } else if (Object.keys(l).length > 0) {
+    // Existing user upgrading from a version that predates `firstRunCompleted`
+    // (≤ 0.57.x). Their data.json has other settings but no
+    // `firstRunCompleted` key, so the default (`false`) would wrongly
+    // scaffold the first-run README into a vault that's already in use.
+    // Treat any non-empty saved data as "first run already completed".
+    base.firstRunCompleted = true;
   }
   if (l.orchestrator && typeof l.orchestrator === "object") {
     const o = l.orchestrator as Partial<OrchestratorSettings>;

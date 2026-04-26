@@ -1,4 +1,4 @@
-import { Plugin, TFile, WorkspaceLeaf } from "obsidian";
+import { Notice, Plugin, TFile, WorkspaceLeaf } from "obsidian";
 import { OP_SIDEBAR_VIEW_TYPE, OpSidebarView } from "./sidebarView";
 import { revealAgentSession } from "./revealAgentSession";
 import { findAgentTmuxLocation } from "./agentTmuxLocation";
@@ -110,6 +110,22 @@ import { existsSync } from "fs";
 import { execFile } from "child_process";
 import { promisify } from "util";
 import { PickAndActModal } from "./pickAndActModal";
+import {
+  ChipDeps,
+  dispatchChipRefresh,
+  makeNoteChipPostProcessor,
+  makeOpActionCodeBlockProcessor,
+  noteChipExtension,
+} from "./noteDecorations";
+import type { GhStateCache } from "./noteStatusStrip";
+import {
+  DEMO_PROJECT_FOLDER,
+  liveReadmeWriter,
+  removeDemoProject,
+  scaffoldDemoProject,
+  scaffoldFirstRunReadme,
+} from "./firstRunReadme";
+import { applyPreset, defaultPreset } from "./hotkeyPreset";
 
 const pExecFile = promisify(execFile);
 
@@ -119,6 +135,12 @@ const pExecFile = promisify(execFile);
  * so we don't fire a false-positive [Clear badge] Notice during that window.
  */
 const STALE_AGENT_PROBE_DELAY_MS = 2_000;
+
+/** Re-probe cadence for the OP-151 chip's "is the agent alive?" view.
+ * 20s is an arbitrary balance: short enough that a freshly-killed
+ * tmux window flips the chip within a Pomodoro break, long enough not
+ * to spawn a `tmux list-windows` per second. */
+const CHIP_LIVENESS_INTERVAL_MS = 20_000;
 
 /**
  * The Obsidian plugin half of the Obsidian Projects workflow.
@@ -158,6 +180,14 @@ export default class OpPlugin extends Plugin {
    * resolve on the frontmatter write that `runResolve` itself performs.
    */
   private inFlightResolvePaths = new Set<string>();
+  /** Last-known set of live tmux window names (`op:<ISSUE-ID>`). Populated
+   * by the stale-agent probe on layout-ready and refreshed every
+   * {@link CHIP_LIVENESS_INTERVAL_MS} so the OP-151 note chip can answer
+   * "is this issue's agent alive?" without shelling out per render.
+   * `null` ⇒ probe hasn't run or tmux unavailable; the chip treats that
+   * as "alive" to avoid false-stale chips. */
+  liveTmuxWindowsCache: Set<string> | null = null;
+  private chipLivenessTimer: number | undefined;
 
   /** Persist the current {@link settings} object to `data.json`. */
   async saveSettings(): Promise<void> {
@@ -316,6 +346,91 @@ export default class OpPlugin extends Plugin {
     this.app.workspace.onLayoutReady(() => {
       void this.reconcileAgentStateOnStartup();
       void this.surfaceStaleAgentBadgesOnStartup();
+      // OP-161 / §10: drop the first-run README into the vault on the
+      // very first plugin load. The flag flip is idempotent across reloads.
+      void scaffoldFirstRunReadme(
+        this.settings,
+        liveReadmeWriter(this.app),
+        () => this.saveSettings(),
+      ).catch((err) => {
+        console.error("[op-obsidian] first-run readme scaffold failed", err);
+      });
+    });
+
+    // OP-151 (§2) + OP-162 (§11): note-level decoration infra. The
+    // ViewPlugin paints the chip + strip in Live Preview; the
+    // post-processor mirrors it in Reading mode; the codeblock processor
+    // backs the README's `op-action` chips. All three feed off one
+    // gh-state cache so a mode toggle doesn't re-fetch.
+    const ghCache: GhStateCache = new Map();
+    const chipDeps: ChipDeps = {
+      app: this.app,
+      isAgentLive: (id, agent) => this.isAgentLiveSync(id, agent),
+      getSettings: () => ({
+        view: { disableInlineGithubStatus: this.settings.view.disableInlineGithubStatus },
+      }),
+      ghCache,
+      scheduleRefresh: () => dispatchChipRefresh(this.app),
+    };
+    this.registerEditorExtension(noteChipExtension(chipDeps));
+    this.registerMarkdownPostProcessor(makeNoteChipPostProcessor(chipDeps));
+    this.registerMarkdownCodeBlockProcessor(
+      "op-action",
+      makeOpActionCodeBlockProcessor(this.app),
+    );
+
+    // Re-render the chip when frontmatter changes so the label flips
+    // promptly. The metadataCache `changed` event is debounced; the
+    // refresh dispatcher is idempotent so multiple fires collapse.
+    this.registerEvent(
+      this.app.metadataCache.on("changed", () => dispatchChipRefresh(this.app)),
+    );
+    // Issue lifecycle changes (status flip, agent set/cleared) also
+    // re-render — the bus already debounces internally.
+    this.bus.on("issue:status-changed", () => dispatchChipRefresh(this.app));
+    this.bus.on("issue:updated", () => dispatchChipRefresh(this.app));
+
+    // Periodic liveness re-probe for the chip — the startup probe gives
+    // us an initial set, but the chip needs to flip when an agent dies
+    // mid-session. The interval is registered so plugin unload cancels
+    // it; `probeLiveTmuxWindows` already swallows ENOENT/timeout.
+    this.chipLivenessTimer = window.setInterval(async () => {
+      // Skip the tmux probe entirely when no issue notes are currently
+      // displayed — avoids shelling out every 20 s when the user is
+      // working outside the issue tracker.
+      let hasOpenIssueNote = false;
+      this.app.workspace.iterateAllLeaves((leaf) => {
+        if (hasOpenIssueNote) return;
+        if (leaf.view.getViewType() !== "markdown") return;
+        const file = (leaf.view as { file?: TFile }).file;
+        if (!file) return;
+        const fm = this.app.metadataCache.getFileCache(file)?.frontmatter;
+        if (fm?.type === "issue") hasOpenIssueNote = true;
+      });
+      if (!hasOpenIssueNote) return;
+      const next = await probeLiveTmuxWindows(
+        this.settings.tmuxBinary,
+        tmuxSessionsForCleanup(this.settings.orchestratorState),
+      );
+      if (!next.ok) {
+        if (this.liveTmuxWindowsCache !== null) {
+          this.liveTmuxWindowsCache = null;
+          dispatchChipRefresh(this.app);
+        }
+        return;
+      }
+      const prev = this.liveTmuxWindowsCache;
+      const sameSize = prev?.size === next.live.size;
+      const same = sameSize && prev && [...next.live].every((x) => prev.has(x));
+      if (same) return;
+      this.liveTmuxWindowsCache = next.live;
+      dispatchChipRefresh(this.app);
+    }, CHIP_LIVENESS_INTERVAL_MS);
+    this.register(() => {
+      if (this.chipLivenessTimer !== undefined) {
+        clearInterval(this.chipLivenessTimer);
+        this.chipLivenessTimer = undefined;
+      }
     });
 
     this.registerView(
@@ -595,6 +710,71 @@ export default class OpPlugin extends Plugin {
       id: "op-migrate-links",
       name: "op: migrate legacy issue links",
       callback: () => void this.runMigrateLinksCommand(),
+    });
+
+    // OP-151 / §2 — note-chip backers. Each command is a thin wrapper
+    // around an existing primitive (or, for `op-reopen-issue`, a fresh
+    // status-flip helper). They all use `checkCallback` so they're
+    // hidden from the palette unless an issue note is active — the chip
+    // dispatches them by id but human users get a sensibly filtered
+    // palette too.
+    this.addCommand({
+      id: "op-reopen-issue",
+      name: "op: reopen current issue",
+      checkCallback: (checking) => {
+        const path = this.activeIssuePath();
+        if (checking) return !!path;
+        if (!path) return false;
+        void this.runReopenCommand(path);
+        return true;
+      },
+    });
+    this.addCommand({
+      id: "op-clear-agent",
+      name: "op: clear agent on current issue",
+      checkCallback: (checking) => {
+        const path = this.activeIssuePath();
+        if (checking) return !!path;
+        if (!path) return false;
+        void clearAgentOnIssue(this.app, path);
+        return true;
+      },
+    });
+    this.addCommand({
+      id: "op-set-priority",
+      name: "op: set priority for current issue",
+      checkCallback: (checking) => {
+        const path = this.activeIssuePath();
+        if (checking) return !!path;
+        if (!path) return false;
+        void this.runSetPriorityCommand(path);
+        return true;
+      },
+    });
+
+    // OP-161 / §10 — first-run README chip backers.
+    this.addCommand({
+      id: "op-apply-preset",
+      name: "op: apply default hotkey preset",
+      callback: () => {
+        const preset = defaultPreset();
+        const result = applyPreset(this.app, preset);
+        // Use the existing results modal so the user sees the same UX as
+        // hitting "Apply preset" inside the Settings tab.
+        void import("./settings").then(({ HotkeyPresetResultsModal }) => {
+          new HotkeyPresetResultsModal(this.app, preset, result).open();
+        });
+      },
+    });
+    this.addCommand({
+      id: "op-start-tour",
+      name: "op: start guided tour (scaffold demo project)",
+      callback: () => void this.runStartTourCommand(),
+    });
+    this.addCommand({
+      id: "op-remove-demo",
+      name: "op: remove demo project",
+      callback: () => void this.runRemoveDemoCommand(),
     });
 
     // op-dev:* commands are gated by settings.developer.showDevCommands so
@@ -1097,6 +1277,8 @@ export default class OpPlugin extends Plugin {
       console.debug("[op-obsidian] stale-agent probe skipped — tmux unavailable");
       return;
     }
+    // Cache the live set for the OP-151 chip's `isAgentLiveSync`.
+    this.liveTmuxWindowsCache = probe.live;
     const stale = selectStaleAgentBadges(issues, probe.live);
     for (const entry of stale) {
       notifyAction({
@@ -3165,6 +3347,104 @@ export default class OpPlugin extends Plugin {
         (err) => console.error("[op-obsidian] uri auto-create failed", err),
       );
     }
+  }
+
+  /**
+   * OP-151 chip helper — reopen a resolved/wontfix issue. Flips
+   * `status: open`, clears `resolved:`, moves the file out of
+   * `RESOLVED ISSUES/`. Idempotent on `RESOLVED ISSUES/` membership: if
+   * the file is already in `ISSUES/` we only flip the frontmatter.
+   */
+  private async runReopenCommand(path: string): Promise<void> {
+    const file = this.app.vault.getAbstractFileByPath(path);
+    if (!(file instanceof TFile)) {
+      new Notice(`op: reopen — file not found at ${path}`);
+      return;
+    }
+    await this.app.fileManager.processFrontMatter(file, (fm) => {
+      fm.status = "open";
+      delete (fm as Record<string, unknown>).resolved;
+    });
+    if (path.includes("/RESOLVED ISSUES/")) {
+      const newPath = path.replace("/RESOLVED ISSUES/", "/ISSUES/");
+      const dir = newPath.slice(0, newPath.lastIndexOf("/"));
+      const dirEntry = this.app.vault.getAbstractFileByPath(dir);
+      if (!dirEntry) await this.app.vault.createFolder(dir);
+      try {
+        await this.app.fileManager.renameFile(file, newPath);
+      } catch (err: any) {
+        new Notice(`op: reopen — move failed (${err?.message ?? err})`);
+        return;
+      }
+    }
+    new Notice("op: issue reopened");
+    dispatchChipRefresh(this.app);
+  }
+
+  /** OP-151 chip helper — set priority via prompt. Tiny wrapper. */
+  private async runSetPriorityCommand(path: string): Promise<void> {
+    const file = this.app.vault.getAbstractFileByPath(path);
+    if (!(file instanceof TFile)) return;
+    const cycle: Array<"low" | "med" | "high"> = ["low", "med", "high"];
+    const current =
+      (this.app.metadataCache.getFileCache(file)?.frontmatter as
+        | { priority?: string }
+        | undefined)?.priority ?? "med";
+    const next = cycle[(cycle.indexOf(current as any) + 1) % cycle.length];
+    await this.app.fileManager.processFrontMatter(file, (fm) => {
+      fm.priority = next;
+    });
+    new Notice(`op: priority → ${next}`);
+  }
+
+  /** OP-161 chip helper — scaffold the demo project. */
+  private async runStartTourCommand(): Promise<void> {
+    try {
+      const result = await scaffoldDemoProject(this.app);
+      if (!result.created) {
+        new Notice("op: demo project already present at " + DEMO_PROJECT_FOLDER);
+      } else {
+        new Notice("op: demo project scaffolded at " + DEMO_PROJECT_FOLDER);
+        const status = this.app.vault.getAbstractFileByPath(result.statusPath);
+        if (status instanceof TFile) {
+          await this.app.workspace.getLeaf(false).openFile(status);
+        }
+      }
+    } catch (err: any) {
+      console.error("[op-obsidian] start-tour failed", err);
+      new Notice("op: start tour failed — " + (err?.message ?? err));
+    }
+  }
+
+  /** OP-161 chip helper — trash the demo project. */
+  private async runRemoveDemoCommand(): Promise<void> {
+    try {
+      const result = await removeDemoProject(this.app);
+      if (!result.removed) {
+        new Notice("op: demo project not found (already removed?).");
+      } else {
+        new Notice("op: demo project trashed.");
+      }
+    } catch (err: any) {
+      console.error("[op-obsidian] remove-demo failed", err);
+      new Notice("op: remove demo failed — " + (err?.message ?? err));
+    }
+  }
+
+  /**
+   * Synchronous "is the agent's tmux window alive?" probe used by the
+   * note chip. Reuses {@link findAgentTmuxLocation} via the cached
+   * orchestrator session list. Returns `null` when the agent field is
+   * empty (the chip treats that as "no agent set" — irrelevant) or
+   * when we can't read tmux output (treat as live to avoid false-stale
+   * chips). The chip's signature includes the result so a `metadataCache`
+   * change will recompute, but we don't expensively poll on every paint.
+   */
+  private isAgentLiveSync(id: string, agent: string | undefined): boolean | null {
+    if (!agent || agent.trim().length === 0) return null;
+    const live = this.liveTmuxWindowsCache;
+    if (!live) return null;
+    return live.has(tmuxWindowName(id));
   }
 }
 

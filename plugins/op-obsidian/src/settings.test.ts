@@ -237,4 +237,23 @@ describe("mergeSettings", () => {
     ).toEqual(["foo", "bar"]);
     expect(mergeSettings({ projectOrder: ["  baz  "] }).projectOrder).toEqual(["baz"]);
   });
+
+  it("firstRunCompleted: fresh empty data.json keeps default false; explicit false allowed; existing user inferred true", () => {
+    // Fresh install: data.json is empty — firstRunCompleted stays false so
+    // the README is scaffolded on first load.
+    expect(mergeSettings({}).firstRunCompleted).toBe(false);
+
+    // Explicitly stored false (user ran "reset onboarding"): honoured as-is.
+    expect(mergeSettings({ firstRunCompleted: false }).firstRunCompleted).toBe(false);
+
+    // Explicitly stored true: honoured.
+    expect(mergeSettings({ firstRunCompleted: true }).firstRunCompleted).toBe(true);
+
+    // Existing user upgrading from ≤ 0.57.x: data.json has other keys but
+    // no firstRunCompleted. We infer true so the README isn't scaffolded
+    // into a vault already in use.
+    expect(mergeSettings({ defaultAgent: "claude" }).firstRunCompleted).toBe(true);
+    expect(mergeSettings({ workingDirs: { "my-project": "/code/my-project" } }).firstRunCompleted).toBe(true);
+    expect(mergeSettings({ view: { defaultTab: "issues" } }).firstRunCompleted).toBe(true);
+  });
 });
