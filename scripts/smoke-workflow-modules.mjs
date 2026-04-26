@@ -73,10 +73,10 @@ let failed = 0;
 
 console.log("smoke-workflow-modules: probing op-explain-workflow + op-list-vars\n");
 
-// ---- 1. op-explain-workflow id=TST-5 mode=kickoff -------------------------
+// ---- 1. op-explain-workflow id=<ISSUE> mode=kickoff -----------------------
 const kickoff = explainWorkflow(ISSUE, "kickoff", AGENT);
-expect("kickoff: payload.issueId === TST-5", kickoff.issueId === ISSUE, kickoff);
-expect("kickoff: payload.project === testing", kickoff.project === PROJECT, kickoff);
+expect(`kickoff: payload.issueId === ${ISSUE}`, kickoff.issueId === ISSUE, kickoff);
+expect(`kickoff: payload.project === ${PROJECT}`, kickoff.project === PROJECT, kickoff);
 expect("kickoff: payload.mode === kickoff", kickoff.mode === "kickoff", kickoff);
 expect(
   "kickoff: composed.text mentions the issue id",
@@ -114,7 +114,7 @@ expect(
   kickoff.diagnostics,
 );
 
-// ---- 2. op-explain-workflow id=TST-5 mode=plan ----------------------------
+// ---- 2. op-explain-workflow id=<ISSUE> mode=plan --------------------------
 const plan = explainWorkflow(ISSUE, "plan", AGENT);
 expect("plan: payload.mode === plan", plan.mode === "plan", plan);
 expect(
@@ -140,7 +140,7 @@ expect(
   plan.diagnostics,
 );
 
-// ---- 3. op-list-vars project=testing issue=TST-5 --------------------------
+// ---- 3. op-list-vars project=<PROJECT> issue=<ISSUE> ---------------------
 const listVars = listVarsForIssue(PROJECT, ISSUE);
 // Fail loudly if op-list-vars returned a top-level error (e.g. project slug
 // mismatch, handler throw) rather than silently passing the structural checks
@@ -152,14 +152,14 @@ if (listVars.error) {
   );
 }
 expect("list-vars: context.hasContext === true", listVars.context?.hasContext === true, listVars);
-expect("list-vars: context.issueId === TST-5", listVars.context?.issueId === ISSUE, listVars);
+expect(`list-vars: context.issueId === ${ISSUE}`, listVars.context?.issueId === ISSUE, listVars);
 expect(
   "list-vars: registry has at least one entry",
   Array.isArray(listVars.vars) && listVars.vars.length > 0,
   listVars,
 );
 const idRow = listVars.vars?.find((v) => v.name === "id");
-expect("list-vars: id row resolves to TST-5", idRow?.currentValue === ISSUE, idRow);
+expect(`list-vars: id row resolves to ${ISSUE}`, idRow?.currentValue === ISSUE, idRow);
 
 // ---- summary --------------------------------------------------------------
 if (failed > 0) {
