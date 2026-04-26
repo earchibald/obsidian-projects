@@ -123,10 +123,23 @@ function extractPluginVars(src, sentinels) {
     });
   }
 
+  // Count `compute:` occurrences in the block as a proxy for the number of
+  // entries. Each entry has exactly one `compute:` field. If we captured fewer
+  // entries than there are `compute:` fields, some entries were skipped because
+  // their keys are in a different order — that's a silent partial failure that
+  // the `entries.length === 0` guard alone would not catch.
+  const computeCount = (block.match(/\bcompute\s*:/g) || []).length;
   if (entries.length === 0) {
     fail(
       `${rel(PLUGIN_VAR_REGISTRY_PATH)}: PLUGIN_VAR_REGISTRY parsed to zero entries — the regex no longer matches the source shape. ` +
         `Update extractPluginVars().`,
+    );
+  }
+  if (entries.length < computeCount) {
+    fail(
+      `${rel(PLUGIN_VAR_REGISTRY_PATH)}: extracted ${entries.length} of ${computeCount} entries — ` +
+        `some entries have keys in the wrong order (expected: name, description, example, compute). ` +
+        `Reorder the keys or update extractPluginVars() if the registry shape changed.`,
     );
   }
   return entries;
@@ -170,8 +183,15 @@ function renderStringOrTemplate(raw, subs) {
           out += "\r";
           break;
         default:
-          // Unknown escape — preserve verbatim so the failure mode is visible.
-          out += "\\" + next;
+          // Unknown escape — fail loudly rather than passing through the raw
+          // `\X` text, which would produce broken or misleading table content.
+          // Either decode the escape in renderStringOrTemplate() or replace
+          // the template literal with a plain string.
+          fail(
+            `${rel(PLUGIN_VAR_REGISTRY_PATH)}: unrecognized escape sequence \`\\${next}\` ` +
+              `in template literal: ${JSON.stringify(raw)}. ` +
+              `Add the escape to renderStringOrTemplate(), or replace the template with a plain string.`,
+          );
       }
       i += 2;
       continue;
@@ -245,10 +265,22 @@ function extractModelRegistry(src) {
     });
   }
 
+  // Count `versioned:` occurrences in the block as a proxy for the number of
+  // agent entries. Each agent record has exactly one `versioned:` field.
+  // Fewer captured agents than `versioned:` fields means a partial extraction
+  // due to key ordering — the `agents.length === 0` guard alone misses this.
+  const versionedCount = (block.match(/\bversioned\s*:/g) || []).length;
   if (agents.length === 0) {
     fail(
       `${rel(MODEL_REGISTRY_PATH)}: MODEL_REGISTRY parsed to zero agents — the regex no longer matches the source shape. ` +
         `Update extractModelRegistry().`,
+    );
+  }
+  if (agents.length < versionedCount) {
+    fail(
+      `${rel(MODEL_REGISTRY_PATH)}: extracted ${agents.length} of ${versionedCount} agents — ` +
+        `some agent records have keys in the wrong order (expected: aliases, versioned). ` +
+        `Reorder the keys or update extractModelRegistry() if the registry shape changed.`,
     );
   }
   return agents;
@@ -323,7 +355,11 @@ function renderModelRegistryTable(agents) {
 }
 
 function escapeCell(s) {
-  return s.replaceAll("|", "\\|").replaceAll("\n", " ");
+  return s
+    .replaceAll("|", "\\|")
+    .replaceAll("\n", " ")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;");
 }
 
 // ---------------------------------------------------------------------------
@@ -352,6 +388,21 @@ function rewritePages(pages, blocks) {
 }
 
 function rewriteOnePage(path, content, blocks) {
+  // Pre-check: every open sentinel must have a matching close and vice versa.
+  // The replacement regex below only matches complete open/close pairs, so an
+  // open marker without a close is silently skipped — unless we check here.
+  const openRe = /<!-- AUTO-GENERATED:([\w-]+) -->/g;
+  const closeRe = /<!-- \/AUTO-GENERATED:([\w-]+) -->/g;
+  const balance = {};
+  for (const m of content.matchAll(openRe)) balance[m[1]] = (balance[m[1]] || 0) + 1;
+  for (const m of content.matchAll(closeRe)) balance[m[1]] = (balance[m[1]] || 0) - 1;
+  for (const [key, delta] of Object.entries(balance)) {
+    if (delta !== 0) {
+      const dir = delta > 0 ? "open marker without a matching close" : "close marker without a matching open";
+      fail(`${rel(path)}: AUTO-GENERATED:${key} has an unmatched ${dir}.`);
+    }
+  }
+
   const re = /<!-- AUTO-GENERATED:([\w-]+) -->([\s\S]*?)<!-- \/AUTO-GENERATED:\1 -->/g;
   let found = 0;
   const seen = new Set();
