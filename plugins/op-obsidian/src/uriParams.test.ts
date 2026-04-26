@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { normalizeUriParams, collectRepeated } from "./uriParams";
+import { normalizeUriParams, collectRepeated, parseLaunchVarsFromUri } from "./uriParams";
 
 describe("normalizeUriParams", () => {
   it("decodes + as space in all string values", () => {
@@ -37,5 +37,82 @@ describe("collectRepeated", () => {
 
   it("trims and drops blanks", () => {
     expect(collectRepeated({ scope: " a , ,b\n\nc " }, "scope")).toEqual(["a", "b", "c"]);
+  });
+});
+
+describe("parseLaunchVarsFromUri", () => {
+  it("extracts each var.<name>=<value> key", () => {
+    expect(
+      parseLaunchVarsFromUri({
+        id: "OP-1",
+        "var.tone": "playful",
+        "var.reviewer": "alice",
+      }),
+    ).toEqual({ tone: "playful", reviewer: "alice" });
+  });
+
+  it("preserves empty string as a distinct override value", () => {
+    expect(parseLaunchVarsFromUri({ "var.tone": "" })).toEqual({ tone: "" });
+  });
+
+  it("ignores keys without the var. prefix", () => {
+    expect(parseLaunchVarsFromUri({ id: "OP-1", agent: "claude" })).toEqual({});
+  });
+
+  it("silently drops malformed names (digits-first, empty, slashes)", () => {
+    expect(
+      parseLaunchVarsFromUri({
+        "var.": "x",
+        "var.1bad": "x",
+        "var.has space": "x",
+        "var.has/slash": "x",
+        "var.good_one": "ok",
+      }),
+    ).toEqual({ good_one: "ok" });
+  });
+
+  it("accepts hyphenated and underscored names", () => {
+    expect(
+      parseLaunchVarsFromUri({
+        "var.repo-path": "/abs",
+        "var.review_target": "main",
+      }),
+    ).toEqual({ "repo-path": "/abs", review_target: "main" });
+  });
+
+  it("parses the packed `vars=name=val` form via collectRepeated", () => {
+    expect(parseLaunchVarsFromUri({ vars: "tone=playful\nreviewer=alice" })).toEqual({
+      tone: "playful",
+      reviewer: "alice",
+    });
+    expect(parseLaunchVarsFromUri({ vars: "tone=playful,reviewer=alice" })).toEqual({
+      tone: "playful",
+      reviewer: "alice",
+    });
+  });
+
+  it("packed-form values may contain `=` after the first one", () => {
+    expect(parseLaunchVarsFromUri({ vars: "expr=a=b=c" })).toEqual({ expr: "a=b=c" });
+  });
+
+  it("packed form wins on duplicate names — explicit affordance overrides prefix scan", () => {
+    expect(
+      parseLaunchVarsFromUri({
+        "var.tone": "from-prefix",
+        vars: "tone=from-packed",
+      }),
+    ).toEqual({ tone: "from-packed" });
+  });
+
+  it("packed form drops malformed entries silently", () => {
+    expect(
+      parseLaunchVarsFromUri({
+        vars: "ok=val\nbroken-no-equals\n=missing-name\n1bad=x",
+      }),
+    ).toEqual({ ok: "val" });
+  });
+
+  it("returns {} for an entirely empty record", () => {
+    expect(parseLaunchVarsFromUri({})).toEqual({});
   });
 });

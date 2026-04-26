@@ -59,7 +59,7 @@ import {
 import { closeReasonForStatus } from "./githubPure";
 import { resolveRepoPath } from "./repoPath";
 import { writeUriResponse, type UriResponsePayload } from "./uriResponse";
-import { normalizeUriParams, collectRepeated } from "./uriParams";
+import { normalizeUriParams, collectRepeated, parseLaunchVarsFromUri } from "./uriParams";
 import { runResolve, type ResolveArgs } from "./resolve";
 import { shouldAutoResolve } from "./autoResolveOnStatusChange";
 import {
@@ -111,6 +111,8 @@ import { DEFAULT_SETTINGS, mergeSettings, OpSettingsTab, type OpSettings } from 
 import { AgentDetector } from "./agentDetect";
 import { AGENT_IDS, isAgentLaunchMode, type AgentId, type AgentLaunchMode } from "./agentProfiles";
 import { openAgent, clearAgentOnIssue, resolveProfile } from "./openAgent";
+import { readLaunchVarsFromFrontmatter } from "./varOverridePanelPure";
+import { openLaunchAgentModal } from "./launchAgentModal";
 import { editWorkflow } from "./editWorkflow";
 import { editModule } from "./editModule";
 import { loadModules } from "./workflowModule";
@@ -3563,9 +3565,44 @@ export default class OpPlugin extends Plugin {
 
   private async doOpenAgent(
     entry: IssueEntry,
-    opts: { forcePick?: boolean; agentOverride?: AgentId; mode?: AgentLaunchMode } = {},
+    opts: {
+      forcePick?: boolean;
+      agentOverride?: AgentId;
+      mode?: AgentLaunchMode;
+      /** OP-204 (3d): per-launch user-var overrides from the launch modal,
+       *  the URI parser, or the auto-advance carry-through. */
+      launchVars?: Record<string, string>;
+    } = {},
   ): Promise<void> {
     try {
+      // OP-204 (3d): forcePick paths route through the new launch modal so the
+      // user can both pick the agent AND set Workflow-variable overrides at
+      // the same time. Silent default-agent launches skip the modal — no
+      // regression for the zero-friction happy path.
+      let effectiveAgentOverride = opts.agentOverride;
+      let effectiveLaunchVars = opts.launchVars;
+      if (opts.forcePick) {
+        const detection = this.detector.get() ?? (await this.detector.refresh());
+        const installed = AGENT_IDS.filter((id) => detection?.[id]?.installed);
+        if (installed.length === 0) {
+          notify("op: no supported agent binaries found on PATH");
+          return;
+        }
+        const carried =
+          opts.launchVars && Object.keys(opts.launchVars).length > 0
+            ? opts.launchVars
+            : this.readLaunchVarsFrontmatter(entry.path);
+        const result = await openLaunchAgentModal(this.app, {
+          project: entry.project,
+          installed,
+          defaultAgent: this.settings.defaultAgent,
+          settings: this.settings,
+          initialLaunchVars: carried,
+        });
+        if (!result) return; // user cancelled
+        effectiveAgentOverride = result.agentId;
+        effectiveLaunchVars = result.launchVars;
+      }
       const res = await openAgent(
         this.app,
         this.store,
@@ -3574,9 +3611,10 @@ export default class OpPlugin extends Plugin {
         () => this.saveSettings(),
         {
           entry,
-          forcePick: opts.forcePick,
-          agentOverride: opts.agentOverride,
+          forcePick: false,
+          agentOverride: effectiveAgentOverride,
           mode: opts.mode,
+          launchVars: effectiveLaunchVars,
         },
       );
       if (res) {
@@ -3607,13 +3645,20 @@ export default class OpPlugin extends Plugin {
         : undefined;
     const forcePick = params.pick === "1" || params.pick === "true";
     const mode: AgentLaunchMode = isAgentLaunchMode(params.mode) ? params.mode : "work";
+    // OP-204 (3d): collect any `var.<name>=<value>` URI keys (or the packed
+    // `vars=` form) into the launch-override map. URIs are automation; we do
+    // NOT show the modal even when overrides are present — caller is
+    // expressing intent in the URI shape itself.
+    const launchVarsFromUri = parseLaunchVarsFromUri(params);
+    const launchVars =
+      Object.keys(launchVarsFromUri).length > 0 ? launchVarsFromUri : undefined;
     const res = await openAgent(
       this.app,
       this.store,
       this.settings,
       this.detector,
       () => this.saveSettings(),
-      { entry, agentOverride, forcePick, mode },
+      { entry, agentOverride, forcePick, mode, launchVars },
     );
     if (!res) throw new Error("op-open-agent was cancelled or no agent available");
     await this.recordRecency(res.issueId);
@@ -3758,8 +3803,30 @@ export default class OpPlugin extends Plugin {
     await new Promise((r) => setTimeout(r, 0));
     const refreshed = this.store.byId(entry.id);
     const target = refreshed && refreshed.type === "issue" ? refreshed : entry;
-    await this.doOpenAgent(target, { mode: decision.nextMode });
+    // OP-204 (3d): carry the prior stage's `launch_vars:` forward so a level-4
+    // override the user typed in stage N is still active in stage N+1. Read
+    // off the cached frontmatter via metadataCache (no disk re-read needed —
+    // openAgent just wrote the field if there were any overrides).
+    const carriedLaunchVars = this.readLaunchVarsFrontmatter(target.path);
+    await this.doOpenAgent(target, {
+      mode: decision.nextMode,
+      launchVars:
+        Object.keys(carriedLaunchVars).length > 0 ? carriedLaunchVars : undefined,
+    });
     return decision;
+  }
+
+  /**
+   * OP-204 (3d): read `launch_vars:` from the issue note's cached frontmatter
+   * via metadataCache. Returns `{}` when the key is missing or unusable —
+   * mirrors {@link readLaunchVarsFromFrontmatter} but bound to a path rather
+   * than a raw value.
+   */
+  private readLaunchVarsFrontmatter(path: string): Record<string, string> {
+    const file = this.app.vault.getAbstractFileByPath(path);
+    if (!(file instanceof TFile)) return {};
+    const fm = this.app.metadataCache.getFileCache(file)?.frontmatter;
+    return readLaunchVarsFromFrontmatter(fm?.launch_vars);
   }
 
   private runLaunchNextStageCommand(): void {

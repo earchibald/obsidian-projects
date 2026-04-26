@@ -133,6 +133,9 @@ export async function runResolve(
       delete fm.agent;
       delete fm.agent_session;
     }
+    // OP-204 (3d): clear `launch_vars:` so a re-opened resolved issue does
+    // not inherit stale Launch overrides from its previous lifecycle.
+    delete fm.launch_vars;
   });
 
   await app.fileManager.renameFile(file, targetPath);

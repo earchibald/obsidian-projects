@@ -1000,3 +1000,148 @@ a.op-sidebar__agent:hover {
   flex-direction: column;
   gap: 0.25rem;
 }
+
+/* OP-204 (3d): launch-time variable override modal. Folded "Workflow
+   variables" disclosure with per-row precedence badges (canonical names in
+   primary copy, abbreviations only in tooltips per OP-201). */
+.op-launch-modal__panel {
+  margin-top: 0.5rem;
+}
+
+.op-launch-modal__summary {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  width: 100%;
+  padding: 0.4rem 0.6rem;
+  background: var(--background-secondary);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 4px;
+  font-size: var(--font-ui-small);
+  color: var(--text-normal);
+  cursor: pointer;
+}
+
+.op-launch-modal__summary:hover {
+  background: var(--background-modifier-hover);
+}
+
+.op-launch-modal__summary-icon {
+  font-size: 0.7rem;
+  width: 0.8rem;
+  text-align: center;
+}
+
+.op-launch-modal__summary-label {
+  font-weight: 600;
+}
+
+.op-launch-modal__summary-count {
+  margin-left: auto;
+  color: var(--text-muted);
+}
+
+.op-launch-modal__toolbar {
+  margin-top: 0.5rem;
+}
+
+.op-launch-modal__toolbar .setting-item {
+  border-top: none;
+  padding-top: 0;
+  padding-bottom: 0.4rem;
+}
+
+.op-launch-modal__hint {
+  margin: 0.5rem 0;
+  padding: 0.4rem 0.6rem;
+  border-left: 3px solid var(--background-modifier-border);
+  background: var(--background-secondary);
+  color: var(--text-muted);
+  font-size: var(--font-ui-small);
+}
+
+.op-launch-modal__rows {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  margin-top: 0.4rem;
+}
+
+.op-launch-modal__row {
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 4px;
+  padding: 0.5rem 0.6rem;
+}
+
+.op-launch-modal__row--override {
+  border-color: var(--interactive-accent);
+}
+
+.op-launch-modal__row--unset {
+  border-color: var(--color-yellow, #b58900);
+}
+
+.op-launch-modal__row-label {
+  display: flex;
+  gap: 0.5rem;
+  align-items: baseline;
+  flex-wrap: wrap;
+}
+
+.op-launch-modal__row-name {
+  font-family: var(--font-monospace, monospace);
+  font-weight: 600;
+}
+
+.op-launch-modal__badge {
+  display: inline-block;
+  padding: 0 0.45rem;
+  border-radius: 999px;
+  font-size: var(--font-ui-smaller, 0.7rem);
+  border: 1px solid var(--background-modifier-border);
+  background: var(--background-secondary);
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.op-launch-modal__badge--launch {
+  border-color: var(--interactive-accent);
+  background: var(--interactive-accent);
+  color: var(--text-on-accent);
+}
+
+.op-launch-modal__badge--project {
+  border-color: var(--color-purple, #7e57c2);
+  color: var(--color-purple, #7e57c2);
+}
+
+.op-launch-modal__badge--global {
+  border-color: var(--color-blue, #2196f3);
+  color: var(--color-blue, #2196f3);
+}
+
+.op-launch-modal__badge--module {
+  border-color: var(--color-green, #43a047);
+  color: var(--color-green, #43a047);
+}
+
+.op-launch-modal__badge--unset {
+  border-color: var(--color-yellow, #b58900);
+  color: var(--color-yellow, #b58900);
+}
+
+.op-launch-modal__row-desc {
+  font-size: var(--font-ui-smaller, 0.75rem);
+  color: var(--text-muted);
+  margin-top: 0.15rem;
+}
+
+.op-launch-modal__row-input .setting-item {
+  border-top: none;
+  padding: 0.2rem 0 0;
+}
+
+.op-launch-modal__input {
+  font-family: var(--font-monospace, monospace);
+  width: 100%;
+}
