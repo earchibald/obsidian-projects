@@ -89,16 +89,23 @@ export async function openAgent(
   const detection = detector.get() ?? (await detector.refresh());
   const mode: AgentLaunchMode = args.mode ?? "work";
 
-  // OP-200 (2c): per-step resolver. Runs only when the user did NOT manually
-  // override the agent (manual picker wins over the workflow file's
-  // declarations — workflow declarations are a default, not a hard
-  // constraint). The resolver also fires when args.agentOverride is unset
-  // and the workflow file declares an agent the user's settings.defaultAgent
-  // doesn't match. On a BadModelSpecError / NoInstalledAgentError the launch
-  // is cancelled and the user sees an actionable Notice with a recovery seam.
+  // OP-200 (2c): per-step resolver. Skipped when the user has explicitly
+  // indicated they want to choose the agent themselves — workflow declarations
+  // are a default, not a hard constraint. There are three bypass conditions:
+  //   • args.agentOverride — caller already nominated a specific agent (e.g.
+  //     a URI-dispatch with agent= or an auto-advance with a fixed agent id).
+  //   • args.forcePick — the invoking command requested "always show the
+  //     picker" for this launch. Honouring the user's intent means the
+  //     workflow file must not pre-empt the modal.
+  //   • settings.alwaysPick — user-level preference; same rationale as
+  //     forcePick.
+  // When any bypass fires, resolved = null and pickAgent handles agent
+  // selection normally (modal or default — pickAgent checks mustPick itself).
+  // Model resolution is also skipped on bypass because the model spec is
+  // bound to the workflow's declared agent; a user-chosen agent may differ.
   let resolved: ResolveStepOutput | null;
   try {
-    resolved = args.agentOverride
+    resolved = args.agentOverride || args.forcePick || settings.alwaysPick
       ? null
       : await loadAndResolveStep(app, args.entry.project, mode, detection, settings.defaultAgent);
   } catch (err) {
