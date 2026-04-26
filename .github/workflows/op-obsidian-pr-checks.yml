@@ -1,0 +1,48 @@
+name: op-obsidian PR checks
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  lockfile-sync:
+    name: Lockfile sync (npm ci --dry-run)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # Detect whether this PR touches op-obsidian files.  The job always
+      # runs so it can be registered as a required status check without
+      # blocking unrelated PRs (path-filtered `on:` triggers show as
+      # "Expected" / pending in required-checks UX; step-level `if:` shows
+      # as skipped / neutral, which counts as passing).
+      - name: Detect op-obsidian changes
+        id: op_changes
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          if git diff --name-only "$BASE_SHA" "$HEAD_SHA" \
+               | grep -qE '^plugins/op-obsidian/|^\.github/workflows/op-obsidian-pr-checks\.yml$'; then
+            echo "relevant=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "relevant=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Setup Node
+        if: steps.op_changes.outputs.relevant == 'true'
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      # --dry-run reports what npm ci would install / remove without
+      # downloading packages; it still enforces strict lockfile consistency,
+      # which is the only thing we need to verify here.
+      - name: npm ci --dry-run (strict lockfile check)
+        if: steps.op_changes.outputs.relevant == 'true'
+        working-directory: plugins/op-obsidian
+        run: npm ci --dry-run
