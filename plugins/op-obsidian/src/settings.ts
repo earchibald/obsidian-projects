@@ -891,20 +891,15 @@ export class OpSettingsTab extends PluginSettingTab {
         }),
       );
 
-    new Setting(containerEl)
-      .setName("Workflow inline cap (chars)")
-      .setDesc(
-        "If WORKFLOW.md exceeds this size, the prompt surfaces only the path with a 'read this first' hint instead of inlining. 0 disables inlining (path-only).",
-      )
-      .addText((t) =>
-        t.setValue(String(s.injection.maxWorkflowChars)).onChange(async (v) => {
-          const n = parseInt(v, 10);
-          if (Number.isFinite(n) && n >= 0) {
-            s.injection.maxWorkflowChars = n;
-            await this.plugin.saveSettings();
-          }
-        }),
-      );
+    // OP-208 (8a, cutover): the "Workflow inline cap (chars)" row was retired
+    // here. The legacy WORKFLOW.md inline path in `promptBuild.ts` was removed
+    // at the same cutover; `injection.maxWorkflowChars` is still honored by
+    // the modular composer (`composeWorkflowPure.ts`) as a soft size budget
+    // (info-severity `size-budget` diagnostic on overrun) and by the editor
+    // validator. The Workflows top-level group from OP-201 surfaces those
+    // diagnostics, so an editable text-input row here would be redundant —
+    // and confusing, since the new default of 50000 is generous enough that
+    // most users never hit the budget.
 
     const preambleSetting = new Setting(containerEl)
       .setName("Extra preamble")
