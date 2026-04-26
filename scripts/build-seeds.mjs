@@ -1,0 +1,256 @@
+#!/usr/bin/env node
+// Build the OP-Test seed-tag ladder by driving op-obsidian via the `obsidian`
+// CLI. Each seed builds cumulatively on the previous; on re-run the script
+// resets to the baseline (seed/empty) and rebuilds from current plugin
+// behavior, so the seeds stay in sync as the schema evolves. (OP-147)
+//
+// Usage:
+//   node scripts/build-seeds.mjs
+//
+// Preconditions:
+//   - OP-Test is the active Obsidian vault.
+//   - OP-Test git working tree is clean (commit/stash any untracked work first).
+//   - `seed/empty` tag exists OR HEAD is the desired empty baseline (the
+//     script tags HEAD as seed/empty if the tag is absent on first run).
+//   - `gh` CLI is authenticated for the github-linked seed.
+//
+// The seed ladder:
+//   seed/empty          — vault config + op-obsidian enabled, no projects
+//   seed/scaffolded     — one project (TST / testing)
+//   seed/mid-flow       — TST-1 resolved, TST-2 in-progress (with TASKS),
+//                         TST-3 open + related to TST-1, TST-4 open
+//   seed/github-linked  — adds GHB / github-bound, repo: op-test-fixture
+//   seed/multi-project  — adds TWO / second-project, TWO-1 related to TST-3
+
+import { existsSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import { homedir } from "node:os";
+import { join } from "node:path";
+
+import {
+  OP_TEST_VAULT,
+  assertActiveVaultIsOpTest,
+  fail,
+  runGit,
+  runObsidian,
+} from "./lib/op-test.mjs";
+
+const FIXTURE_REPO_NAME = "op-test-fixture";
+const FIXTURE_CLONE_PATH = join(homedir(), "Documents/OP-Test", FIXTURE_REPO_NAME);
+const FIXTURE_DESCRIPTION =
+  "Disposable fixture repo for op-obsidian functional testing — no production use.";
+
+assertActiveVaultIsOpTest();
+assertCleanTree();
+ensureBaselineTag();
+
+build("seed/empty", () => {
+  // Baseline; nothing to mutate. Tagging is unconditional below.
+});
+
+build("seed/scaffolded", () => {
+  dispatch("op-scaffold", { slug: "testing", prefix: "TST" });
+});
+
+build("seed/mid-flow", () => {
+  // TST-1 — resolved
+  dispatch("op-new", {
+    project: "testing",
+    title: "Set up STATUS",
+    priority: "med",
+    scope: "Initial scope bullet",
+  });
+  dispatch("op-work", { issue: "TST-1" });
+  dispatch("op-resolve", { issue: "TST-1" });
+
+  // TST-2 — in-progress (op-work creates the initial TASKS note)
+  dispatch("op-new", {
+    project: "testing",
+    title: "Wire up the test runner",
+    priority: "med",
+    scope: "First sub-bullet\nSecond sub-bullet",
+  });
+  dispatch("op-work", { issue: "TST-2" });
+
+  // TST-3 — open, related-to TST-1
+  const tst3 = dispatch("op-new", {
+    project: "testing",
+    title: "Document the test conventions",
+    priority: "low",
+  });
+  if (tst3?.path) {
+    setRelated(tst3.path, ["TST-1"]);
+  }
+
+  // TST-4 — open
+  dispatch("op-new", {
+    project: "testing",
+    title: "Wire up CI smoke",
+    priority: "low",
+  });
+});
+
+build("seed/github-linked", () => {
+  ensureGithubFixtureRepo();
+  ensureFixtureClone();
+
+  dispatch("op-scaffold", {
+    slug: "github-bound",
+    prefix: "GHB",
+    repo_path: FIXTURE_CLONE_PATH,
+  });
+  dispatch("op-new", {
+    project: "github-bound",
+    title: "First GH-linked issue",
+    priority: "med",
+  });
+});
+
+build("seed/multi-project", () => {
+  dispatch("op-scaffold", { slug: "second-project", prefix: "TWO" });
+  const two1 = dispatch("op-new", {
+    project: "second-project",
+    title: "Cross-project relation example",
+    priority: "med",
+  });
+  if (two1?.path) {
+    setRelated(two1.path, ["TST-3"]);
+  }
+});
+
+console.log("\nseed ladder built and tagged. Verify with `git -C <op-test> tag -l seed/*`.");
+
+// ---------------------------------------------------------------------------
+
+function assertCleanTree() {
+  const r = runGit(["status", "--porcelain"]);
+  if (r.stdout.trim()) {
+    fail(
+      `OP-Test working tree is not clean. Commit or stash before running build-seeds:\n${r.stdout}`,
+    );
+  }
+}
+
+// First run: tag HEAD as seed/empty if no seed tag exists yet.
+// Subsequent runs: reset --hard to seed/empty before rebuilding so the
+// ladder is idempotent.
+function ensureBaselineTag() {
+  const tagExists =
+    runGit(["rev-parse", "--verify", "refs/tags/seed/empty"], { allowFail: true })
+      .status === 0;
+  if (!tagExists) {
+    console.log("seed/empty tag absent — tagging current HEAD as the baseline");
+    runGit(["tag", "seed/empty", "HEAD"]);
+  } else {
+    console.log("resetting OP-Test to seed/empty for idempotent rebuild");
+    runGit(["reset", "--hard", "seed/empty"]);
+    runGit(["clean", "-fd"]);
+  }
+}
+
+function build(tag, mutate) {
+  console.log(`\n=== building ${tag} ===`);
+  if (tag !== "seed/empty") {
+    mutate();
+    runGit(["add", "-A"]);
+    const status = runGit(["status", "--porcelain"]).stdout.trim();
+    if (status) {
+      runGit(["commit", "-m", `seed: ${tag.slice("seed/".length)}`]);
+    } else {
+      console.log("(no vault changes — empty commit skipped)");
+    }
+  }
+  runGit(["tag", "-f", tag]);
+  console.log(`tagged ${tag}`);
+}
+
+// Run an `obsidian op-*` command with key=value args. Returns the parsed JSON
+// payload from Projects/_scratch/op-last-response.md (so callers can pull
+// `path`, `id`, etc. without re-parsing stdout).
+function dispatch(verb, args) {
+  const cliArgs = [verb, ...Object.entries(args).map(([k, v]) => `${k}=${v}`)];
+  console.log(`  obsidian ${cliArgs.join(" ")}`);
+  runObsidian(cliArgs);
+  return readLastResponse();
+}
+
+function readLastResponse() {
+  const responsePath = join(OP_TEST_VAULT, "Projects/_scratch/op-last-response.md");
+  if (!existsSync(responsePath)) return null;
+  // The plugin writes a fenced JSON block — extract it. Cheapest: read raw
+  // and scan for the first {...} object.
+  const r = spawnSync("cat", [responsePath], { encoding: "utf8" });
+  if (r.status !== 0) return null;
+  const match = r.stdout.match(/\{[\s\S]*\}/);
+  if (!match) return null;
+  try {
+    return JSON.parse(match[0]);
+  } catch {
+    return null;
+  }
+}
+
+// Set a `related:` frontmatter list on a vault note via processFrontMatter.
+// Stored as an array even for a single value so the field round-trips as a
+// list (Obsidian's frontmatter editor renders this as a multi-value tag UI).
+function setRelated(vaultRelativePath, ids) {
+  const code =
+    `(async()=>{const f=app.vault.getAbstractFileByPath(${JSON.stringify(vaultRelativePath)});` +
+    `if(!f){return {error:"not found:"+${JSON.stringify(vaultRelativePath)}}}` +
+    `await app.fileManager.processFrontMatter(f, fm=>{fm.related=${JSON.stringify(ids)}});` +
+    `return {ok:true,path:f.path,related:${JSON.stringify(ids)}}})()`;
+  runObsidian(["eval", `code=${code}`]);
+}
+
+function ensureGithubFixtureRepo() {
+  const whoami = spawnSync("gh", ["api", "user", "--jq", ".login"], { encoding: "utf8" });
+  if (whoami.status !== 0) {
+    fail(`gh CLI not authenticated. Run \`gh auth login\` and re-run.\n${whoami.stderr}`);
+  }
+  const user = whoami.stdout.trim();
+  if (!user) fail("gh api user returned no login");
+  const slug = `${user}/${FIXTURE_REPO_NAME}`;
+
+  const view = spawnSync("gh", ["repo", "view", slug, "--json", "name"], {
+    encoding: "utf8",
+  });
+  if (view.status === 0) {
+    console.log(`  GH repo ${slug} already exists — reusing`);
+    return;
+  }
+  console.log(`  creating private GH repo ${slug}`);
+  const create = spawnSync(
+    "gh",
+    [
+      "repo",
+      "create",
+      slug,
+      "--private",
+      "--description",
+      FIXTURE_DESCRIPTION,
+      "--add-readme",
+    ],
+    { encoding: "utf8" },
+  );
+  if (create.status !== 0) {
+    fail(`gh repo create failed: ${create.stderr || create.stdout}`);
+  }
+}
+
+function ensureFixtureClone() {
+  if (existsSync(join(FIXTURE_CLONE_PATH, ".git"))) {
+    console.log(`  fixture clone already present at ${FIXTURE_CLONE_PATH}`);
+    return;
+  }
+  console.log(`  cloning fixture repo into ${FIXTURE_CLONE_PATH}`);
+  const whoami = spawnSync("gh", ["api", "user", "--jq", ".login"], { encoding: "utf8" });
+  const user = whoami.stdout.trim();
+  const clone = spawnSync(
+    "gh",
+    ["repo", "clone", `${user}/${FIXTURE_REPO_NAME}`, FIXTURE_CLONE_PATH],
+    { encoding: "utf8" },
+  );
+  if (clone.status !== 0) {
+    fail(`gh repo clone failed: ${clone.stderr || clone.stdout}`);
+  }
+}
