@@ -96,7 +96,13 @@ export interface ComposedPrompt {
    * should iterate the module declarations instead).
    */
   perVarSourceMap: Record<string, UserVarSource>;
-  /** Character count of `text`. */
+  /**
+   * UTF-16 code-unit count of `text` (i.e., `text.length`). This matches
+   * JavaScript's `String.prototype.length` semantics — characters outside the
+   * Basic Multilingual Plane (e.g. emoji) count as 2. Sufficient for the
+   * informational size-budget guardrail; do not use for token-accurate
+   * billing estimates.
+   */
   sizeChars: number;
   diagnostics: WorkflowDiagnostic[];
 }
@@ -155,8 +161,17 @@ export const DEFAULT_MAX_WORKFLOW_CHARS = 50000;
  * Token shape for `{{vars.<name>}}`. Conservative `[a-zA-Z_][a-zA-Z0-9_-]*`
  * name pattern — allows `-` so module authors can write `{{vars.repo-path}}`
  * if they prefer hyphenated names. Whitespace inside the braces is tolerated.
+ *
+ * Factory function — returns a *fresh* `RegExp` instance each time. The `g`
+ * flag makes the object stateful (`lastIndex` advances with every `exec`), so
+ * a module-level shared regex is a footgun: any new call-site that starts
+ * iterating before the previous one finishes would reset `lastIndex` beneath
+ * the first caller. Returning a new instance per call eliminates the shared
+ * state entirely.
  */
-const USER_VAR_TOKEN_RE = /\{\{\s*vars\.([a-zA-Z_][a-zA-Z0-9_-]*)\s*\}\}/g;
+function newUserVarTokenRe(): RegExp {
+  return /\{\{\s*vars\.([a-zA-Z_][a-zA-Z0-9_-]*)\s*\}\}/g;
+}
 
 /**
  * Extract every `vars.<name>` referenced in `text`. Returns a `Set<string>`
@@ -164,9 +179,9 @@ const USER_VAR_TOKEN_RE = /\{\{\s*vars\.([a-zA-Z_][a-zA-Z0-9_-]*)\s*\}\}/g;
  */
 function extractUserVarRefs(text: string): Set<string> {
   const names = new Set<string>();
-  USER_VAR_TOKEN_RE.lastIndex = 0;
+  const re = newUserVarTokenRe();
   let m: RegExpExecArray | null;
-  while ((m = USER_VAR_TOKEN_RE.exec(text)) !== null) {
+  while ((m = re.exec(text)) !== null) {
     names.add(m[1]);
   }
   return names;
@@ -287,7 +302,7 @@ function renderModule(args: RenderModuleArgs): RenderedModule {
   const diagnostics: WorkflowDiagnostic[] = [];
 
   // Pass 1: user-var substitution.
-  const passOne = body.replace(USER_VAR_TOKEN_RE, (match, rawName: string) => {
+  const passOne = body.replace(newUserVarTokenRe(), (match, rawName: string) => {
     const name = rawName.trim();
     const source = perVarSourceMap[name];
     if (source && source.value !== null) {
