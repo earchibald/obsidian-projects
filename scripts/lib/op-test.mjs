@@ -85,7 +85,7 @@ export function assertActiveVaultIsOpTest() {
       `Active Obsidian vault is not OP-Test.\n` +
         `  expected: ${expected}\n` +
         `  active:   ${actual} (${active.name || "unnamed"})\n\n` +
-        `Activate the OP-Test window in Obsidian (the OP-Test vault must be the focused window — there is no per-vault CLI flag), then re-run.`,
+        `Activate the OP-Test window in Obsidian and re-run (these scripts call \`obsidian plugin:reload\` internally without \`vault=OP-Test\`, so they still require the OP-Test window to be focused).`,
     );
   }
   return { vaultPath: actual, vaultName: active.name };

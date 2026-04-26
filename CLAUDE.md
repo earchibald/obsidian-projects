@@ -15,34 +15,34 @@ Always, in order:
    1. `cd plugins/op-obsidian && npm ci` (or `npm install` if no lockfile — but op-obsidian has one).
    2. Re-run with the **literal version** that's now in the JSON files, e.g. `node scripts/bump-version.mjs 0.37.3` — **not** `patch`/`minor`/`major`, which would compound the bump. The script idempotently re-runs the build step against the version already on disk.
 
-2. **Sync into the OP-Test vault.** Activate the OP-Test Obsidian window first (the `obsidian` CLI binds to the active window — there is no per-vault flag), then:
+2. **Sync into the OP-Test vault.**
    ```bash
    node scripts/dev-sync.mjs
    ```
-   The script hardcodes `~/Documents/OP-Test/OP-Test/.obsidian/plugins/op-obsidian/` as the target. It refuses to run unless OP-Test is the active vault, and it explicitly rejects any path containing `Agent-Vault` (belt-and-suspenders against muscle-memory mistakes — Agent-Vault is BRAT-only, see below). Never `rm -rf` the dest — `data.json` (user settings) lives there; `dev-sync.mjs` only overwrites `main.js` and `manifest.json`.
+   The script hardcodes `~/Documents/OP-Test/OP-Test/.obsidian/plugins/op-obsidian/` as the target. It currently still asserts OP-Test is the active Obsidian window before mutating (an internal `obsidian plugin:reload` call would otherwise hit whichever window happens to be focused — switch to the OP-Test window, then re-run if the assertion fires) and rejects any path containing `Agent-Vault` (belt-and-suspenders against muscle-memory mistakes — Agent-Vault is BRAT-only, see below). Never `rm -rf` the dest — `data.json` (user settings) lives there; `dev-sync.mjs` only overwrites `main.js` and `manifest.json`.
 
 3. **Reload the plugin.** `dev-sync.mjs` handles this: it tries `obsidian plugin:reload id=op-obsidian` first and falls back to the `loadManifests + enablePluginAndSave` recipe on first-install (when Obsidian hasn't scanned the new folder yet). No separate manual step needed.
 
-4. **Smoke test** per the `obsidian-plugin-creator:obsidian-plugin-creator` skill §9 (with OP-Test still the active vault):
+4. **Smoke test** per the `obsidian-plugin-creator:obsidian-plugin-creator` skill §9. Pass `vault=OP-Test` on every CLI call so the command routes at OP-Test regardless of which window is focused (see [`reference/cli-gotchas.md`](plugins/op/skills/op/reference/cli-gotchas.md) "Per-call vault targeting"):
    ```bash
-   obsidian dev:debug on
-   obsidian dev:console clear
-   # exercise the commands you just changed via obsidian eval / executeCommandById
-   obsidian dev:console   # expect no errors
+   obsidian vault=OP-Test dev:debug on
+   obsidian vault=OP-Test dev:console clear
+   # exercise the commands you just changed via obsidian vault=OP-Test eval / executeCommandById
+   obsidian vault=OP-Test dev:console   # expect no errors
    ```
-   Also spot-check the plugin instance: `obsidian eval code='app.plugins.plugins["op-obsidian"]'` should return a live object with your commands registered.
+   Also spot-check the plugin instance: `obsidian vault=OP-Test eval code='app.plugins.plugins["op-obsidian"]'` should return a live object with your commands registered.
 
-5. **Smoke-test Settings UIs.** When the change touches the op-obsidian Settings tab — Project order, working dirs, agent overlays, flow chaining, GitHub integration — `executeCommandById` won't reach it. Use `app.setting.openTabById` to render the tab synchronously and assert against the live DOM:
+5. **Smoke-test Settings UIs.** When the change touches the op-obsidian Settings tab — Project order, working dirs, agent overlays, flow chaining, GitHub integration — `executeCommandById` won't reach it. Use `app.setting.openTabById` to render the tab synchronously and assert against the live DOM. Pass `vault=OP-Test` on every call:
 
    ```bash
    # Daily-group rows (Default agent / Terminal / Sidebar tab / Onboarding / Hotkey preset) — visible from open:
-   obsidian eval code='(()=>{ app.setting.open(); app.setting.openTabById("op-obsidian"); return document.querySelectorAll(".op-settings__group--daily .setting-item").length; })()'
+   obsidian vault=OP-Test eval code='(()=>{ app.setting.open(); app.setting.openTabById("op-obsidian"); return document.querySelectorAll(".op-settings__group--daily .setting-item").length; })()'
 
    # Advanced subsections (each is its own collapsible) — count the wrappers:
-   obsidian eval code='(()=>{ app.setting.open(); app.setting.openTabById("op-obsidian"); return document.querySelectorAll(".op-settings__group--advanced .op-collapsible").length; })()'
+   obsidian vault=OP-Test eval code='(()=>{ app.setting.open(); app.setting.openTabById("op-obsidian"); return document.querySelectorAll(".op-settings__group--advanced .op-collapsible").length; })()'
 
    # Project-order drag rows: post-OP-164 they live INSIDE the "Working directories & project order" collapsible, which starts collapsed. Expand it first by clicking the header, then count:
-   obsidian eval code='(()=>{ app.setting.open(); app.setting.openTabById("op-obsidian"); document.querySelector("[data-op-section=\"workingDirs\"] .op-collapsible__header").click(); return document.querySelectorAll(".op-project-order__item").length; })()'
+   obsidian vault=OP-Test eval code='(()=>{ app.setting.open(); app.setting.openTabById("op-obsidian"); document.querySelector("[data-op-section=\"workingDirs\"] .op-collapsible__header").click(); return document.querySelectorAll(".op-project-order__item").length; })()'
    ```
 
    Returns synchronously — no `await` needed. Use it to verify drag-row count, `draggable=true` flags, prefix badges, reset-button presence, etc. without touching the GUI. Worked example: after a change to the "Project order" section, the count above should equal the number of discovered projects (one `.op-project-order__item` per project). Swap the selector for the section you actually changed.
@@ -59,7 +59,9 @@ The **OP-Test** vault at `~/Documents/OP-Test/OP-Test/` is a clean-room test vau
 
 **Do not install op-obsidian into OP-Test via BRAT.** We're the plugin's authors and the dev build is on disk; BRAT adds GitHub-release latency and doesn't carry uncommitted work. Use `dev-sync.mjs` instead — it handles the file copy, the first-install enable recipe, and subsequent reloads.
 
-**One CLI-target caveat.** The `obsidian` CLI binds to whichever Obsidian window is currently active — switching from another vault to OP-Test (or vice versa) changes which vault `obsidian vault`, `obsidian eval`, and the `op-*` dispatch verbs target. Re-run `obsidian vault` after any window switch to confirm you're operating on the vault you think you are. There's no per-vault flag; activate the right window first. `dev-sync.mjs` (and the other OP-Test scripts) check this for you and abort with a clear error if the active vault isn't OP-Test.
+**Target OP-Test on every CLI call: `obsidian vault=OP-Test …`.** The `obsidian` CLI accepts a top-level `vault=<name>` argument that routes the command at the named vault regardless of which window is currently focused (`obsidian help` documents it). Use it on every call in this repo's smoke tests, settings probes, and any ad-hoc CLI dispatch — it removes the focused-window race entirely and means you don't need to hand-verify focus before each command. The form is `vault=<name>` (key=value), not `--vault <name>`; see [`reference/cli-gotchas.md`](plugins/op/skills/op/reference/cli-gotchas.md) "Per-call vault targeting" for the full pattern.
+
+The `dev-sync.mjs` / `reset-test-vault.mjs` / `build-seeds.mjs` scripts still assert OP-Test is the active vault as defense in depth — their internal `obsidian plugin:reload` calls don't yet pass `vault=OP-Test`, so the assertion is the safety net. Switch the OP-Test window into focus and re-run if a script aborts with that error. Re-running `obsidian vault` (no args) after a window switch confirms which vault is active.
 
 ## Resetting between scenarios
 

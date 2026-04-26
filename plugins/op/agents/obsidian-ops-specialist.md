@@ -44,8 +44,10 @@ When a delegated task involves editing files in a code repository, follow that p
 ## Sanity-check the vault and plugin once per task
 
 ```bash
-obsidian vault   # active vault name + path
-obsidian eval code='({enabled: app.plugins.enabledPlugins.has("op-obsidian"), version: app.plugins.plugins["op-obsidian"]?.manifest?.version})'
+obsidian vault   # list registered vaults; cache the name of the one you're targeting
+obsidian vault=<name> eval code='({enabled: app.plugins.enabledPlugins.has("op-obsidian"), version: app.plugins.plugins["op-obsidian"]?.manifest?.version})'
 ```
+
+Always pass `vault=<name>` on every CLI call — the top-level flag routes the command at that named vault regardless of which Obsidian window is currently active. Without it the CLI binds to whichever window happens to be focused, which is a race when other agents or the user can switch windows between calls. See the op skill's [`reference/cli-gotchas.md`](../skills/op/reference/cli-gotchas.md) for the full worked example.
 
 If op-obsidian is missing or disabled, surface that to the calling agent and stop — don't improvise with raw CLI when the plugin owns the invariant.

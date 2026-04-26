@@ -2,6 +2,17 @@
 
 Quirks of the raw `obsidian` CLI that matter when the `op-obsidian` plugin is unavailable and you have to fall back to primitives.
 
+## Per-call vault targeting — `vault=<name>`
+
+The `obsidian` CLI accepts `vault=<name>` as a top-level argument that routes the command at that named vault regardless of which Obsidian window is currently active. Use it on every call — without it, the CLI binds to whichever vault happens to have window focus at that moment, which is a race whenever another agent (or the user) might switch windows between calls.
+
+```bash
+obsidian vault=OP-Test eval code='app.vault.getName()'   # => OP-Test
+obsidian vault=Agent-Vault op-work issue=OP-42           # routes at Agent-Vault even if OP-Test is focused
+```
+
+Form is `vault=<name>` (key=value), **not** `--vault <name>`; `obsidian help` lists it as the only top-level option. Quote names with spaces: `vault="My Vault"`. Vault names are matched against the names registered in Obsidian's vault list (visible via `obsidian vault` with no arguments) — not paths.
+
 ## `obsidian search` can't query `prefix:`
 
 `obsidian search query="prefix: <PREFIX>"` fails with `Error: Operator "prefix" not recognized` — the CLI parses a leading `<word>:` as a search operator, colliding with frontmatter keys. For prefix → slug lookups, scan `Projects/*/STATUS.md` frontmatter directly.

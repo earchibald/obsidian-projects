@@ -23,7 +23,9 @@ If the plugin is missing or disabled, **stop and ask the user to install/enable 
 
 **Delegating vault/CLI work.** This plugin ships an `obsidian-ops-specialist` subagent. When you're a coding agent working an issue and the next step is a raw Obsidian CLI call, a vault introspection, or a mutation the plugin owns, prefer delegating it via the Agent tool (`subagent_type: obsidian-ops-specialist`) over running the CLI yourself. The specialist knows the CLI gotchas, the op-obsidian dispatch surface, and keeps vault-side behavior consistent with this skill's lifecycle rules. You still own the skill's invariants — the specialist executes, you orchestrate.
 
-Run `obsidian vault` once to learn the active vault path; cache it.
+Run `obsidian vault` once to learn the active vault name and path; cache both.
+
+**Target the vault explicitly on every CLI call.** The `obsidian` CLI accepts a top-level `vault=<name>` argument that routes the command at that named vault regardless of which Obsidian window is currently focused — e.g. `obsidian vault=Agent-Vault eval code='app.vault.getName()'`. Use it. Without it, the CLI binds to whichever vault happens to be the active window at that moment, which is a race when more than one agent (or the user) can switch focus between calls. The form is `vault=<name>` (key=value), **not** `--vault <name>`; `obsidian help` documents it as the only top-level option. See [`reference/cli-gotchas.md`](reference/cli-gotchas.md) for the canonical worked example.
 
 ## Link back to the issue note
 
