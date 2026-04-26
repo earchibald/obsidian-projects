@@ -1,3 +1,5 @@
+import { renderTemplate } from "./renderTemplate";
+
 export type AgentId = "claude" | "gemini" | "copilot";
 
 export const AGENT_IDS: AgentId[] = ["claude", "gemini", "copilot"];
@@ -244,7 +246,13 @@ export function mergeProfile(id: AgentId, overlay?: ProfileOverlay): AgentProfil
 }
 
 export function renderSkillTrigger(profile: AgentProfile, issueId: string): string {
-  return profile.skillTrigger.replace(/\{\{id\}\}/g, issueId);
+  // Delegates to the generic `renderTemplate` so every prompt-shaping
+  // surface goes through one code path with one diagnostic contract. The
+  // shipped trigger strings only reference `{{id}}` today, so a partial
+  // context with just `{ id, agent }` is sufficient. Diagnostics are
+  // discarded here; 1d's composer will plumb them through to the dry-run /
+  // settings surfaces.
+  return renderTemplate(profile.skillTrigger, { id: issueId, agent: profile.id }).text;
 }
 
 export function launchFlagsFor(profile: AgentProfile, mode: AgentLaunchMode): string[] {
