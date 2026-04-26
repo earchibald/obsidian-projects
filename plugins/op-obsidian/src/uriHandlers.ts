@@ -163,7 +163,10 @@ export async function handleOpSetPrUri(
   };
 }
 
-const FLOW_ENUM = ["evaluate", "planning", "implementation", "review", "finalization", "done"] as const;
+// OP-188: `flow:` accepts any non-empty step id (the orchestrator walks the
+// workflow file at advance time and a step missing from the workflow simply
+// stops auto-advance — `setFlow` is no longer the validator). Complexity
+// stays a closed two-value enum.
 const COMPLEXITY_ENUM = ["simple", "complex"] as const;
 
 export async function handleOpSetEvaluationUri(
@@ -202,11 +205,16 @@ export async function handleOpSetFlowUri(
     const v = params.flow;
     if (v === "" || v === "null") {
       input.flow = null;
-    } else if ((FLOW_ENUM as readonly string[]).includes(v)) {
-      input.flow = v as Flow;
+    } else if (typeof v === "string" && v.trim().length > 0) {
+      if (/[\r\n]/.test(v)) {
+        throw new Error(
+          `op-set-flow URI flow must not contain newlines`,
+        );
+      }
+      input.flow = v.trim() as Flow;
     } else {
       throw new Error(
-        `op-set-flow URI flow must be one of ${FLOW_ENUM.join("|")} (or "null" to clear)`,
+        `op-set-flow URI flow must be a non-empty step id string (or "null" to clear)`,
       );
     }
   }

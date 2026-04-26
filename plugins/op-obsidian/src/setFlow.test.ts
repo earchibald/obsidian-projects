@@ -88,9 +88,28 @@ describe("setFlow", () => {
     await expect(setFlow(app, issue(), {})).rejects.toThrow(/at least one of flow or complexity/);
   });
 
-  it("rejects invalid flow values", async () => {
+  it("accepts free-form flow values (post-OP-188 workflow walker enforces)", async () => {
+    const { app, fm } = makeApp({});
+    // Custom step id from a user-authored workflow file. Pre-OP-188 this
+    // would have thrown; post-OP-188 the orchestrator's workflow-file walker
+    // is what decides whether the step is valid for the project.
+    await setFlow(app, issue(), { flow: "kickoff" });
+    expect(fm.flow).toBe("kickoff");
+  });
+  it("rejects whitespace-only flow values", async () => {
     const { app } = makeApp({});
-    await expect(setFlow(app, issue(), { flow: "wat" as any })).rejects.toThrow(/Invalid flow/);
+    await expect(setFlow(app, issue(), { flow: "   " })).rejects.toThrow(/Invalid flow/);
+  });
+
+  it("rejects flow values containing embedded newlines", async () => {
+    const { app } = makeApp({});
+    // OP-188 security: a URI-encoded newline (%0A) in a flow parameter must
+    // not reach frontmatter — it can't match any workflow step id and could
+    // produce multi-line YAML strings on round-trip.
+    await expect(setFlow(app, issue(), { flow: "plan\nevil_key: value" })).rejects.toThrow(
+      /newlines/,
+    );
+    await expect(setFlow(app, issue(), { flow: "plan\revil" })).rejects.toThrow(/newlines/);
   });
 
   it("rejects invalid complexity values", async () => {
@@ -108,11 +127,31 @@ describe("setFlow", () => {
 });
 
 describe("validation helpers", () => {
-  it("accepts every schema flow value", () => {
-    for (const v of ["evaluate", "planning", "implementation", "review", "finalization", "done"]) {
+  it("accepts both legacy and canonical flow step ids and any user-defined id", () => {
+    // OP-188: the validator is intentionally lax — it only enforces non-empty
+    // trim. Both legacy enum values (`planning`, `implementation`,
+    // `finalization`) and canonical ids (`plan`, `implement`, `finalize`) and
+    // user-defined ids (e.g. `kickoff`, `lint-pass`) all pass. The workflow
+    // walker is the actual semantic gate.
+    for (const v of [
+      "evaluate",
+      "planning",
+      "plan",
+      "implementation",
+      "implement",
+      "review",
+      "finalization",
+      "finalize",
+      "done",
+      "kickoff",
+      "lint-pass",
+    ]) {
       expect(() => validateFlow(v)).not.toThrow();
     }
-    expect(() => validateFlow("other")).toThrow();
+    expect(() => validateFlow("")).toThrow();
+    expect(() => validateFlow("   ")).toThrow();
+    expect(() => validateFlow("plan\nevil")).toThrow(/newlines/);
+    expect(() => validateFlow("plan\revil")).toThrow(/newlines/);
   });
 
   it("accepts every schema complexity value", () => {
