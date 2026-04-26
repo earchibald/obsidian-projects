@@ -1,0 +1,26 @@
+name: op-obsidian PR checks
+
+on:
+  pull_request:
+    paths:
+      - "plugins/op-obsidian/**"
+      - ".github/workflows/op-obsidian-pr-checks.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  lockfile-sync:
+    name: Lockfile sync (npm ci)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: npm ci (strict lockfile check)
+        working-directory: plugins/op-obsidian
+        run: npm ci
