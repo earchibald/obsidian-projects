@@ -6,6 +6,15 @@ import {
   prepareFuzzySearch,
 } from "obsidian";
 import { notify } from "./notificationLog";
+import { loadModules, type WorkflowModule } from "./workflowModule";
+import { PLUGIN_VAR_REGISTRY } from "./pluginVarRegistry";
+import {
+  diagnosticToBlock,
+  formatDiagnostic,
+  type FormattedDiagnostic,
+} from "./workflowDiagnosticFormat";
+import type { WorkflowDiagnostic } from "./workflowDiagnostic";
+import { EXAMPLE_MODULES, installExampleLibrary } from "./workflowExamples";
 import {
   applyPreset,
   defaultPreset,
@@ -68,6 +77,8 @@ type SectionId =
   | "sidebarTab"
   | "onboarding"
   | "hotkeyPreset"
+  // Workflows (top-level, between Daily and Advanced — OP-201)
+  | "workflows"
   // Advanced
   | "injection"
   | "workingDirs"
@@ -182,6 +193,23 @@ export class OpSettingsTab extends PluginSettingTab {
     this.mountSection(daily, "onboarding", (el) => this.renderDailyOnboarding(el));
     this.mountSection(daily, "hotkeyPreset", (el) => this.renderDailyHotkey(el));
 
+    // Workflows — top-level group BETWEEN Daily and Advanced (OP-201). It's
+    // its own group (not a 9th Advanced collapsible) because it surfaces the
+    // workflow-modules tree, per-module diagnostics, the Available variables
+    // reference panel, and an empty-state install button — too important and
+    // too referenced to bury.
+    const workflows = containerEl.createDiv({
+      cls: "op-settings__group op-settings__group--workflows",
+    });
+    workflows.dataset.opSection = "workflows";
+    workflows.createEl("h2", { text: "Workflows" });
+    workflows.createEl("p", {
+      cls: "setting-item-description op-settings__group-blurb",
+      text:
+        "Workflow modules compose the prompt the launched agent sees. Loaded modules appear here with their diagnostics; the Available variables panel lists tokens you can reference in module bodies via {{name}}.",
+    });
+    this.mountSection(workflows, "workflows", (el) => this.renderWorkflows(el));
+
     // Advanced — single H2 with each subsection in its own collapsible
     // (collapsed by default). Drag-safe: the collapsibles use JS-controlled
     // display:none/block, NOT native <details>, so getBoundingClientRect()
@@ -262,6 +290,9 @@ export class OpSettingsTab extends PluginSettingTab {
         return this.renderDailyOnboarding(el);
       case "hotkeyPreset":
         return this.renderDailyHotkey(el);
+      // Workflows
+      case "workflows":
+        return this.renderWorkflows(el);
       // Advanced
       case "injection":
       case "workingDirs":
@@ -474,6 +505,250 @@ export class OpSettingsTab extends PluginSettingTab {
             new HotkeyPresetResultsModal(this.app, preset, result).open();
           }),
       );
+  }
+
+  // ─── Workflows section renderer (OP-201) ────────────────────────────────
+
+  private renderWorkflows(containerEl: HTMLElement): void {
+    const result = loadModules(this.app);
+    const { modules, diagnostics } = result;
+
+    if (modules.length === 0) {
+      this.renderWorkflowsEmptyState(containerEl);
+    } else {
+      this.renderWorkflowsModuleList(containerEl, modules, diagnostics);
+    }
+
+    // Available variables panel — always rendered (even when no modules), so
+    // a brand-new user can see what tokens they'll be able to reference once
+    // they install or author a module. Collapsed by default to avoid
+    // dominating the panel.
+    const varsCollapsible = new OpCollapsible(
+      containerEl,
+      "Available variables",
+      { startOpen: false },
+    );
+    varsCollapsible.root.dataset.opSection = "workflowsVars";
+    addHelpExpandable(
+      varsCollapsible.body,
+      "What is this?",
+      "Tokens you can reference in a module body via {{name}}. These are computed per-launch from the issue, the agent profile, and the launch context — they sit at Launch override (the highest precedence). User-declared {{vars.<name>}} are a separate namespace declared in a module's `vars:` block.",
+    );
+    this.renderAvailableVariables(varsCollapsible.body);
+  }
+
+  private renderWorkflowsEmptyState(parentEl: HTMLElement): void {
+    const empty = parentEl.createDiv({
+      cls: "op-workflow-empty-state",
+    });
+    empty.dataset.opEmptyState = "true";
+    empty.createEl("p", {
+      cls: "op-workflow-empty-state__title",
+      text: "No modules yet",
+    });
+    const body = empty.createEl("p", {
+      cls: "op-workflow-empty-state__body setting-item-description",
+    });
+    body.appendText("Open the ");
+    // Quickstart docs link target ships in OP-?-10a; the URL is wired here so
+    // landing the docs file is a one-line follow-up.
+    const quickstart = body.createEl("a", {
+      text: "5-min Quickstart",
+      href: "https://github.com/earchibald/obsidian-projects/blob/main/docs/quickstart.md",
+    });
+    quickstart.setAttribute("target", "_blank");
+    quickstart.setAttribute("rel", "noopener");
+    body.appendText(", or install the example library below to get a working modules tree in one click.");
+
+    new Setting(empty)
+      .setName("Install example library")
+      .setDesc(
+        `Writes ${EXAMPLE_MODULES.length} starter modules into Projects/_op-modules/. Existing files are never overwritten — safe to click again. Open the installed files to see complete, valid module shape.`,
+      )
+      .addButton((b) =>
+        b
+          .setButtonText("Install example library")
+          .setCta()
+          .onClick(async () => {
+            try {
+              const r = await installExampleLibrary(this.app);
+              const parts: string[] = [];
+              if (r.installed.length) parts.push(`${r.installed.length} installed`);
+              if (r.skipped.length) parts.push(`${r.skipped.length} skipped (already present)`);
+              notify(`Example library: ${parts.join(", ") || "no changes"}.`, 6000);
+              this.rerenderSection("workflows");
+            } catch (e) {
+              notify(`Could not install example library: ${(e as Error).message}`, 8000);
+            }
+          }),
+      );
+  }
+
+  private renderWorkflowsModuleList(
+    parentEl: HTMLElement,
+    modules: readonly WorkflowModule[],
+    diagnostics: readonly WorkflowDiagnostic[],
+  ): void {
+    // Bucket diagnostics by moduleId so each row can render its own count
+    // without re-scanning the full list. Diagnostics with no moduleId
+    // (e.g. some intra-scope-collision payloads) bucket under "" and surface
+    // in the unattributed footer below.
+    const byModule = new Map<string, WorkflowDiagnostic[]>();
+    for (const d of diagnostics) {
+      const key = d.moduleId ?? "";
+      const arr = byModule.get(key) ?? [];
+      arr.push(d);
+      byModule.set(key, arr);
+    }
+
+    const list = parentEl.createDiv({ cls: "op-workflow-module-list" });
+    for (const m of modules) {
+      const row = list.createDiv({ cls: "op-workflow-module" });
+      row.dataset.moduleId = m.id;
+
+      const head = row.createDiv({ cls: "op-workflow-module__head" });
+      head.createSpan({ cls: "op-workflow-module__id", text: m.id });
+      head.createSpan({ cls: "op-workflow-module__title", text: m.title });
+      const sourceLabel =
+        m.source.kind === "global"
+          ? "global"
+          : `project: ${m.source.projectSlug}`;
+      head.createSpan({
+        cls: "op-workflow-module__source",
+        text: sourceLabel,
+      });
+
+      const ds = byModule.get(m.id) ?? [];
+      const counts = countsBySeverity(ds);
+      if (counts.error || counts.warning || counts.info) {
+        const badges = head.createSpan({ cls: "op-workflow-module__badges" });
+        if (counts.error) appendBadge(badges, "error", counts.error);
+        if (counts.warning) appendBadge(badges, "warning", counts.warning);
+        if (counts.info) appendBadge(badges, "info", counts.info);
+      } else {
+        head.createSpan({
+          cls: "op-workflow-module__badges op-workflow-module__badges--ok",
+          text: "ok",
+        });
+      }
+
+      // Per-module diagnostic lines through the unified formatter. One line
+      // per diagnostic — modal renders the multi-line block on Explain click.
+      if (ds.length) {
+        const diagList = row.createDiv({ cls: "op-workflow-module__diagnostics" });
+        for (const d of ds) {
+          const f = formatDiagnostic(d);
+          const line = diagList.createDiv({
+            cls: `op-workflow-module__diagnostic op-workflow-module__diagnostic--${f.severity}`,
+          });
+          const badge = line.createSpan({
+            cls: "op-workflow-module__diagnostic-badge",
+            text: f.severityBadge,
+          });
+          // Tooltip shows the full code label, NOT the abbreviation. The
+          // abbreviation is the single-letter glyph in the badge text itself
+          // — primary copy in the tooltip stays canonical.
+          badge.setAttribute("aria-label", f.codeLabel);
+          badge.setAttribute("title", f.codeLabel);
+          line.createSpan({
+            cls: "op-workflow-module__diagnostic-code",
+            text: f.codeLabel,
+          });
+          line.createSpan({
+            cls: "op-workflow-module__diagnostic-message",
+            text: f.message,
+          });
+          if (f.scopeLabel) {
+            // Full canonical scope label in primary copy. The single-letter
+            // form is for the badge tooltip only — never shown here.
+            line.createSpan({
+              cls: "op-workflow-module__diagnostic-scope",
+              text: f.scopeLabel,
+            });
+          }
+        }
+      }
+
+      // Explain action — opens the modal that renders every diagnostic for
+      // this module through the unified formatter's multi-line block. Even
+      // when ds.length === 0 the modal still opens (showing "No diagnostics")
+      // so users can verify they're looking at the right module.
+      const actions = row.createDiv({ cls: "op-workflow-module__actions" });
+      const explain = actions.createEl("button", {
+        cls: "op-workflow-module__explain",
+        text: "Explain workflow",
+      });
+      explain.addEventListener("click", () => {
+        new WorkflowExplainModal(this.app, m, ds).open();
+      });
+    }
+
+    // Surface diagnostics that don't pair with a loaded module: either
+    // diagnostics with no moduleId at all, or diagnostics whose moduleId
+    // points at a module that failed to parse (so the file never made it
+    // into the modules list). Without this footer, parse-failure
+    // diagnostics would silently vanish — exactly the failure mode the
+    // unified formatter is meant to prevent.
+    const loadedIds = new Set(modules.map((m) => m.id));
+    const orphaned: WorkflowDiagnostic[] = [];
+    for (const [moduleId, ds] of byModule) {
+      if (moduleId === "" || !loadedIds.has(moduleId)) orphaned.push(...ds);
+    }
+    if (orphaned.length) {
+      const foot = parentEl.createDiv({ cls: "op-workflow-module-list__orphan" });
+      foot.dataset.opOrphanDiagnostics = "true";
+      foot.createEl("h4", { text: "Unattributed diagnostics" });
+      foot.createEl("p", {
+        cls: "setting-item-description",
+        text: "Diagnostics from modules that failed to parse, or that don't bind to a single module.",
+      });
+      for (const d of orphaned) {
+        const f = formatDiagnostic(d);
+        const line = foot.createDiv({
+          cls: `op-workflow-module__diagnostic op-workflow-module__diagnostic--${f.severity}`,
+        });
+        const badge = line.createSpan({
+          cls: "op-workflow-module__diagnostic-badge",
+          text: f.severityBadge,
+        });
+        badge.setAttribute("aria-label", f.codeLabel);
+        badge.setAttribute("title", f.codeLabel);
+        line.createSpan({
+          cls: "op-workflow-module__diagnostic-code",
+          text: f.codeLabel,
+        });
+        line.createSpan({
+          cls: "op-workflow-module__diagnostic-message",
+          text: d.moduleId ? `${d.moduleId}: ${f.message}` : f.message,
+        });
+        if (f.scopeLabel) {
+          line.createSpan({
+            cls: "op-workflow-module__diagnostic-scope",
+            text: f.scopeLabel,
+          });
+        }
+      }
+    }
+  }
+
+  private renderAvailableVariables(parentEl: HTMLElement): void {
+    const list = parentEl.createDiv({ cls: "op-workflow-vars-panel" });
+    for (const v of Object.values(PLUGIN_VAR_REGISTRY)) {
+      const row = list.createDiv({ cls: "op-workflow-vars-panel__row" });
+      const head = row.createDiv({ cls: "op-workflow-vars-panel__head" });
+      head.createSpan({
+        cls: "op-workflow-vars-panel__name",
+        text: `{{${v.name}}}`,
+      });
+      head.createSpan({
+        cls: "op-workflow-vars-panel__example",
+        text: `e.g. ${v.example}`,
+      });
+      row.createDiv({
+        cls: "op-workflow-vars-panel__desc setting-item-description",
+        text: v.description,
+      });
+    }
   }
 
   // ─── Advanced section renderers ─────────────────────────────────────────
@@ -1637,3 +1912,127 @@ export class HotkeyPresetResultsModal extends Modal {
     this.contentEl.empty();
   }
 }
+
+// ─── Workflow helpers + Explain modal (OP-201) ────────────────────────────
+
+interface SeverityCounts {
+  error: number;
+  warning: number;
+  info: number;
+}
+
+function countsBySeverity(ds: readonly WorkflowDiagnostic[]): SeverityCounts {
+  const out: SeverityCounts = { error: 0, warning: 0, info: 0 };
+  for (const d of ds) out[d.severity] += 1;
+  return out;
+}
+
+function appendBadge(
+  parentEl: HTMLElement,
+  severity: WorkflowDiagnostic["severity"],
+  count: number,
+): void {
+  parentEl.createSpan({
+    cls: `op-workflow-badge op-workflow-badge--${severity}`,
+    text: `${count} ${severity}${count === 1 ? "" : "s"}`,
+  });
+}
+
+/**
+ * Modal that prints every diagnostic for a single workflow module through
+ * the unified `diagnosticToBlock` formatter. Renders the same shape every
+ * other 3* surface will (op-explain-workflow CLI / dry-run banner / launch
+ * pre-flight) — this in-Settings version is the proof the formatter
+ * contract is end-to-end usable before the CLI ships in OP-203.
+ */
+export class WorkflowExplainModal extends Modal {
+  constructor(
+    app: App,
+    private module: WorkflowModule,
+    private diagnostics: readonly WorkflowDiagnostic[],
+  ) {
+    super(app);
+  }
+
+  onOpen(): void {
+    const { contentEl } = this;
+    contentEl.empty();
+    contentEl.addClass("op-workflow-explain");
+
+    contentEl.createEl("h2", { text: this.module.title });
+    const subtitle = contentEl.createEl("p", {
+      cls: "setting-item-description",
+    });
+    subtitle.appendText(`id: ${this.module.id} · scope: ${this.module.scope} · `);
+    subtitle.appendText(
+      this.module.source.kind === "global"
+        ? `global (${this.module.source.path})`
+        : `project ${this.module.source.projectSlug} (${this.module.source.path})`,
+    );
+
+    if (this.diagnostics.length === 0) {
+      contentEl.createEl("p", {
+        text: "No diagnostics. This module loaded clean.",
+      });
+    } else {
+      const list = contentEl.createDiv({ cls: "op-workflow-explain__list" });
+      for (const d of this.diagnostics) {
+        const block = list.createEl("pre", {
+          cls: `op-workflow-explain__block op-workflow-explain__block--${d.severity}`,
+          text: diagnosticToBlock(d),
+        });
+        block.dataset.code = d.code;
+      }
+    }
+
+    if (this.module.vars.length) {
+      contentEl.createEl("h3", { text: "Declared variables" });
+      const vars = contentEl.createDiv({ cls: "op-workflow-explain__vars" });
+      for (const v of this.module.vars) {
+        const row = vars.createDiv({ cls: "op-workflow-explain__var" });
+        row.createSpan({ text: `{{${v.name}}}` });
+        switch (v.kind) {
+          case "bare":
+            row.createSpan({
+              cls: "setting-item-description",
+              text: " — no default; satisfied at a higher precedence scope (Project default or Launch override).",
+            });
+            break;
+          case "default":
+            row.createSpan({
+              cls: "setting-item-description",
+              text: ` — Module default = ${JSON.stringify(v.value)}.`,
+            });
+            break;
+          case "object":
+            if (v.description) {
+              row.createSpan({
+                cls: "setting-item-description",
+                text: ` — ${v.description}`,
+              });
+            }
+            if (v.default !== undefined) {
+              row.createSpan({
+                cls: "setting-item-description",
+                text: ` Module default = ${JSON.stringify(v.default)}.`,
+              });
+            }
+            break;
+        }
+      }
+    }
+
+    new Setting(contentEl).addButton((b) =>
+      b.setButtonText("Close").onClick(() => this.close()),
+    );
+  }
+
+  onClose(): void {
+    this.contentEl.empty();
+  }
+}
+
+// `FormattedDiagnostic` is imported above so callers in this module that
+// need the shape can refer to it directly. Re-export here to keep the
+// module's public surface flat for downstream consumers.
+export type { FormattedDiagnostic };

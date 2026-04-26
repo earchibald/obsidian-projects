@@ -780,3 +780,223 @@ a.op-sidebar__agent:hover {
   font-weight: 600;
   padding: 0.25rem 0;
 }
+
+/* ─── Workflows section (OP-201) ────────────────────────────────────────── */
+
+.op-settings__group--workflows {
+  margin-bottom: 1rem;
+}
+
+.op-settings__group-blurb {
+  margin-top: -0.25rem;
+  margin-bottom: 0.5rem;
+}
+
+.op-workflow-empty-state {
+  border: 1px dashed var(--background-modifier-border);
+  border-radius: 4px;
+  padding: 0.75rem;
+  background: var(--background-secondary);
+}
+
+.op-workflow-empty-state__title {
+  margin: 0 0 0.25rem;
+  font-weight: 600;
+}
+
+.op-workflow-empty-state__body {
+  margin: 0 0 0.5rem;
+}
+
+.op-workflow-module-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  margin-bottom: 0.5rem;
+}
+
+.op-workflow-module {
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 4px;
+  background: var(--background-secondary);
+  padding: 0.5rem 0.75rem;
+}
+
+.op-workflow-module__head {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.op-workflow-module__id {
+  font-family: var(--font-monospace, monospace);
+  font-weight: 600;
+}
+
+.op-workflow-module__title {
+  flex: 1;
+  min-width: 0;
+  color: var(--text-normal);
+}
+
+.op-workflow-module__source {
+  font-size: var(--font-ui-smaller, 0.75rem);
+  color: var(--text-muted);
+}
+
+.op-workflow-module__badges {
+  display: inline-flex;
+  gap: 0.25rem;
+}
+
+.op-workflow-module__badges--ok {
+  color: var(--color-green, #2e7d32);
+  font-size: var(--font-ui-smaller, 0.75rem);
+}
+
+.op-workflow-badge {
+  font-size: var(--font-ui-smaller, 0.75rem);
+  padding: 0.1rem 0.4rem;
+  border-radius: 3px;
+  border: 1px solid var(--background-modifier-border);
+}
+
+.op-workflow-badge--error {
+  color: var(--color-red, #c62828);
+  border-color: var(--color-red, #c62828);
+}
+
+.op-workflow-badge--warning {
+  color: var(--color-yellow, #b58900);
+  border-color: var(--color-yellow, #b58900);
+}
+
+.op-workflow-badge--info {
+  color: var(--text-muted);
+}
+
+.op-workflow-module__diagnostics {
+  margin-top: 0.4rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.op-workflow-module__diagnostic {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  align-items: baseline;
+  font-size: var(--font-ui-smaller, 0.75rem);
+}
+
+.op-workflow-module__diagnostic-badge {
+  font-family: var(--font-monospace, monospace);
+  font-weight: 600;
+  padding: 0 0.25rem;
+  border-radius: 2px;
+  background: var(--background-modifier-border);
+}
+
+.op-workflow-module__diagnostic--error .op-workflow-module__diagnostic-badge {
+  color: var(--color-red, #c62828);
+}
+
+.op-workflow-module__diagnostic--warning .op-workflow-module__diagnostic-badge {
+  color: var(--color-yellow, #b58900);
+}
+
+.op-workflow-module__diagnostic-code {
+  font-weight: 600;
+}
+
+.op-workflow-module__diagnostic-message {
+  flex: 1;
+  min-width: 0;
+}
+
+.op-workflow-module__diagnostic-scope {
+  font-style: italic;
+  color: var(--text-muted);
+}
+
+.op-workflow-module__actions {
+  margin-top: 0.4rem;
+}
+
+.op-workflow-module__explain {
+  font-size: var(--font-ui-smaller, 0.75rem);
+}
+
+.op-workflow-module-list__orphan {
+  margin-top: 0.5rem;
+  padding: 0.5rem;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 4px;
+  background: var(--background-secondary);
+}
+
+.op-workflow-vars-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.op-workflow-vars-panel__row {
+  padding: 0.3rem 0.4rem;
+  border-bottom: 1px solid var(--background-modifier-border);
+}
+
+.op-workflow-vars-panel__row:last-child {
+  border-bottom: none;
+}
+
+.op-workflow-vars-panel__head {
+  display: flex;
+  gap: 0.5rem;
+  align-items: baseline;
+}
+
+.op-workflow-vars-panel__name {
+  font-family: var(--font-monospace, monospace);
+  font-weight: 600;
+}
+
+.op-workflow-vars-panel__example {
+  font-size: var(--font-ui-smaller, 0.75rem);
+  color: var(--text-muted);
+}
+
+.op-workflow-vars-panel__desc {
+  margin-top: 0.1rem;
+}
+
+.op-workflow-explain__list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.op-workflow-explain__block {
+  padding: 0.5rem 0.75rem;
+  border-left: 3px solid var(--background-modifier-border);
+  background: var(--background-secondary);
+  white-space: pre-wrap;
+  font-family: var(--font-text);
+  font-size: var(--font-ui-small);
+}
+
+.op-workflow-explain__block--error {
+  border-left-color: var(--color-red, #c62828);
+}
+
+.op-workflow-explain__block--warning {
+  border-left-color: var(--color-yellow, #b58900);
+}
+
+.op-workflow-explain__vars {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
