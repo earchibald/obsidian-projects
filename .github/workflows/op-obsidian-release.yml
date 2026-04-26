@@ -53,7 +53,19 @@ jobs:
       - name: Install
         if: steps.guard.outputs.skip == 'false'
         working-directory: plugins/op-obsidian
-        run: npm ci
+        run: |
+          if ! npm ci; then
+            {
+              echo "## ❌ \`npm ci\` failed — lockfile out of sync"
+              echo ""
+              echo "**Likely cause:** \`plugins/op-obsidian/package.json\` was edited without"
+              echo "regenerating \`package-lock.json\`."
+              echo ""
+              echo "**Fix:** run \`npm install\` in \`plugins/op-obsidian/\` and commit the"
+              echo "updated \`package-lock.json\` before merging."
+            } >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
 
       - name: Build
         if: steps.guard.outputs.skip == 'false'
