@@ -29,7 +29,11 @@ import {
   type ResolveStepOutput,
 } from "./stepResolver";
 import { showActionableNotice } from "./actionableNotices";
-import { openRecoveryDialog } from "./recoveryDialog";
+import {
+  openRecoveryDialog,
+  type RecoveryDialogOutcome,
+} from "./recoveryDialog";
+import { validateModelName } from "./modelRegistry";
 
 /** Arguments accepted by {@link openAgent}. */
 export interface OpenAgentArgs {
@@ -50,6 +54,33 @@ export interface OpenAgentArgs {
    * inherits the same overrides; an empty/absent map writes nothing.
    */
   launchVars?: Record<string, string>;
+  /**
+   * OP-205 (3e): launch-only model override. When set, the resolver
+   * short-circuits its own `model:` walk and uses this canonical model id.
+   * The workflow file is left untouched — this is the "Use as launch
+   * override" path from the recovery dialog.
+   *
+   * Validated against `modelRegistry` for the resolver's chosen agent at
+   * launch time; an invalid override throws `BadModelSpecError` (which
+   * re-opens the recovery dialog rather than silently substituting).
+   */
+  launchModelOverride?: string;
+  /**
+   * OP-205 (3e): whether this launch is a user-initiated interactive launch
+   * (default `true`) or a headless auto-advance (set `false`). On resolver
+   * failure, interactive launches open the recovery dialog directly;
+   * headless launches surface the existing actionable Notice with an "Open
+   * recovery dialog now" link. Headless ↔ "user is not at the keyboard."
+   */
+  interactive?: boolean;
+  /**
+   * OP-205 (3e): notified when the recovery dialog resolves after a launch
+   * failure. The caller can use this to retry the launch (with
+   * `launchModelOverride` set) on `override` / `patched` outcomes. `null` /
+   * undefined → the dialog opens with a no-op resolver, matching the OP-200
+   * behavior where the user re-launches by hand.
+   */
+  onResolverFailureResolved?: (outcome: RecoveryDialogOutcome) => void;
 }
 
 /** Result payload returned when a launch succeeds. */
@@ -116,10 +147,23 @@ export async function openAgent(
   try {
     resolved = args.agentOverride || args.forcePick || settings.alwaysPick
       ? null
-      : await loadAndResolveStep(app, args.entry.project, mode, detection, settings.defaultAgent);
+      : await loadAndResolveStep(
+          app,
+          args.entry.project,
+          mode,
+          detection,
+          settings.defaultAgent,
+          args.launchModelOverride,
+        );
   } catch (err) {
     if (err instanceof BadModelSpecError || err instanceof NoInstalledAgentError) {
-      surfaceResolverError(app, args.entry.id, err);
+      surfaceResolverError(
+        app,
+        args.entry,
+        err,
+        args.interactive ?? true,
+        args.onResolverFailureResolved,
+      );
       return undefined;
     }
     throw err;
@@ -431,6 +475,7 @@ async function loadAndResolveStep(
   mode: AgentLaunchMode,
   detection: DetectionMap,
   fallbackAgent: AgentId,
+  launchModelOverride: string | undefined,
 ): Promise<ResolveStepOutput | null> {
   if (!project) return null;
   const { workflow } = await loadWorkflowFile(app, project);
@@ -443,12 +488,40 @@ async function loadAndResolveStep(
   if (!step && (!workflow.defaultAgent || workflow.defaultAgent.length === 0)) {
     return null;
   }
-  return resolveStepAgentAndModel({
+  // Run the agent walk + model walk normally. We need the chosen agent in
+  // hand before we can validate `launchModelOverride` (the override is bound
+  // to the resolver's chosen agent — picking a claude alias when the resolver
+  // walked into gemini would be incoherent).
+  const resolved = resolveStepAgentAndModel({
     step,
     workflow,
     detection,
     fallbackAgent,
   });
+
+  if (launchModelOverride !== undefined) {
+    // OP-205 (3e): honour the launch override. Validate against the chosen
+    // agent's registry; an invalid override throws BadModelSpecError so the
+    // recovery dialog re-opens (we never silently substitute).
+    const v = validateModelName(resolved.agent, launchModelOverride, stepName);
+    if (!v.ok) {
+      throw new BadModelSpecError(
+        stepName,
+        resolved.agent,
+        [{ name: launchModelOverride, classification: { kind: "typo" } }],
+        "typo",
+        v.bad,
+      );
+    }
+    return {
+      agent: resolved.agent,
+      canonicalModel: v.canonicalId,
+      agentSource: resolved.agentSource,
+      modelSource: "step",
+    };
+  }
+
+  return resolved;
 }
 
 /**
@@ -478,23 +551,49 @@ function withModelFlag(
  */
 function surfaceResolverError(
   app: App,
-  issueId: string,
+  entry: IssueEntry,
   err: BadModelSpecError | NoInstalledAgentError,
+  interactive: boolean,
+  onResolved: ((outcome: RecoveryDialogOutcome) => void) | undefined,
 ): void {
   const summary =
     err instanceof BadModelSpecError
-      ? `${issueId}: bad model spec for step "${err.stepId}" (${err.reason}) — "${err.bad.badName}" not usable for "${err.chosenAgent}"`
-      : `${issueId}: no installed agent for step "${err.stepId}" — tried ${err.attemptedAgents.join(", ")}`;
+      ? `${entry.id}: bad model spec for step "${err.stepId}" (${err.reason}) — "${err.bad.badName}" not usable for "${err.chosenAgent}"`
+      : `${entry.id}: no installed agent for step "${err.stepId}" — tried ${err.attemptedAgents.join(", ")}`;
+  console.warn("[op-obsidian] openAgent resolver failure", err);
+  const handler = onResolved ?? ((): void => {});
+  if (interactive) {
+    // OP-205 (3e): the user is at the keyboard — open the modal directly.
+    // The Notice indirection adds a click for nothing on this path.
+    openRecoveryDialog({
+      app,
+      issueId: entry.id,
+      project: entry.project ?? "",
+      error: err,
+      mode: "launch",
+      onResolved: handler,
+    });
+    return;
+  }
+  // Headless auto-advance: the user wasn't watching. Surface the actionable
+  // Notice so they can click into the dialog when they come back.
   showActionableNotice({
     text: summary,
     actions: [
       {
         label: "Open recovery dialog now",
-        onClick: () => openRecoveryDialog({ app, issueId, error: err }),
+        onClick: () =>
+          openRecoveryDialog({
+            app,
+            issueId: entry.id,
+            project: entry.project ?? "",
+            error: err,
+            mode: "launch",
+            onResolved: handler,
+          }),
       },
     ],
   });
-  console.warn("[op-obsidian] openAgent resolver failure", err);
 }
 
 function readParentId(app: App, path: string): string | null {

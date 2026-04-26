@@ -116,6 +116,12 @@ import { openLaunchAgentModal } from "./launchAgentModal";
 import { editWorkflow } from "./editWorkflow";
 import { editModule } from "./editModule";
 import { loadModules } from "./workflowModule";
+import { loadWorkflowFile } from "./workflowFile";
+import {
+  openRecoveryDialog,
+  synthesizeBadModelErrorFromDiagnostic,
+} from "./recoveryDialog";
+import { revertLastWorkflowPatch, type VaultLike, type VaultFileLike } from "./recoveryPatchApply";
 import { VarEditorSuggest } from "./varSuggestObsidian";
 import { readAgentList, readModelScalarOrList } from "./varSuggest";
 import { launchInTerminal, SHARED_TMUX_SESSION, tmuxWindowName } from "./terminalLaunch";
@@ -722,6 +728,25 @@ export default class OpPlugin extends Plugin {
       id: "op-edit-module",
       name: "op: edit workflow module",
       callback: () => this.runEditModuleCommand(),
+    });
+
+    // OP-205 (3e): proactive recovery surface — open the dialog without an
+    // in-flight launch. Resolves a project, reads its WORKFLOW.md, finds the
+    // first bad-model diagnostic, and renders the same modal in advisory
+    // mode so users can fix the file before the next launch.
+    this.addCommand({
+      id: "op-open-recovery-dialog",
+      name: "op: open recovery dialog for project workflow",
+      callback: () => void this.runOpenRecoveryDialogCommand(),
+    });
+
+    // OP-205 (3e): one-step undo of the most recent .bak-* for a workflow
+    // file. Reusable from anywhere; a button in the dialog dispatches the
+    // same command.
+    this.addCommand({
+      id: "op-revert-workflow-patch",
+      name: "op: revert last workflow patch",
+      callback: () => void this.runRevertWorkflowPatchCommand(),
     });
 
     this.addCommand({
@@ -3398,6 +3423,111 @@ export default class OpPlugin extends Plugin {
     }).open();
   }
 
+  /**
+   * OP-205 (3e): proactive recovery surface. Picks a project, loads its
+   * workflow file, scans `validateWorkflowModels`-derived diagnostics for the
+   * first `bad-model` entry, and opens the dialog in advisory mode (no
+   * launch in flight). When no bad-model warnings are present, surfaces a
+   * Notice rather than opening an empty dialog.
+   */
+  private async runOpenRecoveryDialogCommand(): Promise<void> {
+    const projects = applyProjectOrder(listProjects(this.app), this.settings.projectOrder);
+    if (projects.length === 0) {
+      notify("op: no projects found under Projects/");
+      return;
+    }
+    new ProjectSuggestModal(this.app, projects, (project) => {
+      void this.openRecoveryDialogForProject(project.slug);
+    }).open();
+  }
+
+  private async openRecoveryDialogForProject(slug: string): Promise<void> {
+    const { diagnostics } = await loadWorkflowFile(this.app, slug);
+    const bad = diagnostics.find((d) => d.code === "bad-model");
+    if (!bad) {
+      notify(`op: no bad-model warnings in Projects/${slug}/WORKFLOW.md`);
+      return;
+    }
+    const err = synthesizeBadModelErrorFromDiagnostic(bad);
+    if (!err) {
+      notify(
+        `op: bad-model diagnostic for Projects/${slug}/WORKFLOW.md is malformed — open the file directly to fix.`,
+      );
+      return;
+    }
+    openRecoveryDialog({
+      app: this.app,
+      issueId: `Projects/${slug}`,
+      project: slug,
+      error: err,
+      mode: "advisory",
+      onResolved: () => {},
+    });
+  }
+
+  /**
+   * OP-205 (3e): one-step undo. Picks a project, finds the latest `.bak-*`
+   * sibling of its WORKFLOW.md, and restores it (trashing the backup).
+   */
+  private async runRevertWorkflowPatchCommand(): Promise<void> {
+    const projects = applyProjectOrder(listProjects(this.app), this.settings.projectOrder);
+    if (projects.length === 0) {
+      notify("op: no projects found under Projects/");
+      return;
+    }
+    new ProjectSuggestModal(this.app, projects, (project) => {
+      void this.revertWorkflowPatchForProject(project.slug);
+    }).open();
+  }
+
+  private async revertWorkflowPatchForProject(slug: string): Promise<void> {
+    const path = `Projects/${slug}/WORKFLOW.md`;
+    const file = this.app.vault.getAbstractFileByPath(path);
+    if (!(file instanceof TFile)) {
+      notify(`op: ${path} not found`);
+      return;
+    }
+    const vault: VaultLike = {
+      read: (f) => this.app.vault.read(f as TFile),
+      modify: (f, data) => this.app.vault.modify(f as TFile, data),
+      create: async (p, data) => (await this.app.vault.create(p, data)) as VaultFileLike,
+      trash: (f, system) => this.app.vault.trash(f as TFile, system),
+      getFileByPath: (p) => {
+        const x = this.app.vault.getAbstractFileByPath(p);
+        return x instanceof TFile ? (x as VaultFileLike) : null;
+      },
+      listSiblingPaths: (parentFolder) => {
+        const folder = parentFolder
+          ? this.app.vault.getAbstractFileByPath(parentFolder)
+          : this.app.vault.getRoot();
+        const children = (folder as { children?: Array<{ path: string }> } | null)?.children;
+        return Array.isArray(children) ? children.map((c) => c.path) : [];
+      },
+    };
+    try {
+      const r = await revertLastWorkflowPatch({
+        vault,
+        // Pass the live TFile via getFileByPath so vault.modify / vault.trash
+        // get the real Obsidian-resolved file instance (a plain `{path}`
+        // object would be cast through `f as TFile` but isn't actually a
+        // TFile and fails on the trash() seam).
+        workflowFile: vault.getFileByPath(path) ?? { path },
+      });
+      if (r.status === "no-backup") {
+        notify(`op: no backup found for ${path}`);
+        return;
+      }
+      notify(`op: reverted ${path} from ${r.restoredFromPath}`);
+    } catch (err) {
+      const e = err as Error;
+      console.error(
+        "[op-obsidian] op-revert-workflow-patch failed",
+        e?.stack ?? e?.message ?? err,
+      );
+      notify(`op-revert-workflow-patch failed: ${e?.message ?? String(err)}`);
+    }
+  }
+
   private async handleEditModulePick(
     pick:
       | { kind: "existing"; moduleId: string; scopeKind: "global" | "project"; projectSlug?: string }
@@ -3572,6 +3702,10 @@ export default class OpPlugin extends Plugin {
       /** OP-204 (3d): per-launch user-var overrides from the launch modal,
        *  the URI parser, or the auto-advance carry-through. */
       launchVars?: Record<string, string>;
+      /** OP-205 (3e): see {@link OpenAgentArgs.interactive}. */
+      interactive?: boolean;
+      /** OP-205 (3e): see {@link OpenAgentArgs.launchModelOverride}. */
+      launchModelOverride?: string;
     } = {},
   ): Promise<void> {
     try {
@@ -3615,6 +3749,22 @@ export default class OpPlugin extends Plugin {
           agentOverride: effectiveAgentOverride,
           mode: opts.mode,
           launchVars: effectiveLaunchVars,
+          interactive: opts.interactive,
+          launchModelOverride: opts.launchModelOverride,
+          // OP-205 (3e): when the recovery dialog resolves with a usable
+          // outcome, retry the launch automatically — the user already told
+          // us how to proceed (override or patched-and-good).
+          onResolverFailureResolved: (outcome) => {
+            if (outcome.kind === "override") {
+              void this.doOpenAgent(entry, {
+                ...opts,
+                launchModelOverride: outcome.canonicalModel,
+              });
+            } else if (outcome.kind === "patched") {
+              void this.doOpenAgent(entry, opts);
+            }
+            // `cancelled` / `reverted` — no retry; user closes the loop.
+          },
         },
       );
       if (res) {
@@ -3808,8 +3958,12 @@ export default class OpPlugin extends Plugin {
     // off the cached frontmatter via metadataCache (no disk re-read needed —
     // openAgent just wrote the field if there were any overrides).
     const carriedLaunchVars = this.readLaunchVarsFrontmatter(target.path);
+    // OP-205 (3e): auto-advance is headless — surface bad-model failures via
+    // the actionable Notice rather than yanking the user into a modal they
+    // didn't trigger.
     await this.doOpenAgent(target, {
       mode: decision.nextMode,
+      interactive: false,
       launchVars:
         Object.keys(carriedLaunchVars).length > 0 ? carriedLaunchVars : undefined,
     });
