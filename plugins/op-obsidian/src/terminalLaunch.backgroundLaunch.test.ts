@@ -126,4 +126,3 @@ describe("launchInTerminal backgroundLaunch wiring (OP-155 §4 Step 1)", () => {
     );
   });
 });
-
