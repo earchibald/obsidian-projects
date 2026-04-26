@@ -38,7 +38,7 @@ import {
   migrateLinks,
 } from "./links";
 import { RELATION_NAMES, type RelationName } from "./relations";
-import { runEvaluatorFlow } from "./evaluator";
+import { runEvaluatorFlow, EVALUATOR_MAX_WORKFLOW_CHARS } from "./evaluator";
 import { launchHeadlessSubtask } from "./launchHeadlessSubtask";
 import { makeTmuxRelay } from "./relaySession";
 import { composeWorkflowSection } from "./promptBuild";
@@ -1673,6 +1673,8 @@ export default class OpPlugin extends Plugin {
               const parentRaw = (this.app.metadataCache.getFileCache(
                 this.app.vault.getAbstractFileByPath(entry.path) as TFile,
               )?.frontmatter as Record<string, unknown> | undefined)?.parent;
+              // Mirrors `readParentId` in openAgent.ts: null on cache miss,
+              // no-cache, or non-string (including YAML arrays for multi-parent).
               const parentId =
                 typeof parentRaw === "string" && parentRaw.trim().length > 0
                   ? parentRaw
@@ -1680,7 +1682,17 @@ export default class OpPlugin extends Plugin {
               return composeWorkflowSection(this.app, {
                 entry,
                 profile,
-                injection: this.settings.injection,
+                // OP-199 (2b): clamp maxWorkflowChars for the evaluator — it's
+                // a quick triage agent that doesn't need the full budget. A long
+                // workflow section would slow the evaluator and could confuse the
+                // COMPLEXITY: trailer parser.
+                injection: {
+                  ...this.settings.injection,
+                  maxWorkflowChars: Math.min(
+                    this.settings.injection.maxWorkflowChars,
+                    EVALUATOR_MAX_WORKFLOW_CHARS,
+                  ),
+                },
                 vaultBasePath: (this.app.vault.adapter as unknown as { basePath?: string }).basePath,
                 mode: "evaluate",
                 workflowMode: this.settings.workflowMode,

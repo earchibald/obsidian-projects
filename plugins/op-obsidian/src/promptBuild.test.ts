@@ -845,4 +845,105 @@ describe("composeWorkflowSection — OP-199 (2b)", () => {
     });
     expect(section).toBe("");
   });
+
+  it("returns '' (not kickoff) when step's modules all have unknown ids — broken config suppresses, doesn't fallback", async () => {
+    // OP-199 adversarial test (#2): a step whose modules all fail to load with
+    // `unknown-module` diagnostics is distinct from "step absent". The step IS
+    // defined in the workflow, so we honour the explicit-suppress contract and
+    // return "" rather than falling back to kickoff — the author should fix the
+    // broken module references, not silently get kickoff content instead.
+    const app = fakeApp([
+      {
+        path: "Projects/demo/WORKFLOW.md",
+        frontmatter: {
+          type: "workflow",
+          schema: 1,
+          project: "demo",
+          default_agent: "claude",
+          default_model: "opus",
+          steps: [
+            { step: "evaluate", modules: ["does-not-exist"] },
+            { step: "kickoff", modules: ["kickoff-mod"] },
+          ],
+        },
+        raw: "---\n# yaml omitted\n---\n",
+      },
+      {
+        path: "Projects/_op-modules/kickoff-mod.md",
+        frontmatter: {
+          id: "kickoff-mod",
+          title: "Kickoff",
+          type: "workflow-module",
+          scope: "kickoff",
+          vars: [],
+        },
+        raw: "---\n# yaml omitted\n---\nKickoff content (must NOT bleed in).\n",
+      },
+    ]);
+    const section = await composeWorkflowSection(app, {
+      entry: entry(),
+      profile: profile(),
+      injection: injection(),
+      vaultBasePath: "/Users/me/vault",
+      workflowMode: "modules",
+      workflowStep: "evaluate",
+    });
+    // Step "evaluate" is defined (it just has a broken module reference).
+    // Returns "" — explicit-suppress contract. Kickoff must NOT bleed in.
+    expect(section).toBe("");
+  });
+});
+
+describe("composeWorkflowSection — OP-199 (2b) repoPath undefined (#10)", () => {
+  it.each([
+    ["evaluate"],
+    ["plan"],
+    ["implement"],
+    ["review"],
+    ["finalize"],
+  ])("mode '%s' step composes correctly when repoPath is undefined (meta-only project)", async (step) => {
+    // Modules that reference {{repo_path}} / {{branch}} get missing-var
+    // diagnostics but the section is still returned — launch context is
+    // best-effort, not a hard gate on composition.
+    const app = fakeApp([
+      {
+        path: "Projects/demo/WORKFLOW.md",
+        frontmatter: {
+          type: "workflow",
+          schema: 1,
+          project: "demo",
+          default_agent: "claude",
+          default_model: "opus",
+          steps: [{ step, modules: [`${step}-mod`] }],
+        },
+        raw: "---\n# yaml omitted\n---\n",
+      },
+      {
+        path: `Projects/_op-modules/${step}-mod.md`,
+        frontmatter: {
+          id: `${step}-mod`,
+          title: `${step} module`,
+          type: "workflow-module",
+          scope: step,
+          vars: [],
+        },
+        raw: `---\n# yaml omitted\n---\nSTEP=${step} repo={{repo_path}}\n`,
+      },
+    ]);
+    const section = await composeWorkflowSection(app, {
+      entry: entry(),
+      profile: profile(),
+      injection: injection(),
+      vaultBasePath: "/Users/me/vault",
+      workflowMode: "modules",
+      workflowStep: step,
+      // repoPath deliberately omitted (meta-only project)
+      // branch deliberately omitted
+    });
+    // Step content is present even without repoPath.
+    expect(section).toContain(`STEP=${step}`);
+    // {{repo_path}} is left verbatim when repoPath is absent (missing-var
+    // contract: soft failure, never a silent corruption or blank).
+    expect(section).toContain("{{repo_path}}");
+  });
 });

@@ -20,17 +20,39 @@ export type GitExecFn = (
  * `launchHeadlessSubtask` can populate `{{branch}}` in the launch's
  * `RenderContext`.
  *
- * Fail-soft contract: any failure (not a repo, detached HEAD, missing `git`,
- * permission error) returns `undefined`. The composer surfaces a
+ * Fail-soft contract: any failure returns `undefined`. The composer surfaces a
  * `missing-var` diagnostic for `{{branch}}` references at render time, but
  * the launch itself proceeds — workflow injection is best-effort, not a hard
  * gate on launch.
  *
- * Detached HEAD note: `--abbrev-ref HEAD` returns the literal string `HEAD`
- * when the working tree is detached. We treat that as "no useful branch
- * name" and return `undefined` so modules see the same `missing-var` they'd
- * see in a non-repo dir, rather than rendering the (uninformative) literal
- * `HEAD`.
+ * Specific failure modes and their outcomes:
+ *
+ * - **Not a git repo / permission error**: `git rev-parse` exits non-zero →
+ *   caught by the `try/catch` → `undefined`.
+ *
+ * - **Detached HEAD** (mid-rebase, mid-cherry-pick, `git checkout <sha>`):
+ *   `--abbrev-ref HEAD` returns the literal string `"HEAD"`. We treat that as
+ *   "no useful branch name" and return `undefined` so modules see the same
+ *   `missing-var` diagnostic they'd see in a non-repo dir, rather than
+ *   rendering the uninformative literal `"HEAD"`.
+ *
+ * - **Mid-merge** (`git merge` in progress): the working tree is NOT detached
+ *   during a merge — `MERGE_HEAD` exists but `HEAD` still points to the
+ *   current branch. `--abbrev-ref HEAD` returns the branch name normally.
+ *   This is correct behaviour: the branch is unambiguous and modules that
+ *   render `{{branch}}` get the expected value.
+ *
+ * - **Unborn HEAD** (fresh `git init` with no commits): `git rev-parse
+ *   --abbrev-ref HEAD` exits with a non-zero status and writes
+ *   `"fatal: ambiguous argument 'HEAD'"` to stderr → caught by `try/catch` →
+ *   `undefined`.
+ *
+ * - **Worktree teardown race** (underlying HEAD file is being removed
+ *   concurrently): `git rev-parse` is a read-only operation and either
+ *   returns a valid name or exits non-zero — both paths are handled. The
+ *   2 000 ms timeout prevents a hanging launch if the git index is locked.
+ *
+ * - **Missing `git` binary**: `execFile` throws `ENOENT` → caught → `undefined`.
  */
 export async function gitBranchAt(
   cwd: string,

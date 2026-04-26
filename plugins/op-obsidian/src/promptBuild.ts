@@ -145,11 +145,17 @@ export async function buildPrompt(
  *  - a non-empty `## Project workflow\n\n...` string when the step produced
  *    content;
  *  - `""` when WORKFLOW.md exists and the requested step exists but had no
- *    output (e.g. `modules: []`, or every module rendered to whitespace
- *    after var substitution) — caller suppresses the section without
+ *    output (e.g. `modules: []`, or every module rendered to whitespace after
+ *    var substitution, or every module's id failed to load with an
+ *    `unknown-module` diagnostic) — caller suppresses the section without
  *    falling back to legacy, because the user explicitly chose modules mode
  *    AND explicitly defined the per-mode step. This is the explicit-suppress
- *    contract from OP-198;
+ *    contract from OP-198. Note that `unknown-module` failures do NOT trigger
+ *    the lenient kickoff fallback — the step is present in the workflow file,
+ *    so "step intentionally defined but broken" is distinguishable from "step
+ *    absent". Authors see `unknown-module` diagnostics in the Workflows
+ *    settings pane; the fix is to add the missing module files, not to
+ *    silently fall back to kickoff content.
  *  - `null` when WORKFLOW.md was not found (or couldn't be loaded) — caller
  *    falls back to the legacy inline path so users without a WORKFLOW.md
  *    see the same prompt they'd get in `'legacy'` mode.
@@ -163,10 +169,25 @@ export async function buildPrompt(
  * author defines the per-mode step (even with `modules: []`, which is the
  * explicit-suppress contract above).
  *
+ * **Diagnostic safety.** The `schema-mismatch + stepId === requestedStep`
+ * detection uniquely identifies "step absent from steps[]". All other
+ * `schema-mismatch` emit sites in the pipeline (file-not-found, type/schema
+ * field errors, nested-extends violations) do NOT set `stepId`, so there are
+ * no false positives that could trigger the fallback unexpectedly.
+ *
  * **OP-199 (2b) `RenderContext`.** Now reads `args.repoPath` /
  * `args.branch` / `args.parentId` so modules referencing `{{repo_path}}` /
  * `{{branch}}` / `{{parent}}` resolve cleanly at launch. `model` stays
  * `undefined` until OP-200 (2c) ships the per-step resolver.
+ *
+ * **Exported surface invariants.** Safe to call with:
+ *  - `entry.path` pointing at a non-existent note — path is only used for
+ *    `RenderContext` display fields, not for disk I/O inside this function.
+ *  - `injection.maxWorkflowChars === 0` — the composer emits a `size-budget`
+ *    diagnostic for any non-empty text but still returns the content.
+ *  - `vaultBasePath === ""` — sets `vault_path: ""` in the render context.
+ *  - `entry.project === undefined` — short-circuits immediately and returns
+ *    `null` (caller falls through to legacy path).
  *
  * Exported so `launchHeadlessSubtask` callers (currently the evaluator;
  * future per-step subtask launches) can compose the same workflow section

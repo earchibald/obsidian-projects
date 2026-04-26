@@ -284,9 +284,19 @@ function getVaultBasePath(app: App): string | undefined {
  * OP-199 (2b): pull `parent:` from the issue's frontmatter via metadataCache.
  * Returns `null` when:
  *  - the path doesn't resolve to a `TFile`,
- *  - the metadata cache has no entry yet (early launches in a fresh session),
- *  - the frontmatter has no `parent:` key,
- *  - or the value isn't a string (defensive — should be rare).
+ *  - the metadata cache has no entry yet (early launches in a fresh session,
+ *    or ENOENT race when the note is being moved mid-launch) — `null` is the
+ *    safe default: the composer renders it as `PARENT_NONE_SENTINEL` and the
+ *    launch proceeds,
+ *  - the frontmatter has no `parent:` key, or
+ *  - the value isn't a string.
+ *
+ * **Array parents** (`parent: [OP-1, OP-2]`): YAML arrays are not strings, so
+ * `typeof raw === "string"` is false and we return `null`. Multi-parent is
+ * not yet a first-class concept in op — the first parent is not silently
+ * plucked because doing so would hide a configuration mismatch from the
+ * author. A future iteration can surface a diagnostic and render the first
+ * element if multi-parent ever lands.
  *
  * The composer renders a `null` parent as `PARENT_NONE_SENTINEL`, so callers
  * never see a stray `{{parent}}` token in module bodies — even when no

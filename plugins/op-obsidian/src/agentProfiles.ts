@@ -151,6 +151,16 @@ export function normalizeMode(mode: AgentLaunchMode): Exclude<AgentLaunchMode, "
  * `normalizeMode + stringify` recipe — and so a future reshuffle (e.g.
  * folding `'finalize'` into `'review'`) is one edit, not a vault-wide
  * find-and-replace.
+ *
+ * **Pre-OP-185 `'work'` steps.** `normalizeMode('work') === 'implement'`, so
+ * a workflow file that has `step: 'work'` (the pre-OP-185 name) will never
+ * match — OP-199 always requests `'implement'`. When the workflow *also*
+ * lacks an `'implement'` step, the lenient kickoff fallback in
+ * `composeWorkflowSection` fires and uses `'kickoff'` instead. When the
+ * workflow has neither `'implement'` nor `'kickoff'`, the section is
+ * suppressed entirely. The fix is to rename the step in the workflow file
+ * (`step: 'work'` → `step: 'implement'`). Deliberately not honoured here to
+ * avoid ambiguity with an `'implement'` step that may coexist in the same file.
  */
 export function modeToWorkflowStep(mode: AgentLaunchMode): string {
   return normalizeMode(mode);
