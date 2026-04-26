@@ -17,18 +17,31 @@ export interface BuildPromptArgs {
   vaultBasePath?: string;
   mode?: AgentLaunchMode;
   /** OP-198 (2a): selects the workflow-injection engine. `'modules'` calls
-   *  `loadAndComposeWorkflow` for the kickoff step; `'legacy'` (default)
-   *  inlines `Projects/<slug>/WORKFLOW.md` verbatim. Per-mode and per-step
-   *  injection arrive in OP-199 / OP-200. */
+   *  `loadAndComposeWorkflow`; `'legacy'` (default) inlines
+   *  `Projects/<slug>/WORKFLOW.md` verbatim. */
   workflowMode?: WorkflowMode;
   /** OP-198 (2a): vault-wide user vars threaded into the composer's Global
    *  precedence layer. Unused when `workflowMode === 'legacy'`. */
   workflowVars?: Record<string, string>;
-  /** OP-198 (2a): name of the workflow step to compose for this launch.
-   *  Defaults to `'kickoff'`. OP-199 (2b) will pass `'plan'`, `'review'`,
-   *  etc. so each launch mode can target its own step without a signature
-   *  change. */
+  /** OP-198 (2a) — extended in OP-199 (2b): name of the workflow step to
+   *  compose for this launch. Defaults to `'kickoff'`. OP-199 wires
+   *  `openAgent` to pass the active mode (`'evaluate'`, `'plan'`,
+   *  `'implement'`, `'review'`, `'finalize'`); the launch falls back to
+   *  `'kickoff'` if the workflow file lacks the requested step entirely. */
   workflowStep?: string;
+  /** OP-199 (2b): absolute path of the agent's working directory. Surfaces as
+   *  `{{repo_path}}` in modules. `undefined` for meta-only projects. */
+  repoPath?: string;
+  /** OP-199 (2b): current git branch at `repoPath`. Surfaces as `{{branch}}`
+   *  in modules. `undefined` when the working directory isn't a git repo or
+   *  `git rev-parse` fails — composer reports `missing-var` rather than
+   *  breaking the launch. */
+  branch?: string;
+  /** OP-199 (2b): the issue's `parent:` frontmatter, looked up at launch via
+   *  `metadataCache`. `null` (or omitted) → the registry renders
+   *  `{{parent}}` as `PARENT_NONE_SENTINEL` ("(none — this is a top-level
+   *  issue)"). A string is rendered verbatim. */
+  parentId?: string | null;
 }
 
 export async function buildPrompt(
@@ -51,12 +64,12 @@ export async function buildPrompt(
     let composedSection: string | null = null;
 
     if (workflowMode === "modules") {
-      // OP-198 (2a): swap the legacy inline blob for OP-197's composer.
-      // `composeKickoffSection` returns:
+      // OP-198 (2a) / OP-199 (2b): swap the legacy inline blob for OP-197's
+      // composer. `composeWorkflowSection` returns:
       //   - null  → no WORKFLOW.md, fall through to legacy below
       //   - ""    → WORKFLOW.md exists but step was empty, suppress
       //   - text  → splice the composed section
-      composedSection = await composeKickoffSection(app, args);
+      composedSection = await composeWorkflowSection(app, args);
     }
 
     if (composedSection !== null) {
@@ -127,57 +140,114 @@ export async function buildPrompt(
 }
 
 /**
- * OP-198 (2a): compose the workflow section for this launch via OP-197's
- * modular engine. Returns:
+ * OP-198 (2a) / OP-199 (2b): compose the workflow section for this launch via
+ * OP-197's modular engine. Returns:
  *  - a non-empty `## Project workflow\n\n...` string when the step produced
  *    content;
- *  - `""` when WORKFLOW.md exists but the step had no output (e.g.
- *    `modules: []`, or every module rendered to whitespace after var
- *    substitution) — caller suppresses the section without falling back to
- *    legacy, because the user explicitly chose modules mode;
+ *  - `""` when WORKFLOW.md exists and the requested step exists but had no
+ *    output (e.g. `modules: []`, or every module rendered to whitespace after
+ *    var substitution, or every module's id failed to load with an
+ *    `unknown-module` diagnostic) — caller suppresses the section without
+ *    falling back to legacy, because the user explicitly chose modules mode
+ *    AND explicitly defined the per-mode step. This is the explicit-suppress
+ *    contract from OP-198. Note that `unknown-module` failures do NOT trigger
+ *    the lenient kickoff fallback — the step is present in the workflow file,
+ *    so "step intentionally defined but broken" is distinguishable from "step
+ *    absent". Authors see `unknown-module` diagnostics in the Workflows
+ *    settings pane; the fix is to add the missing module files, not to
+ *    silently fall back to kickoff content.
  *  - `null` when WORKFLOW.md was not found (or couldn't be loaded) — caller
  *    falls back to the legacy inline path so users without a WORKFLOW.md
  *    see the same prompt they'd get in `'legacy'` mode.
  *
- * The `RenderContext` is built minimally here: 2a only owns the kickoff
- * splice and the global-vars thread, so launch-context fields (`branch`,
- * `model`, `repo_path`) stay `undefined` until OP-199 (2b) plumbs them
- * through `openAgent`. Modules that reference those vars surface
- * `missing-var` diagnostics on `composed.diagnostics` (visible to the dry-
- * run / preview surface in OP-186) but the prompt itself stays sound.
+ * **OP-199 (2b) lenient kickoff fallback.** When the requested step is not
+ * `'kickoff'` and the composer reports it as missing from the workflow
+ * file's `steps[]` (signal: a `schema-mismatch` diagnostic with
+ * `stepId === requestedStep`), retry once with `step: 'kickoff'`. This
+ * keeps workflows authored before per-mode steps were a thing working —
+ * every mode-launch composes the kickoff step. To opt out per-mode, an
+ * author defines the per-mode step (even with `modules: []`, which is the
+ * explicit-suppress contract above).
+ *
+ * **Diagnostic safety.** The `schema-mismatch + stepId === requestedStep`
+ * detection uniquely identifies "step absent from steps[]". All other
+ * `schema-mismatch` emit sites in the pipeline (file-not-found, type/schema
+ * field errors, nested-extends violations) do NOT set `stepId`, so there are
+ * no false positives that could trigger the fallback unexpectedly.
+ *
+ * **OP-199 (2b) `RenderContext`.** Now reads `args.repoPath` /
+ * `args.branch` / `args.parentId` so modules referencing `{{repo_path}}` /
+ * `{{branch}}` / `{{parent}}` resolve cleanly at launch. `model` stays
+ * `undefined` until OP-200 (2c) ships the per-step resolver.
+ *
+ * **Exported surface invariants.** Safe to call with:
+ *  - `entry.path` pointing at a non-existent note — path is only used for
+ *    `RenderContext` display fields, not for disk I/O inside this function.
+ *  - `injection.maxWorkflowChars === 0` — the composer emits a `size-budget`
+ *    diagnostic for any non-empty text but still returns the content.
+ *  - `vaultBasePath === ""` — sets `vault_path: ""` in the render context.
+ *  - `entry.project === undefined` — short-circuits immediately and returns
+ *    `null` (caller falls through to legacy path).
+ *
+ * Exported so `launchHeadlessSubtask` callers (currently the evaluator;
+ * future per-step subtask launches) can compose the same workflow section
+ * and prepend it to their custom prompts without going through the full
+ * `buildPrompt` shape.
  */
-async function composeKickoffSection(
+export async function composeWorkflowSection(
   app: App,
   args: BuildPromptArgs,
 ): Promise<string | null> {
-  const { entry, profile, injection, vaultBasePath } = args;
+  const { entry, injection, vaultBasePath } = args;
   if (!entry.project) return null;
 
-  const step = args.workflowStep ?? "kickoff";
-  const render = buildKickoffRenderContext(app, args, vaultBasePath);
-  const { composed } = await loadAndComposeWorkflow(app, {
+  const requestedStep = args.workflowStep ?? "kickoff";
+  const render = buildLaunchRenderContext(app, args, vaultBasePath);
+  const ctx = {
+    render,
+    globalVars: args.workflowVars ?? {},
+    maxWorkflowChars: injection.maxWorkflowChars,
+  };
+
+  let { composed } = await loadAndComposeWorkflow(app, {
     project: entry.project,
-    step,
-    ctx: {
-      render,
-      globalVars: args.workflowVars ?? {},
-      maxWorkflowChars: injection.maxWorkflowChars,
-    },
+    step: requestedStep,
+    ctx,
   });
 
   // `null` means WORKFLOW.md was not found — signal the caller to fall
   // back to the legacy inline blob.
   if (!composed) return null;
 
+  // OP-199 (2b) lenient fallback: requested step missing entirely → retry
+  // with 'kickoff'. Detect via the schema-mismatch diagnostic the composer
+  // emits at `composeWorkflowPure.ts` when `workflow.steps.find(...)` misses.
+  // The diagnostic carries `stepId: requestedStep` so we can distinguish
+  // "missing entirely" from "exists but unrelated schema-mismatch on a
+  // module".
+  const stepMissing =
+    requestedStep !== "kickoff" &&
+    composed.diagnostics.some(
+      (d) => d.code === "schema-mismatch" && d.stepId === requestedStep,
+    );
+  if (stepMissing) {
+    const retry = await loadAndComposeWorkflow(app, {
+      project: entry.project,
+      step: "kickoff",
+      ctx,
+    });
+    if (retry.composed) composed = retry.composed;
+  }
+
   const text = composed.text.trim();
-  // Non-null but empty: WORKFLOW.md exists, but the step produced nothing
-  // (e.g. `modules: []` or all modules rendered to whitespace). Return ""
-  // so the caller suppresses the section without injecting legacy content.
+  // Non-null but empty: WORKFLOW.md exists, requested step exists, but the
+  // step produced nothing (e.g. `modules: []`). Return "" so the caller
+  // suppresses the section without injecting legacy content.
   if (!text) return "";
   return `## Project workflow\n\n${text}`;
 }
 
-function buildKickoffRenderContext(
+function buildLaunchRenderContext(
   app: App,
   args: BuildPromptArgs,
   vaultBasePath: string | undefined,
@@ -190,15 +260,19 @@ function buildKickoffRenderContext(
     project: entry.project,
     status: entry.status,
     priority: entry.priority,
-    parent: null,
+    // OP-199 (2b): `null` is a valid value — registry renders it as
+    // `PARENT_NONE_SENTINEL`. `undefined` (parentId absent) is treated the
+    // same: no parent.
+    parent: args.parentId ?? null,
     pr_url: entry.pr,
     github_issue: entry.githubIssue,
-    repo_path: undefined,
+    repo_path: args.repoPath,
     vault_path: vaultBasePath ?? "",
     vault_name: app.vault.getName(),
-    branch: undefined,
+    branch: args.branch,
     today: today(),
     agent: profile.id,
+    // OP-200 (2c) plumbs the per-step resolver here.
     model: undefined,
     mode,
   };
@@ -209,7 +283,7 @@ function today(): string {
   // it keeps the value consistent and reproducible regardless of the user's
   // local timezone, and avoids ambiguity at midnight. Modules that render
   // {{today}} and whose authors care about local date can override the value
-  // via workflowVars (OP-199 per-launch override layer).
+  // via workflowVars.
   return new Date().toISOString().slice(0, 10);
 }
 
