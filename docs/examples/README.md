@@ -8,11 +8,12 @@ ship to CI to keep the docs from drifting away from the engine.
 
 ## What's here
 
-| Subtree | Tutorial it backs | What it shows |
+| Subtree | Backs | What it shows |
 | :--- | :--- | :--- |
-| [`author-first-module/`](./author-first-module/) | [03 — Author your first module](../workflow-modules/03-author-your-first-module.md) | A single global module, no vars, no workflow file. The minimum viable file. |
-| [`compose-first-workflow/`](./compose-first-workflow/) | [04 — Compose your first workflow](../workflow-modules/04-compose-your-first-workflow.md) | Global default workflow + a per-project workflow that `extends:` it, with two modules and a per-step agent override. |
-| [`variables-and-templating/`](./variables-and-templating/) | [05 — Use variables and templating](../workflow-modules/05-variables-and-templating.md) | Plugin vars (`{{branch}}`, `{{today}}`, `{{repo_path}}`), user vars (`{{vars.package_name}}`), `name=VALUE` inline defaults, and the precedence chain in action. |
+| [`author-first-module/`](./author-first-module/) | Tutorial: [03 — Author your first module](../workflow-modules/03-author-your-first-module.md) | A single global module, no vars, no workflow file. The minimum viable file. |
+| [`compose-first-workflow/`](./compose-first-workflow/) | Tutorial: [04 — Compose your first workflow](../workflow-modules/04-compose-your-first-workflow.md) | Global default workflow + a per-project workflow that `extends:` it, with two modules and a per-step agent override. |
+| [`variables-and-templating/`](./variables-and-templating/) | Tutorial: [05 — Use variables and templating](../workflow-modules/05-variables-and-templating.md) | Plugin vars (`{{branch}}`, `{{today}}`, `{{repo_path}}`), user vars (`{{vars.package_name}}`), `name=VALUE` inline defaults, and the precedence chain in action. |
+| [`workflow-library/`](./workflow-library/) | Curated reusable library | Eight `vars:`-driven modules distilled from this project's `WORKFLOW.md` (branching, tmux safety, PR-required, version cadence, GH issue close, adversarial review, commit mapping, orient) plus three reference workflows (global default + extends-default + standalone docs-only). Copy into your own vault to bootstrap a project. |
 
 ## How the layouts map onto your vault
 
