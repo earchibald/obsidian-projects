@@ -266,12 +266,10 @@ async function assertExampleClean(spec: ExampleSpec) {
 
   let bundle: ModuleSourceBundle;
   if (spec.project === null) {
-    // Module-only example — no workflow file. Run the module loader against
-    // the example's set of files via a sentinel project string that filters
-    // nothing. We can't call `loadModuleSources` directly (it requires a
-    // project slug for `loadWorkflowFile`), so reach in via `loadModules`
-    // through a re-exported handle — but `loadModules` only loads modules,
-    // which is what we want here.
+    // Module-only example — no workflow file ships in this subtree, so
+    // `loadModuleSources` (which requires a project slug to fetch the
+    // workflow file) doesn't apply. Call `loadModules` directly with no
+    // project filter; we only need to verify the module file loads cleanly.
     const { loadModules } = await import("./workflowModule");
     const r = loadModules(app as never);
     const errs = errors(r.diagnostics);
