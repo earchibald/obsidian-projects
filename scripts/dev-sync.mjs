@@ -9,7 +9,9 @@
 //
 // Hardcoded target: ~/Documents/OP-Test/OP-Test/.obsidian/plugins/op-obsidian/
 // No env-var override — Agent-Vault is BRAT-only and must never receive a
-// dev sync. Active-vault and Agent-Vault guards both fire to enforce this.
+// dev sync. The OP-Test-open assertion + the Agent-Vault path-segment guard
+// + explicit `vault=OP-Test` routing on every CLI call (OP-175) jointly
+// enforce this; no Obsidian window needs to be focused on OP-Test.
 
 import { copyFileSync, existsSync, mkdirSync, statSync } from "node:fs";
 import { dirname, join, relative } from "node:path";
@@ -17,8 +19,8 @@ import { fileURLToPath } from "node:url";
 
 import {
   OP_TEST_PLUGIN_DEST,
-  assertActiveVaultIsOpTest,
   assertNotAgentVault,
+  assertOpTestVaultOpen,
   fail,
   runObsidian,
 } from "./lib/op-test.mjs";
@@ -28,7 +30,7 @@ const root = join(here, "..");
 const pluginSrc = join(root, "plugins/op-obsidian");
 const filesToCopy = ["main.js", "manifest.json"];
 
-assertActiveVaultIsOpTest();
+assertOpTestVaultOpen();
 assertNotAgentVault(OP_TEST_PLUGIN_DEST);
 
 for (const f of filesToCopy) {

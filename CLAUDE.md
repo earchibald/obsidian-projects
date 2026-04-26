@@ -19,7 +19,7 @@ Always, in order:
    ```bash
    node scripts/dev-sync.mjs
    ```
-   The script hardcodes `~/Documents/OP-Test/OP-Test/.obsidian/plugins/op-obsidian/` as the target. It currently still asserts OP-Test is the active Obsidian window before mutating (an internal `obsidian plugin:reload` call would otherwise hit whichever window happens to be focused — switch to the OP-Test window, then re-run if the assertion fires) and rejects any path containing `Agent-Vault` (belt-and-suspenders against muscle-memory mistakes — Agent-Vault is BRAT-only, see below). Never `rm -rf` the dest — `data.json` (user settings) lives there; `dev-sync.mjs` only overwrites `main.js` and `manifest.json`.
+   The script hardcodes `~/Documents/OP-Test/OP-Test/.obsidian/plugins/op-obsidian/` as the target. It asserts OP-Test is **open** in Obsidian (any window — focus is not required since OP-175 routes every internal CLI call via `vault=OP-Test`) and rejects any path containing `Agent-Vault` (belt-and-suspenders against muscle-memory mistakes — Agent-Vault is BRAT-only, see below). Never `rm -rf` the dest — `data.json` (user settings) lives there; `dev-sync.mjs` only overwrites `main.js` and `manifest.json`.
 
 3. **Reload the plugin.** `dev-sync.mjs` handles this: it tries `obsidian plugin:reload id=op-obsidian` first and falls back to the `loadManifests + enablePluginAndSave` recipe on first-install (when Obsidian hasn't scanned the new folder yet). No separate manual step needed.
 
@@ -55,13 +55,13 @@ Never skip these steps, even for "trivial" changes — untested plugin builds sh
 
 ## OP-Test vault: the sole dev sync target
 
-The **OP-Test** vault at `~/Documents/OP-Test/OP-Test/` is a clean-room test vault — separate from your day-to-day Agent-Vault — used to verify the plugin's behavior in a vault that has no project state, no settings carry-over, and no other plugins. **OP-Test is the only vault that receives dev syncs from this repo.** `node scripts/dev-sync.mjs` enforces this: it asserts OP-Test is the active Obsidian window before mutating, and refuses any target path containing `Agent-Vault`.
+The **OP-Test** vault at `~/Documents/OP-Test/OP-Test/` is a clean-room test vault — separate from your day-to-day Agent-Vault — used to verify the plugin's behavior in a vault that has no project state, no settings carry-over, and no other plugins. **OP-Test is the only vault that receives dev syncs from this repo.** `node scripts/dev-sync.mjs` enforces this: it asserts the OP-Test vault is open in Obsidian before mutating, routes every internal CLI call via `vault=OP-Test` (OP-175 — focus is not required), and refuses any target path containing `Agent-Vault`.
 
 **Do not install op-obsidian into OP-Test via BRAT.** We're the plugin's authors and the dev build is on disk; BRAT adds GitHub-release latency and doesn't carry uncommitted work. Use `dev-sync.mjs` instead — it handles the file copy, the first-install enable recipe, and subsequent reloads.
 
 **Target OP-Test on every CLI call: `obsidian vault=OP-Test …`.** The `obsidian` CLI accepts a top-level `vault=<name>` argument that routes the command at the named vault regardless of which window is currently focused (`obsidian help` documents it). Use it on every call in this repo's smoke tests, settings probes, and any ad-hoc CLI dispatch — it removes the focused-window race entirely and means you don't need to hand-verify focus before each command. The form is `vault=<name>` (key=value), not `--vault <name>`; see [`reference/cli-gotchas.md`](plugins/op/skills/op/reference/cli-gotchas.md) "Per-call vault targeting" for the full pattern.
 
-The `dev-sync.mjs` / `reset-test-vault.mjs` / `build-seeds.mjs` scripts still assert OP-Test is the active vault as defense in depth — their internal `obsidian plugin:reload` calls don't yet pass `vault=OP-Test`, so the assertion is the safety net. Switch the OP-Test window into focus and re-run if a script aborts with that error. Re-running `obsidian vault` (no args) after a window switch confirms which vault is active.
+The `dev-sync.mjs` / `reset-test-vault.mjs` / `build-seeds.mjs` scripts assert the OP-Test vault is open in Obsidian as defense in depth — they probe via `obsidian vault=OP-Test eval code='app.vault.getName()'` and abort with "Open the OP-Test vault in Obsidian (any window — focus is no longer required) and re-run" on miss. Since OP-175 every internal CLI call inside these scripts is routed via `vault=OP-Test`, so OP-Test does not need to be the focused window — opening the vault in any Obsidian window is enough.
 
 ## Resetting between scenarios
 
@@ -72,7 +72,7 @@ node scripts/reset-test-vault.mjs <seed>
 # valid seeds: empty | scaffolded | mid-flow | github-linked | multi-project
 ```
 
-The script asserts OP-Test is the active vault, runs `git reset --hard seed/<name> && git clean -fd` inside OP-Test, then reloads op-obsidian so Obsidian re-reads the vault state. The seed ladder itself is built (and rebuilt) by `node scripts/build-seeds.mjs` — re-runnable so seeds stay in sync as the plugin's scaffolding behavior evolves.
+The script asserts the OP-Test vault is open in Obsidian (focus not required since OP-175), runs `git reset --hard seed/<name> && git clean -fd` inside OP-Test, then reloads op-obsidian so Obsidian re-reads the vault state. The seed ladder itself is built (and rebuilt) by `node scripts/build-seeds.mjs` — re-runnable so seeds stay in sync as the plugin's scaffolding behavior evolves.
 
 ## Agent-Vault is BRAT-only
 
