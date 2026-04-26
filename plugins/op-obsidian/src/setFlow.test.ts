@@ -101,6 +101,17 @@ describe("setFlow", () => {
     await expect(setFlow(app, issue(), { flow: "   " })).rejects.toThrow(/Invalid flow/);
   });
 
+  it("rejects flow values containing embedded newlines", async () => {
+    const { app } = makeApp({});
+    // OP-188 security: a URI-encoded newline (%0A) in a flow parameter must
+    // not reach frontmatter — it can't match any workflow step id and could
+    // produce multi-line YAML strings on round-trip.
+    await expect(setFlow(app, issue(), { flow: "plan\nevil_key: value" })).rejects.toThrow(
+      /newlines/,
+    );
+    await expect(setFlow(app, issue(), { flow: "plan\revil" })).rejects.toThrow(/newlines/);
+  });
+
   it("rejects invalid complexity values", async () => {
     const { app } = makeApp({});
     await expect(
@@ -139,6 +150,8 @@ describe("validation helpers", () => {
     }
     expect(() => validateFlow("")).toThrow();
     expect(() => validateFlow("   ")).toThrow();
+    expect(() => validateFlow("plan\nevil")).toThrow(/newlines/);
+    expect(() => validateFlow("plan\revil")).toThrow(/newlines/);
   });
 
   it("accepts every schema complexity value", () => {

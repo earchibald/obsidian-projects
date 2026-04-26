@@ -221,6 +221,12 @@ describe("handleOpSetFlowUri", () => {
       /non-empty step id/,
     );
   });
+  it("rejects flow value containing embedded newlines", async () => {
+    // URI-encoded newline (%0A → \n) must not reach frontmatter.
+    await expect(
+      handleOpSetFlowUri(makeDeps(), { id: "OP-1", flow: "plan\nevil_key: value" }),
+    ).rejects.toThrow(/must not contain newlines/);
+  });
   it("passes 'null' through as null to clear", async () => {
     const r = await handleOpSetFlowUri(makeDeps(), { id: "OP-1", flow: "null" });
     expect(r.flow).toBeUndefined();

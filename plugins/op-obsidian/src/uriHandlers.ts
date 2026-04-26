@@ -206,6 +206,11 @@ export async function handleOpSetFlowUri(
     if (v === "" || v === "null") {
       input.flow = null;
     } else if (typeof v === "string" && v.trim().length > 0) {
+      if (/[\r\n]/.test(v)) {
+        throw new Error(
+          `op-set-flow URI flow must not contain newlines`,
+        );
+      }
       input.flow = v.trim() as Flow;
     } else {
       throw new Error(

@@ -86,6 +86,11 @@ export function validateFlow(v: string): asserts v is Flow {
   if (typeof v !== "string" || v.trim() === "") {
     throw new Error(`Invalid flow: ${JSON.stringify(v)} — expected a non-empty step id string`);
   }
+  if (/[\r\n]/.test(v)) {
+    throw new Error(
+      `Invalid flow: ${JSON.stringify(v)} — step id must not contain newlines`,
+    );
+  }
 }
 
 export function validateComplexity(v: string): asserts v is Complexity {

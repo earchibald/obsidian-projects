@@ -177,6 +177,12 @@ describe("parseSetFlowParams", () => {
     expect(r.ok).toBe(false);
     if (!r.ok) expect(r.error).toMatch(/invalid --flow/);
   });
+  it("rejects flow value containing embedded newlines", () => {
+    // URI-encoded newlines (%0A) in CLI params must be caught at parse time.
+    const r = parseSetFlowParams({ id: "OP-1", flow: "plan\nevil_key: value" });
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.error).toMatch(/invalid --flow.*newlines/);
+  });
   it("rejects invalid complexity enum", () => {
     const r = parseSetFlowParams({ id: "OP-1", complexity: "epic" });
     expect(r.ok).toBe(false);

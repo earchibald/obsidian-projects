@@ -95,6 +95,12 @@ export function parseSetFlowParams(
     if (v === "" || v === "null") {
       out.flow = null;
     } else if (typeof v === "string" && v.trim().length > 0) {
+      if (/[\r\n]/.test(v)) {
+        return {
+          ok: false,
+          error: `op-set-flow failed: invalid --flow ${JSON.stringify(v)} (must not contain newlines)`,
+        };
+      }
       out.flow = v.trim();
     } else {
       return {
