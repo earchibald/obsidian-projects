@@ -96,9 +96,17 @@ Per-project repo paths (slug → absolute path). Overridden by a `repo_path:` in
 
 ### Terminal
 
-- **Terminal app** — `Terminal` (plain tmux) or `iTerm` (`tmux -CC` control mode). All agents share one tmux session (`op-agents`), one window per issue, so agents survive the terminal closing (reattach with `tmux attach -t op-agents`).
+**Supported terminals.** macOS only. Three tiers:
+
+- **iTerm — primary, daily-driver.** All agent-launch UX (tmux `-CC` control mode, the layout orchestrator, non-activating background launch via `open -ga`, recommended-prefs nudges, AppleScript automation) is built and tested against iTerm. Pick this unless you have a reason not to.
+- **Terminal.app — second-class fallback.** Works via plain tmux: each launch writes a launch script and `open -a Terminal`s it. No orchestrator, no `-CC` integration (each new Terminal window opens its own tmux client and mirrors the shared session), no background launch (Terminal has no equivalent non-activating cold-start), no pane layouts. Functional, but a degraded experience — only use it if iTerm isn't an option.
+- **Other terminals (Kitty, Alacritty, Ghostty, WezTerm, …) — not supported.** The dropdown is hardcoded to `Terminal | iTerm`; nothing else has been tested. If one of these is your default terminal, op still routes via `open -a Terminal` or iTerm — your preferred terminal is bypassed entirely. Adding support is not on the roadmap.
+
+Settings:
+
+- **Terminal app** — `Terminal` or `iTerm` (see tiers above). All agents share one tmux session (`op-agents`), one window per issue, so agents survive the terminal closing (reattach with `tmux attach -t op-agents`).
 - **tmux binary** — absolute path. Obsidian's `PATH` omits `/opt/homebrew/bin`, so bare `tmux` fails on Apple Silicon brew installs; set `/opt/homebrew/bin/tmux` or `/usr/local/bin/tmux` explicitly.
-- **iTerm window placement** — new tab in front window vs. new window.
+- **iTerm window placement** — new tab in front window vs. new window. iTerm only.
 
 ### iTerm layout orchestrator
 
