@@ -168,6 +168,21 @@ describe("buildViewScript", () => {
     );
   });
 
+  it("does not double-prefix when issueTitle has a control char between id and separator (dedup bypass guard)", () => {
+    // BEL injected between the id and the space would have bypassed the old
+    // startsWith check before oscSafe was moved before labelWithId.
+    const out = buildViewScript({
+      ...baseArgs,
+      issueTitle: "OP-172\x07 research - can we actually name iterm2 tmux windows",
+    });
+    // After oscSafe strips \x07 the title becomes "OP-172 research …" which
+    // starts with the id — dedup fires and no double-prefix is emitted.
+    expect(out).toContain(
+      `printf '\\033]1;%s\\007' 'OP-172 research - can we actually name iterm2 tmux windows'`,
+    );
+    expect(out).not.toContain("OP-172 OP-172");
+  });
+
   it("strips control characters (ESC, BEL) from issueId in OSC 1 payload", () => {
     const out = buildViewScript({
       ...baseArgs,
@@ -245,6 +260,18 @@ describe("labelWithId", () => {
   it("does not double-prefix when title already starts with `<id> `", () => {
     expect(labelWithId("OP-177", "OP-177 iterm tmux windows…")).toBe(
       "OP-177 iterm tmux windows…",
+    );
+  });
+
+  it("does not double-prefix when title starts with `<id>:` (colon separator)", () => {
+    expect(labelWithId("OP-177", "OP-177: iterm tmux windows…")).toBe(
+      "OP-177: iterm tmux windows…",
+    );
+  });
+
+  it("does not double-prefix when title starts with `<id> -` (dash separator)", () => {
+    expect(labelWithId("OP-177", "OP-177 - iterm tmux windows…")).toBe(
+      "OP-177 - iterm tmux windows…",
     );
   });
 

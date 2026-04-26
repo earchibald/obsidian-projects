@@ -308,7 +308,11 @@ interface BuildViewArgs {
 // "OP-177 iterm tmux windows…") so the visible label always carries the
 // ID. Falls back to bare `<issueId>` when title is empty/missing.
 // `labelWithId` skips the prefix when the title already starts with the
-// id (basename fallback in `IssueStore.parseIssue` — fm.title missing).
+// id (basename fallback in `IssueStore.parseIssue` — fm.title missing),
+// including colon/dash-separated forms ("OP-177: …", "OP-177 - …").
+// `oscSafe` is applied to id and title *before* `labelWithId` so the dedup
+// check operates on stripped values — a control char injected between the
+// id and its separator cannot bypass the guard.
 export function buildViewScript({
   tmuxBinary,
   tmuxSession,
@@ -322,7 +326,11 @@ export function buildViewScript({
   const groupSess = shSingleQuote(groupSessName);
   const groupSessTarget = shSingleQuote(`=${groupSessName}`);
   const win = shSingleQuote(tmuxWindow);
-  const label = oscSafe(labelWithId(issueId, issueTitle));
+  // Strip control chars from raw inputs BEFORE the dedup check so that a
+  // control char injected between the id and its separator (e.g. "OP-177\x07
+  // title") cannot bypass `labelWithId`'s prefix guard.  The result is
+  // already OSC-safe — no second pass needed.
+  const label = labelWithId(oscSafe(issueId), issueTitle !== undefined ? oscSafe(issueTitle) : undefined);
   const tabName = shSingleQuote(label);
   const windowTitle = shSingleQuote(label);
   // OP-178: the per-pane grouped session shares its window list with the
@@ -460,14 +468,17 @@ function oscSafe(s: string): string {
 }
 
 // Build a visible label of the form `<issueId> <issueTitle>` for tab/window
-// titles. When the title already starts with `<issueId>` (basename fallback
-// path in `IssueStore.parseIssue` — fm.title missing) skip the prefix to
-// avoid `OP-177 OP-177 …`. Falls back to bare `<issueId>` for empty title.
+// titles. When the title already starts with `<issueId>` followed by any
+// non-word character — space ("OP-177 title"), colon ("OP-177: title"), dash
+// ("OP-177 - title"), etc. — skip the prefix to avoid "OP-177 OP-177: …".
+// Also skips when the title equals the id exactly (basename with no suffix).
+// Falls back to bare `<issueId>` for empty/missing title.
 export function labelWithId(issueId: string, issueTitle?: string): string {
   if (!issueTitle || issueTitle.length === 0) return issueId;
-  if (issueTitle === issueId || issueTitle.startsWith(`${issueId} `)) {
-    return issueTitle;
-  }
+  // Escape regex metacharacters in the id (e.g. the literal `-` in "OP-177").
+  const escapedId = issueId.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  // Match id followed by any non-word char (space, colon, dash…) OR end-of-string.
+  if (new RegExp(`^${escapedId}(?:\\W|$)`).test(issueTitle)) return issueTitle;
   return `${issueId} ${issueTitle}`;
 }
 
