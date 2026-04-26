@@ -61,6 +61,48 @@ describe("renderTemplate", () => {
     });
   });
 
+  describe("regex edge cases", () => {
+    it("{{ {{id}} }} — outer braces don't match (content starts with {), inner {{id}} is substituted", () => {
+      const r = renderTemplate("{{ {{id}} }}", FULL_CTX);
+      expect(r.text).toBe("{{ OP-194 }}");
+      expect(r.diagnostics).toEqual([]);
+    });
+
+    it("{{}} — empty braces don't match the token shape, left verbatim, no diagnostic", () => {
+      const r = renderTemplate("{{}}", FULL_CTX);
+      expect(r.text).toBe("{{}}");
+      expect(r.diagnostics).toEqual([]);
+    });
+
+    it("{{ }} — whitespace-only braces don't match (no identifier), left verbatim, no diagnostic", () => {
+      const r = renderTemplate("{{ }}", FULL_CTX);
+      expect(r.text).toBe("{{ }}");
+      expect(r.diagnostics).toEqual([]);
+    });
+
+    it("{{\nid\n}} — newlines inside braces match (\\s* includes \\n)", () => {
+      // Intentional: \s* allows newlines in multi-line template strings.
+      const r = renderTemplate("{{\nid\n}}", FULL_CTX);
+      expect(r.text).toBe("OP-194");
+      expect(r.diagnostics).toEqual([]);
+    });
+
+    it("{{ id — unclosed braces left verbatim, no crash", () => {
+      const r = renderTemplate("{{ id", FULL_CTX);
+      expect(r.text).toBe("{{ id");
+      expect(r.diagnostics).toEqual([]);
+    });
+
+    it("{{github-issue}} — hyphen not in token charset, left verbatim, no diagnostic", () => {
+      // The token name must match [a-zA-Z_][a-zA-Z0-9_]*. A hyphen breaks the
+      // match before }}, so the token is not recognised at all — no spurious
+      // missing-var diagnostic is emitted for it.
+      const r = renderTemplate("{{github-issue}}", FULL_CTX);
+      expect(r.text).toBe("{{github-issue}}");
+      expect(r.diagnostics).toEqual([]);
+    });
+  });
+
   describe("missing-var diagnostics", () => {
     it("leaves an unknown-name token verbatim and emits one missing-var diagnostic", () => {
       const r = renderTemplate("Hello {{notavar}}!", FULL_CTX);
@@ -126,6 +168,22 @@ describe("renderTemplate", () => {
       expect(second.text).toBe(first.text);
       expect(second.diagnostics).toEqual([]);
     });
+
+    it("known limitation: a resolved value containing {{…}} shapes is NOT a fixed point", () => {
+      // If ctx.title = "Use {{id}} in prose", the first pass substitutes {{title}}
+      // and produces "Use {{id}} in prose". The second pass then resolves {{id}},
+      // producing "Use OP-194 in prose". The two outputs differ — single-pass
+      // rendering is the intended contract; callers control whether extra passes
+      // are needed. The verbatim fallback still prevents silent corruption.
+      const ctx = { ...FULL_CTX, title: "Use {{id}} in prose" };
+      const first = renderTemplate("{{title}}", ctx);
+      expect(first.text).toBe("Use {{id}} in prose");
+      expect(first.diagnostics).toEqual([]);
+
+      const second = renderTemplate(first.text, ctx);
+      expect(second.text).toBe("Use OP-194 in prose");
+      expect(second.text).not.toBe(first.text); // not a fixed point
+    });
   });
 
   describe("parent sentinel propagation", () => {
@@ -163,5 +221,15 @@ describe("renderSkillTrigger (refactored to delegate to renderTemplate)", () => 
   it("substitutes every occurrence of {{id}} (matches legacy /\\{\\{id\\}\\}/g semantics)", () => {
     const profile = { ...BASE_PROFILES.claude, skillTrigger: "{{id}} {{id}} {{id}}" };
     expect(renderSkillTrigger(profile, "X-1")).toBe("X-1 X-1 X-1");
+  });
+
+  it("issueId containing $& is inserted literally (callback-based replace; legacy string replace would have expanded it)", () => {
+    // String.prototype.replace(regex, string) expands $& as the matched text.
+    // The callback form — which renderTemplate uses — returns the value directly,
+    // so $& in an issue id is safe and produces the exact id in the output.
+    const profile = { ...BASE_PROFILES.claude, skillTrigger: "{{id}}" };
+    expect(renderSkillTrigger(profile, "$&")).toBe("$&");
+    expect(renderSkillTrigger(profile, "$'")).toBe("$'");
+    expect(renderSkillTrigger(profile, "$`")).toBe("$`");
   });
 });

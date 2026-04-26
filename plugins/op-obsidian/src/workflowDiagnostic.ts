@@ -29,3 +29,21 @@ export interface WorkflowDiagnostic {
   /** Code-specific extras (e.g., `bad-model` carries `{ allowedAliases, … }`). */
   extra?: Record<string, unknown>;
 }
+
+/**
+ * Exhaustiveness helper for switch statements over `WorkflowDiagnosticCode`.
+ * Place in the `default` branch so TypeScript raises a compile error when a
+ * new code is added to the union but not handled by the switch.
+ *
+ * @example
+ * function describeCode(code: WorkflowDiagnosticCode): string {
+ *   switch (code) {
+ *     case "missing-var": return "…";
+ *     // …
+ *     default: return assertNeverCode(code);
+ *   }
+ * }
+ */
+export function assertNeverCode(x: never): never {
+  throw new Error(`Unhandled WorkflowDiagnosticCode: ${JSON.stringify(x)}`);
+}

@@ -120,8 +120,7 @@ export const PLUGIN_VAR_REGISTRY: Readonly<Record<string, PluginVar>> = Object.f
   // Issue links
   parent: {
     name: "parent",
-    description:
-      "The parent issue id from frontmatter, or the sentinel '(none — this is a top-level issue)' when no parent is set.",
+    description: `The parent issue id from frontmatter, or \`${PARENT_NONE_SENTINEL}\` when no parent is set.`,
     example: "OP-184",
     compute: (ctx) => (ctx.parent === null ? PARENT_NONE_SENTINEL : ctx.parent),
   },

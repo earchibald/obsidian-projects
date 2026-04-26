@@ -182,6 +182,18 @@ describe("PLUGIN_VAR_REGISTRY", () => {
       expect(PLUGIN_VAR_REGISTRY.parent.compute(minimal)).toBe(PARENT_NONE_SENTINEL);
       expect(PLUGIN_VAR_REGISTRY.parent.compute({ ...minimal, parent: "OP-2" })).toBe("OP-2");
     });
+
+    it("{{parent}} returns undefined (not the sentinel) when parent slot is missing from a Partial ctx", () => {
+      // parent is required (string | null) in a full RenderContext, but in a
+      // Partial<RenderContext> the slot may simply be absent (undefined).
+      // undefined means "caller didn't provide the parent field at all" — the
+      // renderer treats that as missing-var, not as a confirmed top-level issue.
+      // null is the explicit signal that the issue has no parent; only that
+      // triggers the sentinel.
+      const noParentSlot: Partial<typeof minimal> = { ...minimal };
+      delete (noParentSlot as Partial<typeof noParentSlot>).parent;
+      expect(PLUGIN_VAR_REGISTRY.parent.compute(noParentSlot)).toBeUndefined();
+    });
   });
 });
 

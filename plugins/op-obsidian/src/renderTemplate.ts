@@ -8,15 +8,26 @@ import type { WorkflowDiagnostic } from "./workflowDiagnostic";
 // same diagnostic contract.
 //
 // Token shape: `{{ name }}` — name is `[a-zA-Z_][a-zA-Z0-9_]*`. Whitespace
-// inside the braces is allowed and trimmed. Tokens that don't match this
-// shape (e.g., `{{ foo-bar }}`, `{{vars.x}}`) are left verbatim by this pass
-// — 1b/1c handle the `vars.<name>` namespace separately.
+// inside the braces is allowed and trimmed (including newlines, since `\s*`
+// matches `\n`). Tokens that don't match this shape (e.g., `{{ foo-bar }}`,
+// `{{vars.x}}`, `{{}}`) are left verbatim by this pass — 1b/1c handle the
+// `vars.<name>` namespace separately.
 //
 // Resolution: looks up `name` in `PLUGIN_VAR_REGISTRY`; calls `compute(ctx)`.
 // On `undefined` (compute returned undefined) or unknown name (no registry
 // entry), the token is left verbatim and a `missing-var` diagnostic is
 // recorded. Verbatim fallback is a soft failure — never silently corrupts a
 // prompt with empty strings, never throws on a typo'd name.
+//
+// Idempotency: the renderer is a fixed point for *fully-resolved* strings —
+// re-rendering a string whose every substitution produced a value with no
+// `{{...}}`-shaped substrings leaves text and diagnostics unchanged. If a
+// resolved value itself contains `{{name}}`-shaped text (e.g., a title like
+// "Use {{id}} in prose"), the next pass will attempt to resolve those inner
+// tokens. This is intentional: `{{title}}` is replaced in the first pass;
+// the caller controls whether to run additional passes. Single-pass rendering
+// is the common case; the verbatim fallback guards against partial expansion
+// producing a silently-garbled output.
 
 export interface RenderResult {
   text: string;
