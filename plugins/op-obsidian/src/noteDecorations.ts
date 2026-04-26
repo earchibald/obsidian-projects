@@ -23,18 +23,10 @@ import {
   MarkdownPostProcessorContext,
   MarkdownRenderChild,
   MarkdownView,
-  TFile,
 } from "obsidian";
 import { editorInfoField } from "obsidian";
 import { execFile } from "child_process";
-import {
-  Decoration,
-  DecorationSet,
-  EditorView,
-  ViewPlugin,
-  ViewUpdate,
-  WidgetType,
-} from "@codemirror/view";
+import { EditorView, ViewPlugin, ViewUpdate } from "@codemirror/view";
 import { StateEffect } from "@codemirror/state";
 import {
   ChipFrontmatter,
@@ -250,74 +242,44 @@ const defaultFetchGhState = async (
   });
 };
 
-/** CM6 widget that renders the chip + strip above line 0 in Live Preview. */
-class NoteChipWidget extends WidgetType {
-  private controller?: AbortController;
-  constructor(
-    private state: ChipState,
-    private segments: StripSegment[],
-    private deps: ChipDeps,
-    private signature: string,
-  ) {
-    super();
-  }
-
-  /** Two widgets are equal when their composed signature matches — chip
-   * state, strip segments, and gh-state placeholders all collapse into
-   * one string so CM doesn't recreate the DOM on every keystroke. */
-  eq(other: NoteChipWidget): boolean {
-    return other.signature === this.signature;
-  }
-
-  toDOM(): HTMLElement {
-    this.controller = new AbortController();
-    const el = renderChipDom(this.state, this.segments, this.deps, this.controller);
-    el.classList.add("op-note-chip-wrap--cm6");
-    // Renderers prepend above line 0, so CM places this in the doc body —
-    // we want a block layout so the H1 wraps below.
-    el.style.display = "block";
-    return el;
-  }
-
-  destroy(): void {
-    this.controller?.abort();
-    this.controller = undefined;
-  }
-
-  ignoreEvent(): boolean {
-    // Allow click events to reach our handlers; CM6 default would
-    // intercept selection-related events for inline widgets. Block
-    // widgets at side -1 are usually fine but be explicit.
-    return false;
-  }
-
-  /** Test seam — the noteChipState test asserts `controller.signal.aborted`
-   * after destroy(). Exposed so the test doesn't need to read private. */
-  signalAborted(): boolean {
-    return this.controller?.signal.aborted ?? true;
-  }
-}
-
 /**
- * CM6 ViewPlugin that maintains the chip widget at position 0 of an
- * issue note's editor view.
+ * CM6 ViewPlugin that mounts a chip element OUTSIDE the editor's
+ * decoration tree. Obsidian's bundled CM6 rejects `Decoration.widget`
+ * at line 0 from any provider we tried (StateField, ViewPlugin) with
+ * "Block decorations may not be specified via plugins" — its facet
+ * marks both as plugin sources. So we sidestep Decorations entirely:
+ * the plugin owns one DOM element prepended to `view.dom.parentNode`
+ * (the cm-editor's parent — `cm-contentContainer` in current layouts),
+ * recomputes its content on doc + frontmatter changes, and removes
+ * itself on `destroy()`. This is the same shape CM6 plugins use for
+ * tooltips / panels and matches Obsidian's own pattern in things like
+ * the embedded markdown link cards.
  */
 export function noteChipExtension(deps: ChipDeps) {
   return ViewPlugin.fromClass(
     class {
-      decorations: DecorationSet = Decoration.none;
+      private host: HTMLElement;
+      private controller = new AbortController();
       private currentSig = "";
 
       constructor(private view: EditorView) {
+        this.host = document.createElement("div");
+        this.host.classList.add("op-note-chip-host");
+        // Mount OUTSIDE `view.dom` (the `cm-editor` element) — CM6
+        // assumes exclusive ownership of its DOM children, and inserting
+        // arbitrary nodes inside `cm-editor` breaks its decoration
+        // bookkeeping. We attach to the parent (Obsidian's
+        // `markdown-source-view` container) so CM6 ignores us entirely.
+        const parent = view.dom.parentElement;
+        if (parent) parent.insertBefore(this.host, view.dom);
         this.recompute();
       }
 
-      update(update: ViewUpdate): void {
-        const docChanged = update.docChanged;
-        const refreshed = update.transactions.some((tr) =>
+      update(u: ViewUpdate): void {
+        const refreshed = u.transactions.some((tr) =>
           tr.effects.some((e) => e.is(refreshChipEffect)),
         );
-        if (!docChanged && !refreshed && !update.viewportChanged) return;
+        if (!u.docChanged && !refreshed) return;
         this.recompute();
       }
 
@@ -325,52 +287,51 @@ export function noteChipExtension(deps: ChipDeps) {
         const info = this.view.state.field(editorInfoField, false);
         const file = info?.file;
         if (!file) {
-          this.currentSig = "";
-          this.decorations = Decoration.none;
+          this.clear();
           return;
         }
-        const set = buildDecorationsForFile(file, deps);
-        this.currentSig = signatureOf(set);
-        this.decorations = set;
+        const rawFm = deps.app.metadataCache.getFileCache(file)?.frontmatter as
+          | Record<string, unknown>
+          | undefined;
+        const chipFm = fmToChip(rawFm);
+        const stripFm = fmToStrip(rawFm);
+        const live = chipFm?.id ? deps.isAgentLive(chipFm.id, chipFm.agent) : null;
+        const state = resolveChipState(chipFm, live === null ? true : live);
+        if (!state) {
+          this.clear();
+          return;
+        }
+        const segments = deps.getSettings().view.disableInlineGithubStatus
+          ? composeStripSegments(stripFm, deps.ghCache, Date.now()).filter(
+              (s) => s.kind === "commit",
+            )
+          : composeStripSegments(stripFm, deps.ghCache, Date.now());
+        const sig = computeSignature(state, segments);
+        if (sig === this.currentSig) return;
+        this.currentSig = sig;
+        // Tear down the previous render's listeners before swapping content.
+        this.controller.abort();
+        this.controller = new AbortController();
+        this.host.empty();
+        const dom = renderChipDom(state, segments, deps, this.controller);
+        dom.classList.add("op-note-chip-wrap--cm6");
+        this.host.appendChild(dom);
+      }
+
+      private clear(): void {
+        if (this.currentSig === "") return;
+        this.currentSig = "";
+        this.controller.abort();
+        this.controller = new AbortController();
+        this.host.empty();
       }
 
       destroy(): void {
-        // Each widget owns its own AbortController; CM6 calls
-        // WidgetType.destroy() for us when the decoration drops out.
+        this.controller.abort();
+        this.host.remove();
       }
     },
-    { decorations: (v) => v.decorations },
   );
-}
-
-function signatureOf(set: DecorationSet): string {
-  let sig = "";
-  set.between(0, 0, (_from, _to, deco) => {
-    const w = deco.spec.widget as NoteChipWidget | undefined;
-    if (w) sig = (w as any).signature ?? "";
-  });
-  return sig;
-}
-
-function buildDecorationsForFile(file: TFile, deps: ChipDeps): DecorationSet {
-  const rawFm = deps.app.metadataCache.getFileCache(file)?.frontmatter as
-    | Record<string, unknown>
-    | undefined;
-  const chipFm = fmToChip(rawFm);
-  const stripFm = fmToStrip(rawFm);
-  const live = chipFm?.id ? deps.isAgentLive(chipFm.id, chipFm.agent) : null;
-  const state = resolveChipState(chipFm, live === null ? true : live);
-  if (!state) return Decoration.none;
-  const segments = deps.getSettings().view.disableInlineGithubStatus
-    ? composeStripSegments(stripFm, deps.ghCache, Date.now()).filter(
-        (s) => s.kind === "commit",
-      )
-    : composeStripSegments(stripFm, deps.ghCache, Date.now());
-  const sig = computeSignature(state, segments);
-  const widget = new NoteChipWidget(state, segments, deps, sig);
-  return Decoration.set([
-    Decoration.widget({ widget, side: -1, block: true }).range(0),
-  ]);
 }
 
 /** Public for tests + post-processor reuse. */
@@ -482,6 +443,10 @@ export function makeOpActionCodeBlockProcessor(app: App) {
     void _ctx;
     void import("./firstRunReadme").then(({ parseOpActionBlock }) => {
       const parsed = parseOpActionBlock(source);
+      // Idempotency — Obsidian re-runs codeblock post-processors on edits
+      // and sometimes during a single render pass. Clear `el` before
+      // appending so we never stack duplicate chips inside one fence.
+      el.empty();
       if (!parsed) {
         el.createEl("pre", { text: source, cls: "op-action-block--error" });
         return;
