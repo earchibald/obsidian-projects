@@ -146,7 +146,7 @@ function resolveProfileById(settings: OpSettings, raw: string): AgentProfile {
   return resolveProfile(settings, id);
 }
 
-function buildIssueRenderContext(
+export function buildIssueRenderContext(
   app: App,
   settings: OpSettings,
   entry: IssueEntry,
@@ -174,7 +174,7 @@ function readParent(app: App, issuePath: string): string | null {
   return typeof v === "string" && v.trim() ? v.trim() : null;
 }
 
-function readProjectVars(app: App, project: string): Record<string, string> {
+export function readProjectVars(app: App, project: string): Record<string, string> {
   const statusPath = `Projects/${project}/STATUS.md`;
   const file = app.vault.getAbstractFileByPath(statusPath);
   if (!(file instanceof TFile)) return {};

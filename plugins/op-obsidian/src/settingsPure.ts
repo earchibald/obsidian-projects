@@ -144,6 +144,11 @@ export interface OpSettings {
    *  in the project's `STATUS.md` `vars:` map (resolved by OP-197 already);
    *  per-launch overrides arrive via OP-199/OP-200. Defaults to `{}`. */
   workflowVars: Record<string, string>;
+  /** OP-206 (3f): persistent dismiss for the LaunchAgentModal "Composed
+   *  prompt preview" auto-expand. The launch counter itself is session-
+   *  scoped (`previewAutoExpand.ts`) — this flag, when true, suppresses
+   *  auto-expansion regardless of the counter. Defaults to `false`. */
+  previewAutoExpandDismissed: boolean;
 }
 
 export const DEFAULT_SETTINGS: OpSettings = {
@@ -209,6 +214,7 @@ export const DEFAULT_SETTINGS: OpSettings = {
   firstRunCompleted: false,
   workflowMode: "legacy",
   workflowVars: {},
+  previewAutoExpandDismissed: false,
 };
 
 const SIDEBAR_TABS: ReadonlySet<SidebarTab> = new Set(["issues", "in-flight", "resolved"]);
@@ -347,6 +353,9 @@ export function mergeSettings(loaded: unknown): OpSettings {
       out[k] = v;
     }
     base.workflowVars = out;
+  }
+  if (typeof (l as { previewAutoExpandDismissed?: unknown }).previewAutoExpandDismissed === "boolean") {
+    base.previewAutoExpandDismissed = (l as { previewAutoExpandDismissed: boolean }).previewAutoExpandDismissed;
   }
   return base;
 }

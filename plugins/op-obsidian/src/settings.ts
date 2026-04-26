@@ -15,6 +15,7 @@ import {
 } from "./workflowDiagnosticFormat";
 import type { WorkflowDiagnostic } from "./workflowDiagnostic";
 import { EXAMPLE_MODULES, installExampleLibrary } from "./workflowExamples";
+import { PreviewWorkflowModal } from "./previewWorkflowModal";
 import {
   applyPreset,
   defaultPreset,
@@ -520,6 +521,12 @@ export class OpSettingsTab extends PluginSettingTab {
       this.renderWorkflowsModuleList(containerEl, modules, diagnostics);
     }
 
+    // OP-206 (3f): Preview composed prompt entry. Always rendered (even with
+    // zero modules) so a user without modules sees the affordance and the
+    // composer's empty output / loader diagnostics; routes through
+    // PreviewWorkflowModal.
+    this.renderWorkflowsPreview(containerEl);
+
     // Available variables panel — always rendered (even when no modules), so
     // a brand-new user can see what tokens they'll be able to reference once
     // they install or author a module. Collapsed by default to avoid
@@ -737,6 +744,33 @@ export class OpSettingsTab extends PluginSettingTab {
         }
       }
     }
+  }
+
+  private renderWorkflowsPreview(parentEl: HTMLElement): void {
+    new Setting(parentEl)
+      .setName("Preview composed prompt")
+      .setDesc(
+        "Open a read-only modal that renders the fully-composed launch prompt for a chosen (issue, mode, agent) tuple — the exact string the launcher would pass to the agent.",
+      )
+      .addButton((b) =>
+        b
+          .setButtonText("Open preview")
+          .setCta()
+          .onClick(() => {
+            const issues = this.plugin.store
+              .issues()
+              .filter((e) => !e.resolvedFolder);
+            if (issues.length === 0) {
+              notify("op: no open issues to preview against — create one with op-new first.");
+              return;
+            }
+            new PreviewWorkflowModal(this.app, {
+              issues,
+              detector: this.plugin.detector,
+              settings: this.plugin.settings,
+            }).open();
+          }),
+      );
   }
 
   private renderAvailableVariables(parentEl: HTMLElement): void {

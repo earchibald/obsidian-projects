@@ -1,8 +1,13 @@
-import { App, Modal, Setting } from "obsidian";
+import { App, Modal, Notice, Setting } from "obsidian";
 import type { AgentId } from "./agentProfiles";
 import { AGENT_IDS } from "./agentProfiles";
-import { loadAndComposeWorkflow, type LoadedModule } from "./composeWorkflow";
+import {
+  composeWorkflowPure,
+  loadAndComposeWorkflow,
+  type LoadedModule,
+} from "./composeWorkflow";
 import type { ComposedPrompt } from "./composeWorkflowPure";
+import type { WorkflowFile } from "./workflowFilePure";
 import type { OpSettings } from "./settings";
 import {
   buildPanelRows,
@@ -11,6 +16,8 @@ import {
   type PanelRow,
 } from "./varOverridePanelPure";
 import { precedenceScopeAbbrev, precedenceScopeLabel } from "./workflowDiagnosticFormat";
+import { bumpSessionLaunchCount } from "./previewAutoExpand";
+import { shouldAutoExpand } from "./previewAutoExpandPure";
 
 // OP-204 (3d): launch-modal IO seam. Wraps the agent picker AND the folded
 // "Workflow variables" disclosure on a single Obsidian Modal. The pure data
@@ -36,6 +43,8 @@ export interface LaunchAgentModalArgs {
   initialLaunchVars?: Record<string, string>;
   /** Whether the panel should expand on open (e.g. URI passed `expand=1`). */
   startExpanded?: boolean;
+  /** OP-206 (3f): persist `previewAutoExpandDismissed` toggle changes. */
+  saveSettings?: () => Promise<void>;
 }
 
 export interface LaunchAgentModalResult {
@@ -68,9 +77,16 @@ class LaunchAgentModal extends Modal {
   private referencedNames: Set<string> = new Set();
   private loadedModules: LoadedModule[] = [];
   private composed: ComposedPrompt | null = null;
+  private workflowFile: WorkflowFile | null = null;
+  private renderContextCache: import("./pluginVarRegistry").RenderContext = emptyRenderContext();
   private expanded: boolean;
   private showAll = false;
   private decided = false;
+  // OP-206 (3f): preview disclosure state.
+  private previewExpanded: boolean;
+  private previewContainer?: HTMLElement;
+  private previewTextEl?: HTMLElement;
+  private previewSummaryCountEl?: HTMLElement;
 
   // DOM handles re-used by the re-render path so the modal feels reactive
   // without re-creating the entire content element on every keystroke.
@@ -88,6 +104,14 @@ class LaunchAgentModal extends Modal {
       : args.installed[0] ?? AGENT_IDS[0];
     this.launchVars = { ...(args.initialLaunchVars ?? {}) };
     this.expanded = args.startExpanded ?? Object.keys(this.launchVars).length > 0;
+    // OP-206 (3f): bump the session counter at construction time and consult
+    // the dismissed flag. The modal opens immediately after construction, so
+    // there's no observable difference between bumping here vs. in onOpen.
+    const sessionLaunchCount = bumpSessionLaunchCount();
+    this.previewExpanded = shouldAutoExpand({
+      sessionLaunchCount,
+      dismissed: args.settings.previewAutoExpandDismissed,
+    });
   }
 
   async onOpen(): Promise<void> {
@@ -109,6 +133,7 @@ class LaunchAgentModal extends Modal {
             this.agentId = v as AgentId;
             await this.refreshComposed();
             this.renderPanel();
+            this.renderPreview();
           });
         });
     }
@@ -132,10 +157,17 @@ class LaunchAgentModal extends Modal {
           .onClick(() => this.submit()),
       );
 
+    // OP-206 (3f): folded-but-visible "Composed prompt preview" disclosure.
+    // Mounted *after* the action buttons so the launch action stays at the
+    // natural action position while the preview remains immediately
+    // discoverable below it.
+    this.previewContainer = contentEl.createDiv({ cls: "op-launch-modal__preview" });
+
     // Initial compose + render. Failures are tolerated — a broken workflow
     // shouldn't block the launch surface.
     await this.refreshComposed();
     this.renderPanel();
+    this.renderPreview();
 
     // Submit-on-Enter when no input is focused (matches Obsidian modal idiom).
     this.scope.register([], "Enter", (evt) => {
@@ -166,16 +198,18 @@ class LaunchAgentModal extends Modal {
       return;
     }
     try {
+      this.renderContextCache = emptyRenderContext();
       const { composed, bundle } = await loadAndComposeWorkflow(this.app, {
         project: this.args.project,
         step: "kickoff",
         ctx: {
-          render: emptyRenderContext(),
+          render: this.renderContextCache,
           globalVars: this.args.settings.workflowVars ?? {},
           launchVars: this.launchVars,
         },
       });
       this.loadedModules = bundle.loadedModules;
+      this.workflowFile = bundle.workflow;
       this.composed = composed;
       this.referencedNames = new Set(
         composed ? Object.keys(composed.perVarSourceMap) : [],
@@ -185,6 +219,7 @@ class LaunchAgentModal extends Modal {
       this.rows = [];
       this.referencedNames = new Set();
       this.composed = null;
+      this.workflowFile = null;
     }
     this.rows = buildPanelRows({
       loadedModules: this.loadedModules,
@@ -333,6 +368,11 @@ class LaunchAgentModal extends Modal {
           // Update only this row's badge in place — full panel re-render
           // would steal focus from the input mid-typing.
           updateRowBadge(wrap, this.findRow(row.name));
+          // OP-206 (3f): the preview text reflects the override stack, so
+          // recompose against the cached modules + workflow and repaint.
+          // Vault is not re-read; this is a pure-fn re-run.
+          this.recomposeLightly();
+          this.renderPreview();
         });
         t.inputEl.addClass("op-launch-modal__input");
       })
@@ -343,7 +383,9 @@ class LaunchAgentModal extends Modal {
           .onClick(() => {
             this.launchVars = clearLaunchOverride(this.launchVars, row.name);
             this.rebuildRowsLightly();
+            this.recomposeLightly();
             this.renderPanel();
+            this.renderPreview();
           }),
       );
   }
@@ -356,6 +398,122 @@ class LaunchAgentModal extends Modal {
       launchVars: this.launchVars,
       referencedNames: this.referencedNames,
     });
+  }
+
+  /**
+   * OP-206 (3f): re-run the pure composer against the cached
+   * `loadedModules` + `workflowFile` so the preview text reflects the latest
+   * `launchVars` without forcing a vault re-read on every keystroke. No-op
+   * when the workflow file failed to load (modules-mode disabled or
+   * unsalvageable WORKFLOW.md) — the preview falls back to the empty hint
+   * already rendered by `renderPreview`.
+   */
+  private recomposeLightly(): void {
+    if (!this.workflowFile) return;
+    try {
+      this.composed = composeWorkflowPure({
+        loadedModules: this.loadedModules,
+        workflow: this.workflowFile,
+        step: "kickoff",
+        ctx: {
+          render: this.renderContextCache,
+          globalVars: this.args.settings.workflowVars ?? {},
+          launchVars: this.launchVars,
+        },
+      });
+    } catch (err) {
+      console.warn("[op-obsidian] launch modal light recompose failed", err);
+    }
+  }
+
+  /**
+   * OP-206 (3f): paint the "Composed prompt preview" disclosure. Idempotent —
+   * called from onOpen, on agent change, on launchVars edits, on toggle.
+   */
+  private renderPreview(): void {
+    const root = this.previewContainer;
+    if (!root) return;
+    root.empty();
+
+    if (this.args.settings.workflowMode !== "modules") {
+      root.createDiv({
+        cls: "op-launch-modal__preview-hint",
+        text: "Workflow modules disabled (Settings → workflowMode = legacy). Preview shows the legacy injection blob at launch time.",
+      });
+      return;
+    }
+
+    const text = this.composed?.text ?? "";
+    const sizeChars = this.composed?.sizeChars ?? 0;
+    const diagnosticCount = this.composed?.diagnostics.length ?? 0;
+
+    // Disclosure header.
+    const summary = root.createEl("button", {
+      cls: "op-launch-modal__preview-summary",
+      attr: { type: "button", "aria-expanded": String(this.previewExpanded) },
+    });
+    summary.createSpan({
+      cls: "op-launch-modal__preview-icon",
+      text: this.previewExpanded ? "▼" : "▶",
+    });
+    summary.createSpan({
+      cls: "op-launch-modal__preview-label",
+      text: "Composed prompt preview",
+    });
+    const countText = formatPreviewSummary(sizeChars, this.loadedModules.length, diagnosticCount);
+    this.previewSummaryCountEl = summary.createSpan({
+      cls: "op-launch-modal__preview-count",
+      text: countText,
+    });
+    summary.addEventListener("click", () => {
+      this.previewExpanded = !this.previewExpanded;
+      this.renderPreview();
+    });
+
+    if (!this.previewExpanded) return;
+
+    if (!this.workflowFile) {
+      root.createDiv({
+        cls: "op-launch-modal__preview-hint",
+        text: "(no composed prompt — workflow file or modules missing for this project)",
+      });
+    }
+
+    const pre = root.createEl("pre", {
+      cls: "op-launch-modal__preview-text",
+    });
+    pre.setText(text);
+    this.previewTextEl = pre;
+
+    const actions = root.createDiv({ cls: "op-launch-modal__preview-actions" });
+    const copyBtn = actions.createEl("button", {
+      cls: "op-launch-modal__preview-copy",
+      text: "Copy to clipboard",
+      attr: { type: "button" },
+    });
+    copyBtn.addEventListener("click", async () => {
+      const ok = await copyToClipboard(text);
+      new Notice(ok ? "Composed prompt copied to clipboard" : "Copy failed — clipboard unavailable");
+    });
+
+    if (!this.args.settings.previewAutoExpandDismissed) {
+      const dismiss = actions.createEl("a", {
+        cls: "op-launch-modal__preview-dismiss",
+        text: "Don't auto-expand by default",
+        attr: { href: "#", role: "button" },
+      });
+      dismiss.addEventListener("click", async (evt) => {
+        evt.preventDefault();
+        this.args.settings.previewAutoExpandDismissed = true;
+        try {
+          await this.args.saveSettings?.();
+        } catch (err) {
+          console.warn("[op-obsidian] preview dismiss save failed", err);
+        }
+        // Re-render so the dismiss link disappears (already-set state no longer surfaces it).
+        this.renderPreview();
+      });
+    }
   }
 
   private findRow(name: string): PanelRow | undefined {
@@ -380,6 +538,55 @@ function updateRowBadge(wrap: HTMLElement, row: PanelRow | undefined): void {
   }
   wrap.toggleClass("op-launch-modal__row--override", row.hasLaunchOverride);
   wrap.toggleClass("op-launch-modal__row--unset", row.isUnset);
+}
+
+/**
+ * OP-206 (3f): one-line "1.2k chars · 4 modules · 0 diagnostics" summary
+ * for the preview disclosure header. Pluralizes module/diagnostic counts;
+ * abbreviates large char counts to keep the line short.
+ */
+function formatPreviewSummary(
+  sizeChars: number,
+  moduleCount: number,
+  diagnosticCount: number,
+): string {
+  const charLabel =
+    sizeChars >= 1000
+      ? `${(sizeChars / 1000).toFixed(1)}k chars`
+      : `${sizeChars} chars`;
+  const moduleLabel = `${moduleCount} module${moduleCount === 1 ? "" : "s"}`;
+  const diagLabel = `${diagnosticCount} diagnostic${diagnosticCount === 1 ? "" : "s"}`;
+  return `${charLabel} · ${moduleLabel} · ${diagLabel}`;
+}
+
+/**
+ * OP-206 (3f): clipboard write seam. Tries the modern async API and falls
+ * back to the deprecated `document.execCommand` path Obsidian's Notice still
+ * uses on environments that don't expose `navigator.clipboard`.
+ */
+async function copyToClipboard(text: string): Promise<boolean> {
+  try {
+    if (typeof navigator !== "undefined" && navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(text);
+      return true;
+    }
+  } catch (err) {
+    console.warn("[op-obsidian] navigator.clipboard.writeText failed", err);
+  }
+  try {
+    const ta = document.createElement("textarea");
+    ta.value = text;
+    ta.style.position = "fixed";
+    ta.style.opacity = "0";
+    document.body.appendChild(ta);
+    ta.select();
+    const ok = document.execCommand("copy");
+    document.body.removeChild(ta);
+    return ok;
+  } catch (err) {
+    console.warn("[op-obsidian] execCommand copy failed", err);
+    return false;
+  }
 }
 
 /**

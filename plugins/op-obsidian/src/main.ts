@@ -3732,6 +3732,7 @@ export default class OpPlugin extends Plugin {
           defaultAgent: this.settings.defaultAgent,
           settings: this.settings,
           initialLaunchVars: carried,
+          saveSettings: () => this.saveSettings(),
         });
         if (!result) return; // user cancelled
         effectiveAgentOverride = result.agentId;
