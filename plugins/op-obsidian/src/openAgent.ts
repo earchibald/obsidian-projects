@@ -17,10 +17,19 @@ import { gitBranchAt } from "./gitBranch";
 import { workIssue } from "./workIssue";
 import { resolveWorkingDir } from "./workingDir";
 import { launchInTerminal } from "./terminalLaunch";
-import type { AgentDetector } from "./agentDetect";
+import type { AgentDetector, DetectionMap } from "./agentDetect";
 import { AgentPickerModal } from "./modals";
 import { userError } from "./userError";
 import { iTermDefaultsDomainPresent, showITermTmuxPrefsNotice } from "./iTermPrefs";
+import { loadWorkflowFile } from "./workflowFile";
+import {
+  BadModelSpecError,
+  NoInstalledAgentError,
+  resolveStepAgentAndModel,
+  type ResolveStepOutput,
+} from "./stepResolver";
+import { showActionableNotice } from "./actionableNotices";
+import { openRecoveryDialog } from "./recoveryDialog";
 
 /** Arguments accepted by {@link openAgent}. */
 export interface OpenAgentArgs {
@@ -80,7 +89,34 @@ export async function openAgent(
   const detection = detector.get() ?? (await detector.refresh());
   const mode: AgentLaunchMode = args.mode ?? "work";
 
-  const agentId = await pickAgent(app, settings, detection, args);
+  // OP-200 (2c): per-step resolver. Skipped when the user has explicitly
+  // indicated they want to choose the agent themselves — workflow declarations
+  // are a default, not a hard constraint. There are three bypass conditions:
+  //   • args.agentOverride — caller already nominated a specific agent (e.g.
+  //     a URI-dispatch with agent= or an auto-advance with a fixed agent id).
+  //   • args.forcePick — the invoking command requested "always show the
+  //     picker" for this launch. Honouring the user's intent means the
+  //     workflow file must not pre-empt the modal.
+  //   • settings.alwaysPick — user-level preference; same rationale as
+  //     forcePick.
+  // When any bypass fires, resolved = null and pickAgent handles agent
+  // selection normally (modal or default — pickAgent checks mustPick itself).
+  // Model resolution is also skipped on bypass because the model spec is
+  // bound to the workflow's declared agent; a user-chosen agent may differ.
+  let resolved: ResolveStepOutput | null;
+  try {
+    resolved = args.agentOverride || args.forcePick || settings.alwaysPick
+      ? null
+      : await loadAndResolveStep(app, args.entry.project, mode, detection, settings.defaultAgent);
+  } catch (err) {
+    if (err instanceof BadModelSpecError || err instanceof NoInstalledAgentError) {
+      surfaceResolverError(app, args.entry.id, err);
+      return undefined;
+    }
+    throw err;
+  }
+
+  const agentId = resolved?.agent ?? (await pickAgent(app, settings, detection, args));
   if (!agentId) return undefined;
 
   const profile = resolveProfile(settings, agentId);
@@ -145,12 +181,20 @@ export async function openAgent(
     repoPath: wd.path,
     branch,
     parentId,
+    resolvedModel: resolved?.canonicalModel,
   });
+
+  // OP-200 (2c): when the resolver picked a canonical model, append it as a
+  // launch flag. claude is the only first-class agent today; gemini and
+  // copilot have empty `launchFlags` and no model-flag support yet, so the
+  // resolved model is reflected in the prompt (`{{model}}`) but not on their
+  // CLI invocations.
+  const launchFlags = withModelFlag(launchFlagsFor(profile, mode), agentId, resolved?.canonicalModel);
 
   const { scriptPath, tmuxSession, tmuxWindow } = await launchInTerminal({
     cwd: wd.path,
     binary: det.path ?? profile.binary,
-    launchFlags: launchFlagsFor(profile, mode),
+    launchFlags,
     prompt,
     terminalApp: settings.terminal,
     iTermPlacement: settings.iTermPlacement,
@@ -302,6 +346,88 @@ function getVaultBasePath(app: App): string | undefined {
  * never see a stray `{{parent}}` token in module bodies — even when no
  * parent is set.
  */
+/**
+ * OP-200 (2c): load the project's `WORKFLOW.md` (if any) and resolve the
+ * per-step `agent` + `model` overrides for the launch's mode. Returns `null`
+ * when there's no workflow file, the file couldn't be salvaged, or the file
+ * has no record for the active step (in which case the launch falls back to
+ * the user's `settings.defaultAgent` and the agent CLI's default model).
+ *
+ * Throws `BadModelSpecError` / `NoInstalledAgentError` on resolver failure;
+ * the caller catches and surfaces an actionable Notice via `recoveryDialog`.
+ */
+async function loadAndResolveStep(
+  app: App,
+  project: string | undefined,
+  mode: AgentLaunchMode,
+  detection: DetectionMap,
+  fallbackAgent: AgentId,
+): Promise<ResolveStepOutput | null> {
+  if (!project) return null;
+  const { workflow } = await loadWorkflowFile(app, project);
+  if (!workflow) return null;
+  const stepName = modeToWorkflowStep(mode);
+  const step = workflow.steps.find((s) => s.step === stepName);
+  // No record for this step → no per-step override. The OP-199 lenient
+  // kickoff fallback covers prompt-injection separately; here we just opt
+  // out of the resolver and let the launch use the caller's defaults.
+  if (!step && (!workflow.defaultAgent || workflow.defaultAgent.length === 0)) {
+    return null;
+  }
+  return resolveStepAgentAndModel({
+    step,
+    workflow,
+    detection,
+    fallbackAgent,
+  });
+}
+
+/**
+ * OP-200 (2c): append `--model <id>` to claude's launch flags when the
+ * resolver picked a canonical model. Other agents are second-class; their
+ * launch flags are empty by default and no equivalent flag is wired here.
+ * Idempotent: a no-op when `model` is undefined.
+ */
+function withModelFlag(
+  launchFlags: string[],
+  agentId: AgentId,
+  model: string | undefined,
+): string[] {
+  if (!model || agentId !== "claude") return launchFlags;
+  return [...launchFlags, "--model", model];
+}
+
+/**
+ * OP-200 (2c): surface a resolver failure as an actionable Notice with two
+ * action links — "Open recovery dialog now" (delegates to the
+ * `recoveryDialog` seam, which OP-?-3e replaces with the interactive picker)
+ * and "Open WORKFLOW.md" (jumps the user to the file they need to edit).
+ *
+ * The Notice is sticky (no auto-dismiss) so the user can't miss the failure
+ * — silently dropping the launch with only a console.error would let
+ * auto-advance dead-end the chain, which is exactly what 2c rules out.
+ */
+function surfaceResolverError(
+  app: App,
+  issueId: string,
+  err: BadModelSpecError | NoInstalledAgentError,
+): void {
+  const summary =
+    err instanceof BadModelSpecError
+      ? `${issueId}: bad model spec for step "${err.stepId}" (${err.reason}) — "${err.bad.badName}" not usable for "${err.chosenAgent}"`
+      : `${issueId}: no installed agent for step "${err.stepId}" — tried ${err.attemptedAgents.join(", ")}`;
+  showActionableNotice({
+    text: summary,
+    actions: [
+      {
+        label: "Open recovery dialog now",
+        onClick: () => openRecoveryDialog({ app, issueId, error: err }),
+      },
+    ],
+  });
+  console.warn("[op-obsidian] openAgent resolver failure", err);
+}
+
 function readParentId(app: App, path: string): string | null {
   const file = app.vault.getAbstractFileByPath(path);
   if (!(file instanceof TFile)) return null;
