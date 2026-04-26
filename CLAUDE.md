@@ -15,23 +15,15 @@ Always, in order:
    1. `cd plugins/op-obsidian && npm ci` (or `npm install` if no lockfile — but op-obsidian has one).
    2. Re-run with the **literal version** that's now in the JSON files, e.g. `node scripts/bump-version.mjs 0.37.3` — **not** `patch`/`minor`/`major`, which would compound the bump. The script idempotently re-runs the build step against the version already on disk.
 
-2. **Sync into the active vault.**
+2. **Sync into the OP-Test vault.** Activate the OP-Test Obsidian window first (the `obsidian` CLI binds to the active window — there is no per-vault flag), then:
    ```bash
-   VAULT=$(obsidian vault | awk -F'\t' '/^path\t/{print $2}')
-   DEST="$VAULT/.obsidian/plugins/op-obsidian"
-   mkdir -p "$DEST"
-   cp plugins/op-obsidian/main.js plugins/op-obsidian/manifest.json "$DEST/"
+   node scripts/dev-sync.mjs
    ```
-   Never `rm -rf` the dest — `data.json` (user settings) lives there.
+   The script hardcodes `~/Documents/OP-Test/OP-Test/.obsidian/plugins/op-obsidian/` as the target. It refuses to run unless OP-Test is the active vault, and it explicitly rejects any path containing `Agent-Vault` (belt-and-suspenders against muscle-memory mistakes — Agent-Vault is BRAT-only, see below). Never `rm -rf` the dest — `data.json` (user settings) lives there; `dev-sync.mjs` only overwrites `main.js` and `manifest.json`.
 
-3. **Reload the plugin.**
-   - **First install (or after the dest folder was just created)**: `obsidian plugin:reload id=op-obsidian` fails with "Plugin not found" because Obsidian hasn't scanned the new folder yet. Run this instead:
-     ```bash
-     obsidian eval code='(async()=>{await app.plugins.loadManifests(); await app.plugins.enablePluginAndSave("op-obsidian"); return {enabled: app.plugins.enabledPlugins.has("op-obsidian")}})()'
-     ```
-   - **Subsequent reloads**: `obsidian plugin:reload id=op-obsidian` is enough.
+3. **Reload the plugin.** `dev-sync.mjs` handles this: it tries `obsidian plugin:reload id=op-obsidian` first and falls back to the `loadManifests + enablePluginAndSave` recipe on first-install (when Obsidian hasn't scanned the new folder yet). No separate manual step needed.
 
-4. **Smoke test** per the `obsidian-plugin-creator:obsidian-plugin-creator` skill §9:
+4. **Smoke test** per the `obsidian-plugin-creator:obsidian-plugin-creator` skill §9 (with OP-Test still the active vault):
    ```bash
    obsidian dev:debug on
    obsidian dev:console clear
@@ -61,25 +53,36 @@ Always, in order:
 
 Never skip these steps, even for "trivial" changes — untested plugin builds ship silently broken.
 
-## OP-Test vault: install builds locally, never via BRAT
+## OP-Test vault: the sole dev sync target
 
-The **OP-Test** vault at `~/Documents/OP-Test/OP-Test/` is a clean-room test vault — separate from your day-to-day Agent-Vault — used to verify the plugin's behavior in a vault that has no project state, no settings carry-over, and no other plugins. **Do not install op-obsidian into OP-Test via BRAT.** We're the plugin's authors and the dev build is on disk; BRAT adds GitHub-release latency and doesn't carry uncommitted work. Install the locally-built artifact directly:
+The **OP-Test** vault at `~/Documents/OP-Test/OP-Test/` is a clean-room test vault — separate from your day-to-day Agent-Vault — used to verify the plugin's behavior in a vault that has no project state, no settings carry-over, and no other plugins. **OP-Test is the only vault that receives dev syncs from this repo.** `node scripts/dev-sync.mjs` enforces this: it asserts OP-Test is the active Obsidian window before mutating, and refuses any target path containing `Agent-Vault`.
+
+**Do not install op-obsidian into OP-Test via BRAT.** We're the plugin's authors and the dev build is on disk; BRAT adds GitHub-release latency and doesn't carry uncommitted work. Use `dev-sync.mjs` instead — it handles the file copy, the first-install enable recipe, and subsequent reloads.
+
+**One CLI-target caveat.** The `obsidian` CLI binds to whichever Obsidian window is currently active — switching from another vault to OP-Test (or vice versa) changes which vault `obsidian vault`, `obsidian eval`, and the `op-*` dispatch verbs target. Re-run `obsidian vault` after any window switch to confirm you're operating on the vault you think you are. There's no per-vault flag; activate the right window first. `dev-sync.mjs` (and the other OP-Test scripts) check this for you and abort with a clear error if the active vault isn't OP-Test.
+
+## Resetting between scenarios
+
+The OP-Test vault is a git repo with named seed tags capturing known states. Before any plugin-modifying smoke test, reset to the lowest seed that exercises what you're testing — that way a smoke test starts from a clean, predictable baseline and can't be polluted by leftover state from a previous test.
 
 ```bash
-DEST="$HOME/Documents/OP-Test/OP-Test/.obsidian/plugins/op-obsidian"
-mkdir -p "$DEST"
-cp plugins/op-obsidian/main.js plugins/op-obsidian/manifest.json "$DEST/"
+node scripts/reset-test-vault.mjs <seed>
+# valid seeds: empty | scaffolded | mid-flow | github-linked | multi-project
 ```
 
-First install needs the same `loadManifests + enablePluginAndSave` recipe as the active-vault first install (community plugins must be enabled in OP-Test's settings first):
+The script asserts OP-Test is the active vault, runs `git reset --hard seed/<name> && git clean -fd` inside OP-Test, then reloads op-obsidian so Obsidian re-reads the vault state. The seed ladder itself is built (and rebuilt) by `node scripts/build-seeds.mjs` — re-runnable so seeds stay in sync as the plugin's scaffolding behavior evolves.
+
+## Agent-Vault is BRAT-only
+
+The user's daily-driver vault at `~/work/Agent-Vault/` no longer receives dev syncs. It consumes op-obsidian releases like an external user would, via [BRAT](https://github.com/TfTHacker/obsidian42-brat). One-time detach (idempotent — re-runs are no-ops):
 
 ```bash
-obsidian eval code='(async()=>{await app.plugins.loadManifests(); await app.plugins.enablePluginAndSave("op-obsidian"); return {enabled: app.plugins.enabledPlugins.has("op-obsidian"), version: app.plugins.plugins["op-obsidian"]?.manifest?.version}})()'
+node scripts/agent-vault-detach.mjs
 ```
 
-Subsequent installs (the file-copy alone, then `obsidian plugin:reload id=op-obsidian`) work the same way as for Agent-Vault.
+The script removes `main.js`/`manifest.json` from `Agent-Vault/.obsidian/plugins/op-obsidian/` while preserving `data.json` (user settings — picked back up by the BRAT install). It refuses to run unless `obsidian42-brat` is already installed in Agent-Vault.
 
-**One CLI-target caveat.** The `obsidian` CLI binds to whichever Obsidian window is currently active — switching from Agent-Vault to OP-Test (or vice versa) changes which vault `obsidian vault`, `obsidian eval`, and the `op-*` dispatch verbs target. Re-run `obsidian vault` after any window switch to confirm you're operating on the vault you think you are. There's no per-vault flag; activate the right window first.
+After detach, install via BRAT — Settings → BRAT → "Add Beta plugin" → paste the GitHub repo URL. **First BRAT install requires a published GitHub release** with `main.js` and `manifest.json` attached as assets; cutting that release is a separate workflow concern.
 
 ## Merging a PR from a delegated worktree
 
