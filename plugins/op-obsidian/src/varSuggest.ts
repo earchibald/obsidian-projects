@@ -267,9 +267,12 @@ export function getVarsBlockTrigger(args: {
     if (trimmed === "") continue;
     const prevIndent = prev.length - prev.trimStart().length;
     // Strictly shallower line — this is the parent mapping key. Verify it's
-    // `vars:` and end the walk either way.
+    // `vars:` AND that it is itself at the top level of the frontmatter
+    // (indent === 0). A `vars:` nested inside another mapping (e.g. under
+    // `agents:` or `config:`) must not trigger the snippet — those are
+    // unrelated to the module vars schema.
     if (prevIndent < bulletIndent) {
-      if (/^vars\s*:\s*$/.test(trimmed)) inVarsBlock = true;
+      if (/^vars\s*:\s*$/.test(trimmed) && prevIndent === 0) inVarsBlock = true;
       break;
     }
     // prevIndent >= bulletIndent — keep walking (could be a sibling bullet,

@@ -7,6 +7,7 @@ import {
   getVarsBlockTrigger,
   isWorkflowFile,
   keyedMapApplies,
+  readModelScalarOrList,
   renderPerAgentKeyedMap,
   type VarCandidate,
 } from "./varSuggest";
@@ -65,6 +66,31 @@ describe("getDoubleBraceTrigger", () => {
     expect(getDoubleBraceTrigger({ lineText: "{{id}} done", ch: 11 })).toBeNull();
   });
 
+  it("fires when cursor is inside an open token, before the closing `}}`", () => {
+    // ch=4 in `{{id}}` — cursor is between `id` and `}}`. Payload is "id" (no `}`).
+    // Autocomplete correctly fires so the user can still refine the identifier.
+    const t = getDoubleBraceTrigger({ lineText: "{{id}}", ch: 4 });
+    expect(t).not.toBeNull();
+    expect(t?.query).toBe("id");
+  });
+
+  it("does not fire when the payload includes a `}` (cursor at/after the closing `}}`)", () => {
+    // ch=5 in `{{id}}` — payload would be "id}" which contains `}`. Rejected.
+    expect(getDoubleBraceTrigger({ lineText: "{{id}}", ch: 5 })).toBeNull();
+  });
+
+  it("does not fire on a line with both `{{` and `}}` when cursor is after the close", () => {
+    // `{{foo}} and {{` — cursor right after the second `{{` (ch=14). Should fire.
+    const t = getDoubleBraceTrigger({ lineText: "{{foo}} and {{", ch: 14 });
+    expect(t).not.toBeNull();
+    expect(t?.query).toBe("");
+  });
+
+  it("does not leak a stale trigger on whitespace inside `{{ foo }}`", () => {
+    // Whitespace in payload → null. No stale query.
+    expect(getDoubleBraceTrigger({ lineText: "{{ foo }}", ch: 8 })).toBeNull();
+  });
+
   it("does not fire mid-whitespace inside the open token", () => {
     expect(getDoubleBraceTrigger({ lineText: "x {{ id", ch: 7 })).toBeNull();
   });
@@ -115,6 +141,22 @@ describe("getVarsBlockTrigger", () => {
   it("respects the frontmatter fence as a hard boundary", () => {
     const lines = mkLines("vars:\n---\n  - \n---");
     const t = getVarsBlockTrigger({ lines, cursor: { line: 2, ch: 4 } });
+    expect(t).toBeNull();
+  });
+
+  it("does not fire when `vars:` is nested inside another mapping (e.g. under `agents:`)", () => {
+    // A `vars:` nested at indent > 0 must not trigger — only top-level
+    // frontmatter `vars:` is the module-vars schema key.
+    const lines = mkLines("---\nagents:\n  vars:\n    - \n---");
+    const t = getVarsBlockTrigger({ lines, cursor: { line: 3, ch: 6 } });
+    expect(t).toBeNull();
+  });
+
+  it("does not fire for inline (flow-style) `vars: [foo]`", () => {
+    // Flow-style `vars: [foo]` is not the block sequence our snippet targets.
+    // A bullet elsewhere in the file must not be associated with it.
+    const lines = mkLines("---\nvars: [foo]\nother:\n  - \n---");
+    const t = getVarsBlockTrigger({ lines, cursor: { line: 3, ch: 4 } });
     expect(t).toBeNull();
   });
 });
@@ -201,6 +243,60 @@ describe("buildCandidates", () => {
     const tone = cs.find((c) => c.name === "tone");
     expect(tone?.sourceLabel).toBe("Global default");
     expect(tone?.sourceAbbrev).toBe("G");
+  });
+
+  it("current module vars appear when they don't clash with a higher-precedence layer", () => {
+    // FAKE_CURRENT_MOD has `reviewer` and `checklist` — neither appears in
+    // global or project modules, so both survive de-dup.
+    const cs = buildCandidates({
+      currentModule: FAKE_CURRENT_MOD,
+      globalModules: [FAKE_GLOBAL_MOD],
+      projectModules: [FAKE_PROJECT_MOD],
+      varsNamespaceOnly: true,
+    });
+    const names = cs.map((c) => c.name);
+    expect(names).toContain("reviewer");
+    expect(names).toContain("checklist");
+  });
+
+  it("a global var shadows the current module's var of the same name (global > module precedence)", () => {
+    // FAKE_GLOBAL_MOD has `tone`. FAKE_CURRENT_MOD does not, but let's build
+    // a synthetic current module that also declares `tone`.
+    const currentWithTone: WorkflowModule = {
+      ...FAKE_CURRENT_MOD,
+      vars: [{ kind: "object", name: "tone", default: "terse", description: "Local override." }],
+    };
+    const cs = buildCandidates({
+      currentModule: currentWithTone,
+      globalModules: [FAKE_GLOBAL_MOD],
+      varsNamespaceOnly: true,
+    });
+    const tones = cs.filter((c) => c.name === "tone");
+    expect(tones).toHaveLength(1);
+    // Global is added to `layered` before the current module → global wins.
+    expect(tones[0].sourceLabel).toBe("Global default");
+    expect(tones[0].preview).toBe("concise");
+  });
+});
+
+describe("readModelScalarOrList", () => {
+  it("returns an array for a non-empty scalar", () => {
+    expect(readModelScalarOrList("opus")).toEqual(["opus"]);
+  });
+
+  it("returns an empty array for an empty string (default_model: '')", () => {
+    // This is intentionally [] so `activeKeyedMapCandidate` can gate on length === 0
+    // and suppress the palette command when there is nothing meaningful to promote.
+    expect(readModelScalarOrList("")).toEqual([]);
+  });
+
+  it("returns null for an object (already a keyed map)", () => {
+    expect(readModelScalarOrList({ claude: "opus" })).toBeNull();
+  });
+
+  it("returns an empty array for null / undefined (absent frontmatter key)", () => {
+    expect(readModelScalarOrList(null)).toEqual([]);
+    expect(readModelScalarOrList(undefined)).toEqual([]);
   });
 });
 

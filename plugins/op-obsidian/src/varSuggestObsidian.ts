@@ -71,8 +71,8 @@ export class VarEditorSuggest extends EditorSuggest<Suggestion> {
   }
 
   onTrigger(cursor: EditorPosition, editor: Editor, file: TFile | null): EditorSuggestTriggerInfo | null {
-    if (!file) return null;
-    if (!isWorkflowFile(file.path)) return null;
+    if (!file) { this.pending = null; return null; }
+    if (!isWorkflowFile(file.path)) { this.pending = null; return null; }
 
     // 1. vars: block snippet — fires only on an empty bullet line.
     const lines = editor.getValue().split("\n");

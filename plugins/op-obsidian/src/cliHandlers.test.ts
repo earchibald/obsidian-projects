@@ -260,6 +260,17 @@ describe("parseEditModuleParams", () => {
     expect(r.ok).toBe(false);
     if (!r.ok) expect(r.error).toMatch(/scope/);
   });
+  it("accepts scope=global with an explicit --project (project used only as working-dir hint)", () => {
+    // When scope=global is supplied explicitly alongside project=demo, the
+    // module path is still the global path. `project` is forwarded as a
+    // working-directory hint so the agent gets repo context.
+    const r = parseEditModuleParams({ module: "foo", project: "demo", scope: "global" });
+    expect(r.ok).toBe(true);
+    if (r.ok) {
+      expect(r.value.scopeKind).toBe("global");
+      expect(r.value.project).toBe("demo");
+    }
+  });
 });
 
 describe("parseGetSkillParams", () => {

@@ -3467,6 +3467,11 @@ export default class OpPlugin extends Plugin {
     if (agents.length < 2) return null;
     const modelValues = readModelScalarOrList(fm.default_model);
     if (modelValues === null) return null; // already a per-agent map (or invalid)
+    // Don't offer conversion when there are no model values to distribute —
+    // an empty / absent default_model isn't meaningful to promote to a
+    // per-agent keyed map (every agent would get an empty string, which is
+    // no more informative than leaving the field absent).
+    if (modelValues.length === 0) return null;
     return {
       path: file.path,
       workflow: { defaultAgent: agents, defaultModelValues: modelValues },
