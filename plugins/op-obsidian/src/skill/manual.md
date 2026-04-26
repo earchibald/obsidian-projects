@@ -173,7 +173,7 @@ Both write a JSON payload to `Projects/_scratch/op-last-response.md` and emit a 
 
 ### Sharing modules across vaults
 
-`op-export-module` bundles a module (optionally with the workflow file that uses it) into a single self-contained markdown file. `op-import-module` ingests one in the receiving vault, prompting for any unbound `name=VALUE` defaults the bundle declares. Every import is recorded as a transaction; `op-undo-last-import` reverses exactly the most recent one (no multi-step history). Conflicts are surfaced as diagnostics rather than silently overwritten — resolve them locally, don't re-import.
+`op-export-module` writes workflow modules as plain markdown files under `Projects/_op-export/`. Two modes: `id=<moduleId>` writes a single module to `Projects/_op-export/<id>.md`; `project=<slug>` writes every module visible to that project (per-project modules + globals carrying that `project:`) to `Projects/_op-export/<slug>/<id>.md`. The exporter only serializes modules — workflow files are not bundled. `op-import-module path=<bundle>` ingests a single module file in the receiving vault. If a module with the same id already exists at the destination, the import **overwrites it after taking a backup** (under `Projects/_op-import-history/<timestamp>.bak/...`). Every import is recorded as a transaction; `op-undo-last-import` reverses exactly the most recent one (restoring backed-up content if any) — no multi-step history.
 
 ---
 
