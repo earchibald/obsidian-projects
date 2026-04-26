@@ -213,6 +213,12 @@ build("seed/workflow-modules", () => {
   // `op-explain-workflow` call use the claude profile by default. The created
   // path is read back from `op-new`'s JSON response so a future title tweak
   // doesn't desync this script from the on-disk filename.
+  //
+  // EXPECTED_SMOKE_ISSUE is the single place to update if a new seed inserted
+  // between seed/mid-flow and seed/workflow-modules changes the issue counter.
+  // The guard below and the smoke-config.json write both reference this constant,
+  // so a numbering change requires only one edit here.
+  const EXPECTED_SMOKE_ISSUE = "TST-5";
   const tst5 = dispatch("op-new", {
     project: "testing",
     title: "Workflow modules smoke target",
@@ -225,11 +231,11 @@ build("seed/workflow-modules", () => {
         "cannot stamp agent: claude on the issue.",
     );
   }
-  if (tst5.issueId !== "TST-5") {
+  if (tst5.issueId !== EXPECTED_SMOKE_ISSUE) {
     fail(
-      `seed/workflow-modules: expected op-new to return TST-5 (cumulative ladder includes TST-1..4 from seed/mid-flow), got ${tst5.issueId}. ` +
+      `seed/workflow-modules: expected op-new to return ${EXPECTED_SMOKE_ISSUE} (cumulative ladder includes TST-1..4 from seed/mid-flow), got ${tst5.issueId}. ` +
         "If a new seed has been inserted between seed/mid-flow and seed/workflow-modules that adds testing-project issues, " +
-        "update the smoke-config.json write below and re-run.",
+        `update EXPECTED_SMOKE_ISSUE (currently "${EXPECTED_SMOKE_ISSUE}") to match and re-run.`,
     );
   }
   setIssueAgent(tst5.path, "claude");
@@ -238,8 +244,8 @@ build("seed/workflow-modules", () => {
   // issue ID. The file is committed into the seed, so `reset-test-vault
   // workflow-modules` always lands this exact JSON on disk before the harness
   // reads it. If a future seed reshuffles issue numbering the build guard above
-  // catches it at seed-build time, and only this single JSON value needs
-  // updating — the harness itself stays free of hardcoded IDs.
+  // catches it at seed-build time, and only EXPECTED_SMOKE_ISSUE needs updating
+  // — the harness itself stays free of hardcoded IDs.
   writeVaultFile(
     "Projects/_scratch/smoke-config.json",
     JSON.stringify({ issue: tst5.issueId, project: "testing" }, null, 2) + "\n",

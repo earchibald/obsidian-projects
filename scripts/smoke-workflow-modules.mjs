@@ -95,12 +95,12 @@ expect(
 expect(
   "kickoff: project-default reviewer_handle (@op-test-project) present in composed body",
   kickoff.composed?.text?.includes("@op-test-project"),
-  kickoff.composed?.text,
+  kickoff,
 );
 expect(
   "kickoff: module-default reviewer_handle (@module-default) absent from composed body",
   !kickoff.composed?.text?.includes("@module-default"),
-  kickoff.composed?.text,
+  kickoff,
 );
 expect(
   "kickoff: composed.chunks lists the branching module at kickoff scope",
