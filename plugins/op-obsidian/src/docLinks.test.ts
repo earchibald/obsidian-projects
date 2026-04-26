@@ -6,6 +6,7 @@ import {
   allDocFiles,
   diagnosticDocAnchor,
   docUrl,
+  hasSectionDocLink,
   sectionDocAnchor,
   type DocAnchor,
 } from "./docLinks";
@@ -107,6 +108,17 @@ describe("docLinks registry", () => {
           `Either add the heading to the doc, or update docLinks.ts to point at an existing one.`,
       );
     }
+  });
+
+  it("hasSectionDocLink type guard — known ids return true, unknown ids return false", () => {
+    expect(hasSectionDocLink("workflows")).toBe(true);
+    expect(hasSectionDocLink("workflowsVars")).toBe(true);
+    expect(hasSectionDocLink("injection")).toBe(true);
+    // Advanced sections that don't have a doc target yet.
+    expect(hasSectionDocLink("workingDirs")).toBe(false);
+    expect(hasSectionDocLink("orchestrator")).toBe(false);
+    expect(hasSectionDocLink("")).toBe(false);
+    expect(hasSectionDocLink("__proto__")).toBe(false);
   });
 
   it("section help links target real anchors", () => {

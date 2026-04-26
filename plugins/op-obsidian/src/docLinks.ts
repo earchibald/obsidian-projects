@@ -104,6 +104,16 @@ export function diagnosticDocAnchor(code: DocLinkDiagnosticCode): DocAnchor {
 }
 
 /**
+ * Type guard: returns true when `id` has a registered (file, anchor) target
+ * in this registry. Lets call sites skip maintaining a parallel `Set` — a
+ * section only needs to be listed once (in `SECTION_LINKS` here) for the `?`
+ * icon to appear.
+ */
+export function hasSectionDocLink(id: string): id is DocLinkSectionId {
+  return Object.prototype.hasOwnProperty.call(SECTION_LINKS, id);
+}
+
+/**
  * Compose the public URL for a (file, anchor) pair. Use this everywhere a
  * URL is needed — never hand-concatenate, so a future swap to a versioned
  * URL or a docs site is one edit here.

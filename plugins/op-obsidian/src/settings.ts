@@ -18,6 +18,7 @@ import { EXAMPLE_MODULES, installExampleLibrary } from "./workflowExamples";
 import { PreviewWorkflowModal } from "./previewWorkflowModal";
 import {
   docUrl,
+  hasSectionDocLink,
   sectionDocAnchor,
   type DocLinkSectionId,
 } from "./docLinks";
@@ -98,15 +99,6 @@ type SectionId =
 
 /** Subset of SectionId covering only the collapsible Advanced subsections. */
 type AdvancedSectionId = (typeof ADVANCED_SECTIONS)[number]["id"];
-
-/**
- * Advanced section ids that have a registered help-link target in
- * `docLinks.ts`. Listed explicitly (not derived) so adding a new doc
- * mapping is a single-file edit in `docLinks.ts` plus this constant.
- */
-const ADVANCED_SECTIONS_WITH_DOCS: ReadonlySet<AdvancedSectionId> = new Set([
-  "injection",
-]);
 
 const ADVANCED_SECTIONS: ReadonlyArray<{
   id: SectionId;
@@ -250,10 +242,10 @@ export class OpSettingsTab extends PluginSettingTab {
       // de-densifies setDesc strings without losing the glossary context.
       addHelpExpandable(collapsible.body, "What is this?", section.blurb);
       // OP-215: in-product help link for sections registered in
-      // `docLinks.ts`. Only sections with a registered (file, anchor)
-      // get a "?" icon — others stay link-less.
-      if (ADVANCED_SECTIONS_WITH_DOCS.has(section.id)) {
-        addDocLink(collapsible.header, section.id as DocLinkSectionId);
+      // `docLinks.ts`. Derived via `hasSectionDocLink` so only
+      // `docLinks.ts` needs updating when a new section gets a doc target.
+      if (hasSectionDocLink(section.id)) {
+        addDocLink(collapsible.header, section.id);
       }
       this.mountSection(collapsible.body, section.id, (el) => this.renderAdvancedSection(section.id, el));
       // Tag the wrapper for the smoke-test recipe (CLAUDE.md): tests can
@@ -1783,6 +1775,9 @@ function addDocLink(parentEl: HTMLElement, sectionId: DocLinkSectionId): void {
   link.setAttribute("rel", "noopener");
   link.setAttribute("aria-label", `Open the docs for this section`);
   link.setAttribute("title", "Open the docs for this section ↗");
+  // Prevent the click from bubbling to a parent role=button (e.g. a
+  // collapsible header) and toggling the collapsible as a side-effect.
+  link.addEventListener("click", (e) => e.stopPropagation());
 }
 
 function addHelpExpandable(parentEl: HTMLElement, title: string, body: string): void {
