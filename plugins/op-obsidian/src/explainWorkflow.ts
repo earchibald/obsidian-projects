@@ -146,7 +146,13 @@ function resolveProfileById(settings: OpSettings, raw: string): AgentProfile {
   return resolveProfile(settings, id);
 }
 
-function buildIssueRenderContext(
+// OP-206 (3f): `buildIssueRenderContext` and `readProjectVars` are exported
+// for reuse by `previewWorkflowModal.ts` so the Settings preview and the
+// launcher both build the same RenderContext. If you add a new field to either
+// function's output, check `previewWorkflowModal.ts` (`recompose()`) and
+// `explainWorkflow.ts` (`explainWorkflow()`) in lockstep — they share the
+// same interface contract and divergence produces a preview-vs-reality gap.
+export function buildIssueRenderContext(
   app: App,
   settings: OpSettings,
   entry: IssueEntry,
@@ -174,7 +180,7 @@ function readParent(app: App, issuePath: string): string | null {
   return typeof v === "string" && v.trim() ? v.trim() : null;
 }
 
-function readProjectVars(app: App, project: string): Record<string, string> {
+export function readProjectVars(app: App, project: string): Record<string, string> {
   const statusPath = `Projects/${project}/STATUS.md`;
   const file = app.vault.getAbstractFileByPath(statusPath);
   if (!(file instanceof TFile)) return {};
