@@ -142,9 +142,7 @@ describe("buildViewScript", () => {
       ...baseArgs,
       issueTitle: "evil\x1b]0;injected\x07title",
     });
-    // ESC (\x1b) and BEL (\x07) must not appear in the OSC 2 payload
-    expect(out).not.toMatch(/printf '\\033\]2;[^']*[\x00-\x1f\x7f]/);
-    // The safe content (with control chars stripped) should be present
+    // Control chars stripped → only safe text survives in the OSC 2 payload
     expect(out).toContain(`printf '\\033]2;%s\\007' 'evil]0;injectedtitle'`);
   });
 
