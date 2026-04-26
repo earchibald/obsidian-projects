@@ -331,4 +331,91 @@ body
       ).toBeNull();
     }
   });
+
+  it("bad-model: prefers the model-spec line over an earlier agents-list match", () => {
+    // `badName = "claude"` also appears in `agents: [claude]` which comes
+    // BEFORE `default_model: claude` in the frontmatter.  The locator must
+    // prefer the model-spec line and not land on the agents list.
+    const raw = `---
+type: workflow
+agents:
+  - claude
+default_model: claude
+steps:
+  - step: kickoff
+    modules: []
+---
+body
+`;
+    const diag: WorkflowDiagnostic = {
+      code: "bad-model",
+      severity: "error",
+      message: "x",
+      stepId: "<defaults>",
+      extra: { badName: "claude", agent: "claude", allowedAliases: [], allowedVersioned: [] },
+    };
+    const range = locateDiagnostic(diag, { filePath: "Projects/demo/WORKFLOW.md", raw });
+    expect(range).not.toBeNull();
+    // Should point at the value on the `default_model:` line, not the agents list.
+    const matched = raw.slice(range!.from, range!.to);
+    expect(matched).toBe("claude");
+    // Verify the match lands on the `default_model` line by checking context.
+    const lineStart = raw.lastIndexOf("\n", range!.from);
+    const lineEnd = raw.indexOf("\n", range!.from);
+    const line = raw.slice(lineStart + 1, lineEnd);
+    expect(line).toContain("default_model");
+  });
+
+  it("missing-var with extra.syntax='plugin' squiggles {{name}} not {{vars.name}}", () => {
+    // Body has `{{vars.foo}}` (declared, resolves fine — no user-var diagnostic)
+    // AND `{{foo}}` (unknown plugin var — produces missing-var with syntax=plugin).
+    // The locator must squiggle `{{foo}}`, not `{{vars.foo}}`.
+    const raw = `---
+id: m
+type: workflow-module
+vars:
+  - foo=default
+---
+Use {{vars.foo}} for the declared var, but {{foo}} is an unknown plugin token.
+`;
+    const diag: WorkflowDiagnostic = {
+      code: "missing-var",
+      severity: "warning",
+      message: "x",
+      moduleId: "m",
+      varName: "foo",
+      extra: { syntax: "plugin" },
+    };
+    const range = locateDiagnostic(diag, {
+      filePath: "Projects/_op-modules/m.md",
+      raw,
+    });
+    expect(range).not.toBeNull();
+    expect(raw.slice(range!.from, range!.to)).toBe("{{foo}}");
+  });
+
+  it("missing-var without syntax discriminator still prefers {{vars.name}}", () => {
+    // Baseline: no extra.syntax → user-var path → squiggle {{vars.foo}}.
+    const raw = `---
+id: m
+type: workflow-module
+vars:
+  - foo
+---
+Reference to {{vars.foo}} and {{foo}} here.
+`;
+    const diag: WorkflowDiagnostic = {
+      code: "missing-var",
+      severity: "warning",
+      message: "x",
+      moduleId: "m",
+      varName: "foo",
+    };
+    const range = locateDiagnostic(diag, {
+      filePath: "Projects/_op-modules/m.md",
+      raw,
+    });
+    expect(range).not.toBeNull();
+    expect(raw.slice(range!.from, range!.to)).toBe("{{vars.foo}}");
+  });
 });

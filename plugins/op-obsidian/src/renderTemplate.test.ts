@@ -115,6 +115,11 @@ describe("renderTemplate", () => {
       });
     });
 
+    it("tags unknown-name missing-var with extra.syntax = 'plugin'", () => {
+      const r = renderTemplate("Hello {{notavar}}!", FULL_CTX);
+      expect(r.diagnostics[0].extra).toMatchObject({ syntax: "plugin" });
+    });
+
     it("leaves a known-but-undefined-in-ctx token verbatim and emits a missing-var diagnostic", () => {
       const r = renderTemplate("Branch: {{branch}}", { id: "OP-1" });
       expect(r.text).toBe("Branch: {{branch}}");
@@ -124,6 +129,11 @@ describe("renderTemplate", () => {
         severity: "warning",
         varName: "branch",
       });
+    });
+
+    it("tags known-but-undefined missing-var with extra.syntax = 'plugin'", () => {
+      const r = renderTemplate("Branch: {{branch}}", { id: "OP-1" });
+      expect(r.diagnostics[0].extra).toMatchObject({ syntax: "plugin" });
     });
 
     it("emits one diagnostic per token occurrence (not per unique name)", () => {

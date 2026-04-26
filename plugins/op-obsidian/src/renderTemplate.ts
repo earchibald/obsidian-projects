@@ -57,6 +57,10 @@ export function renderTemplate(text: string, ctx: Partial<RenderContext>): Rende
         severity: "warning",
         message: `Unknown variable {{${name}}} — left verbatim. Add an entry to pluginVarRegistry.ts (always-on var) or declare it as a user var (vars.${name}).`,
         varName: name,
+        // `syntax: "plugin"` lets the editor locator try `{{name}}` first so it
+        // doesn't accidentally squiggle a `{{vars.name}}` user-var token that
+        // happens to share the same name but is declared and resolves fine.
+        extra: { syntax: "plugin" },
       });
       return match;
     }
@@ -67,6 +71,7 @@ export function renderTemplate(text: string, ctx: Partial<RenderContext>): Rende
         severity: "warning",
         message: `Variable {{${name}}} resolved to undefined for this context — left verbatim.`,
         varName: name,
+        extra: { syntax: "plugin" },
       });
       return match;
     }
