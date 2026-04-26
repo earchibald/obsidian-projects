@@ -395,6 +395,19 @@ export default class OpPlugin extends Plugin {
     // mid-session. The interval is registered so plugin unload cancels
     // it; `probeLiveTmuxWindows` already swallows ENOENT/timeout.
     this.chipLivenessTimer = window.setInterval(async () => {
+      // Skip the tmux probe entirely when no issue notes are currently
+      // displayed — avoids shelling out every 20 s when the user is
+      // working outside the issue tracker.
+      let hasOpenIssueNote = false;
+      this.app.workspace.iterateAllLeaves((leaf) => {
+        if (hasOpenIssueNote) return;
+        if (leaf.view.getViewType() !== "markdown") return;
+        const file = (leaf.view as { file?: TFile }).file;
+        if (!file) return;
+        const fm = this.app.metadataCache.getFileCache(file)?.frontmatter;
+        if (fm?.type === "issue") hasOpenIssueNote = true;
+      });
+      if (!hasOpenIssueNote) return;
       const next = await probeLiveTmuxWindows(
         this.settings.tmuxBinary,
         tmuxSessionsForCleanup(this.settings.orchestratorState),

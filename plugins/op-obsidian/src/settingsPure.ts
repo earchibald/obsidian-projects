@@ -226,6 +226,13 @@ export function mergeSettings(loaded: unknown): OpSettings {
   }
   if (typeof (l as { firstRunCompleted?: unknown }).firstRunCompleted === "boolean") {
     base.firstRunCompleted = (l as { firstRunCompleted: boolean }).firstRunCompleted;
+  } else if (Object.keys(l).length > 0) {
+    // Existing user upgrading from a version that predates `firstRunCompleted`
+    // (≤ 0.57.x). Their data.json has other settings but no
+    // `firstRunCompleted` key, so the default (`false`) would wrongly
+    // scaffold the first-run README into a vault that's already in use.
+    // Treat any non-empty saved data as "first run already completed".
+    base.firstRunCompleted = true;
   }
   if (l.orchestrator && typeof l.orchestrator === "object") {
     const o = l.orchestrator as Partial<OrchestratorSettings>;

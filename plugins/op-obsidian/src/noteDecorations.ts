@@ -207,13 +207,14 @@ function schedulePending(deps: ChipDeps, seg: StripSegment): void {
   if (seg.kind === "commit") return;
   const url = seg.url;
   // Mark the URL as in-flight so a parallel render skips it. We write a
-  // null-state cache entry with a *short* TTL — the real result will
-  // overwrite it. If the fetch never completes, the in-flight slot
-  // expires and the next render retries.
+  // null-state cache entry with a TTL *longer* than the gh timeout (8 s)
+  // so a render that fires during the timeout window doesn't start a
+  // second fetch for the same URL. The real result (or confirmed null)
+  // overwrites this entry when the fetch resolves.
   if (deps.ghCache.get(url)?.expiresAt && deps.ghCache.get(url)!.expiresAt > Date.now()) {
     return;
   }
-  writeGhCache(deps.ghCache, url, null, Date.now(), 5_000);
+  writeGhCache(deps.ghCache, url, null, Date.now(), 10_000);
   const fetcher = deps.fetchGhState ?? defaultFetchGhState;
   void fetcher(url, seg.kind === "pr" ? "pr" : "issue").then((state) => {
     writeGhCache(deps.ghCache, url, state, Date.now(), GH_STATE_TTL_MS);
