@@ -350,6 +350,10 @@ export class OpSettingsTab extends PluginSettingTab {
     // collapsible wrappers whose visible row count is zero so the user
     // doesn't see a dozen empty headers when searching.
     containerEl.querySelectorAll<HTMLElement>(".op-collapsible").forEach((wrapper) => {
+      // aria-expanded lives on the header (the role="button" element), so
+      // sync it there — not on the wrapper — to stay consistent with the
+      // OpCollapsible constructor and setOpen().
+      const header = wrapper.querySelector<HTMLElement>(".op-collapsible__header");
       if (!matcher) {
         wrapper.style.removeProperty("display");
         // Collapse collapsibles that were auto-expanded by search (i.e. not
@@ -358,7 +362,7 @@ export class OpSettingsTab extends PluginSettingTab {
         if (wrapper.dataset.opAutoExpanded) {
           delete wrapper.dataset.opAutoExpanded;
           wrapper.classList.remove("is-open");
-          wrapper.setAttribute("aria-expanded", "false");
+          header?.setAttribute("aria-expanded", "false");
         }
         return;
       }
@@ -375,7 +379,7 @@ export class OpSettingsTab extends PluginSettingTab {
         // Mark as auto-expanded so clearing the filter can restore the
         // collapsed state. (User-opened collapsibles lack this marker.)
         wrapper.classList.add("is-open");
-        wrapper.setAttribute("aria-expanded", "true");
+        header?.setAttribute("aria-expanded", "true");
         wrapper.dataset.opAutoExpanded = "1";
       }
     });
