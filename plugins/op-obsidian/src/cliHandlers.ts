@@ -63,14 +63,16 @@ export function parseSetEvaluationParams(
   return { ok: true, value: { id, evaluation } };
 }
 
-const FLOW_ENUM = ["evaluate", "planning", "implementation", "review", "finalization", "done"] as const;
+// OP-188: `flow:` accepts any non-empty step id (the workflow-file walker at
+// auto-advance time enforces "step exists in the workflow"). Complexity stays
+// a closed two-value enum.
 const COMPLEXITY_ENUM = ["simple", "complex"] as const;
 
 export function parseSetFlowParams(
   params: Record<string, string>,
 ): ParamsResult<{
   id: string;
-  flow?: (typeof FLOW_ENUM)[number] | null;
+  flow?: string | null;
   complexity?: (typeof COMPLEXITY_ENUM)[number] | null;
 }> {
   const id = params.issue ?? params.id;
@@ -85,19 +87,19 @@ export function parseSetFlowParams(
   }
   const out: {
     id: string;
-    flow?: (typeof FLOW_ENUM)[number] | null;
+    flow?: string | null;
     complexity?: (typeof COMPLEXITY_ENUM)[number] | null;
   } = { id };
   if (hasFlow) {
     const v = params.flow;
     if (v === "" || v === "null") {
       out.flow = null;
-    } else if ((FLOW_ENUM as readonly string[]).includes(v)) {
-      out.flow = v as (typeof FLOW_ENUM)[number];
+    } else if (typeof v === "string" && v.trim().length > 0) {
+      out.flow = v.trim();
     } else {
       return {
         ok: false,
-        error: `op-set-flow failed: invalid --flow ${JSON.stringify(v)} (expected ${FLOW_ENUM.join("|")})`,
+        error: `op-set-flow failed: invalid --flow ${JSON.stringify(v)} (expected a non-empty step id string)`,
       };
     }
   }

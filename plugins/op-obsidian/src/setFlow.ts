@@ -1,15 +1,20 @@
 import { App, TFile } from "obsidian";
 import type { IssueEntry } from "./types";
 
-export const FLOW_VALUES = [
-  "evaluate",
-  "planning",
-  "implementation",
-  "review",
-  "finalization",
-  "done",
-] as const;
-export type Flow = (typeof FLOW_VALUES)[number];
+// OP-188: `Flow` is a free-form step id. The pre-OP-188 closed enum
+// (`evaluate | planning | … | done`) was retired when the orchestrator moved
+// from a hardcoded transition matrix to a workflow-file walker — the walker
+// itself enforces "is this step in the workflow," and the legacy alias map
+// in `flowOrchestrator.ts:LEGACY_FLOW_ALIAS` keeps pre-OP-188 frontmatter
+// parseable.
+//
+// `validateFlow` keeps the minimum guard: trim non-empty so writers can't
+// silently land a blank `flow:` value. Step ids that don't appear in the
+// project's workflow surface as no-op auto-advances at orchestrator time
+// rather than as setFlow-time rejections — matching the "schema-conformant
+// writes, walker-enforced semantics" split the workflow-modules engine uses
+// elsewhere.
+export type Flow = string;
 
 export const COMPLEXITY_VALUES = ["simple", "complex"] as const;
 export type Complexity = (typeof COMPLEXITY_VALUES)[number];
@@ -78,10 +83,8 @@ export async function setFlow(
 }
 
 export function validateFlow(v: string): asserts v is Flow {
-  if (!(FLOW_VALUES as readonly string[]).includes(v)) {
-    throw new Error(
-      `Invalid flow: ${JSON.stringify(v)} — expected one of ${FLOW_VALUES.join(", ")}`,
-    );
+  if (typeof v !== "string" || v.trim() === "") {
+    throw new Error(`Invalid flow: ${JSON.stringify(v)} — expected a non-empty step id string`);
   }
 }
 

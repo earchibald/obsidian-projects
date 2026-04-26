@@ -208,9 +208,17 @@ describe("handleOpSetFlowUri", () => {
       complexity: "complex",
     });
   });
-  it("rejects unknown flow value", async () => {
-    await expect(handleOpSetFlowUri(makeDeps(), { id: "OP-1", flow: "wat" })).rejects.toThrow(
-      /flow must be one of/,
+  it("accepts free-form flow values (workflow walker enforces, not setFlow)", async () => {
+    // OP-188: post-modules, the orchestrator walks the workflow file's step
+    // list at advance time. Step ids that don't appear simply produce a
+    // no-op auto-advance — they aren't rejected at write time so the user
+    // can still set `flow: kickoff` (or any other workflow-defined step).
+    const r = await handleOpSetFlowUri(makeDeps(), { id: "OP-1", flow: "kickoff" });
+    expect(r).toMatchObject({ ok: true, flow: "kickoff" });
+  });
+  it("rejects whitespace-only flow value", async () => {
+    await expect(handleOpSetFlowUri(makeDeps(), { id: "OP-1", flow: "   " })).rejects.toThrow(
+      /non-empty step id/,
     );
   });
   it("passes 'null' through as null to clear", async () => {

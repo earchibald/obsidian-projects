@@ -164,8 +164,16 @@ describe("parseSetFlowParams", () => {
     const r = parseSetFlowParams({ id: "OP-1", flow: "planning", complexity: "complex" });
     expect(r.ok && r.value).toEqual({ id: "OP-1", flow: "planning", complexity: "complex" });
   });
-  it("rejects invalid flow enum", () => {
-    const r = parseSetFlowParams({ id: "OP-1", flow: "wat" });
+  it("accepts free-form flow values (workflow walker enforces at advance time)", () => {
+    // OP-188: post-modules, parseSetFlowParams accepts any non-empty step id
+    // — the orchestrator's workflow-file walker decides what's valid for the
+    // project's actual workflow. Values not in the workflow simply produce
+    // a no-op auto-advance.
+    const r = parseSetFlowParams({ id: "OP-1", flow: "kickoff" });
+    expect(r.ok && r.value).toEqual({ id: "OP-1", flow: "kickoff" });
+  });
+  it("rejects whitespace-only flow value", () => {
+    const r = parseSetFlowParams({ id: "OP-1", flow: "   " });
     expect(r.ok).toBe(false);
     if (!r.ok) expect(r.error).toMatch(/invalid --flow/);
   });
