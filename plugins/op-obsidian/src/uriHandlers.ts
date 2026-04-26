@@ -16,6 +16,7 @@ import type { SetFlowResult, Flow, Complexity } from "./setFlow";
 import type { ResolveArgs, ResolveStatus } from "./resolve";
 import type { ApplyLinkResult, LinkCheckResult, MigrateLinksResult } from "./links";
 import type { GetWorkflowResult } from "./workflow";
+import { getSkill } from "./skill";
 
 export interface UriHandlerDeps {
   store: { issues(): IssueEntry[] };
@@ -288,6 +289,20 @@ export async function handleOpGetWorkflowUri(
     project: res.project,
     path: res.path,
     exists: res.exists,
+    content: res.content,
+    size: res.size,
+  };
+}
+
+export async function handleOpGetSkillUri(
+  _deps: UriHandlerDeps,
+  params: Record<string, string>,
+): Promise<UriResponsePayload> {
+  const res = getSkill(params.name ?? "");
+  return {
+    ok: true,
+    command: "op-get-skill",
+    name: res.name,
     content: res.content,
     size: res.size,
   };
