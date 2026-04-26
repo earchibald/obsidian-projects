@@ -78,6 +78,9 @@ type SectionId =
   | "github"
   | "developer";
 
+/** Subset of SectionId covering only the collapsible Advanced subsections. */
+type AdvancedSectionId = (typeof ADVANCED_SECTIONS)[number]["id"];
+
 const ADVANCED_SECTIONS: ReadonlyArray<{
   id: SectionId;
   title: string;
@@ -269,10 +272,16 @@ export class OpSettingsTab extends PluginSettingTab {
       case "github":
       case "developer":
         return this.renderAdvancedSection(id, el);
+      default: {
+        // Compile-time exhaustiveness: TypeScript errors here when a new
+        // SectionId value is added without a matching case above.
+        const _exhaustive: never = id;
+        return _exhaustive;
+      }
     }
   }
 
-  private renderAdvancedSection(id: SectionId, el: HTMLElement): void {
+  private renderAdvancedSection(id: AdvancedSectionId, el: HTMLElement): void {
     switch (id) {
       case "injection":
         return this.renderInjection(el);
@@ -290,6 +299,10 @@ export class OpSettingsTab extends PluginSettingTab {
         return this.renderGithub(el);
       case "developer":
         return this.renderDeveloper(el);
+      default: {
+        const _exhaustive: never = id;
+        return _exhaustive;
+      }
     }
   }
 
@@ -339,6 +352,14 @@ export class OpSettingsTab extends PluginSettingTab {
     containerEl.querySelectorAll<HTMLElement>(".op-collapsible").forEach((wrapper) => {
       if (!matcher) {
         wrapper.style.removeProperty("display");
+        // Collapse collapsibles that were auto-expanded by search (i.e. not
+        // manually opened by the user) so clearing the query restores the
+        // original all-collapsed state.
+        if (wrapper.dataset.opAutoExpanded) {
+          delete wrapper.dataset.opAutoExpanded;
+          wrapper.classList.remove("is-open");
+          wrapper.setAttribute("aria-expanded", "false");
+        }
         return;
       }
       const visibleRows = wrapper.querySelectorAll<HTMLElement>(
@@ -349,9 +370,13 @@ export class OpSettingsTab extends PluginSettingTab {
         if (r.style.display !== "none") anyVisible = true;
       });
       wrapper.style.display = anyVisible ? "" : "none";
-      if (anyVisible) {
+      if (anyVisible && !wrapper.classList.contains("is-open")) {
         // Auto-open so the matches are visible without a manual click.
+        // Mark as auto-expanded so clearing the filter can restore the
+        // collapsed state. (User-opened collapsibles lack this marker.)
         wrapper.classList.add("is-open");
+        wrapper.setAttribute("aria-expanded", "true");
+        wrapper.dataset.opAutoExpanded = "1";
       }
     });
   }
@@ -738,12 +763,19 @@ export class OpSettingsTab extends PluginSettingTab {
           ev.dataTransfer.effectAllowed = "move";
           ev.dataTransfer.setData("text/plain", p.slug);
         }
+        // Safety net: browsers reliably fire `dragend` on Escape (HTML spec),
+        // but register a one-shot document capture listener so a browser quirk
+        // that skips `dragend` on the source element can never leave
+        // `dragInFlight` stuck at `true` and permanently lock the collapsible.
+        document.addEventListener("dragend", () => { this.dragInFlight = false; }, { capture: true, once: true });
       });
       li.addEventListener("dragend", () => {
         dragSlug = null;
         this.dragInFlight = false;
         li.classList.remove("is-dragging");
         clearDropAffordance();
+        // The document safety-net listener is `once:true` so it self-removes
+        // after the first dragend (which is this one in the normal path).
       });
       li.addEventListener("dragover", (ev) => {
         if (!dragSlug || dragSlug === p.slug) return;
@@ -1368,20 +1400,34 @@ function detectionSummary(plugin: OpPlugin): string {
  * accessibility hazard. Body is a single string — keep it short (1–2
  * sentences); the long-form glossary at the bottom of the tab is the
  * authoritative reference.
+ *
+ * Keyboard-accessible: head has `role="button"` / `tabindex="0"` and
+ * responds to Enter and Space, matching the ARIA Button pattern.
  */
 function addHelpExpandable(parentEl: HTMLElement, title: string, body: string): void {
   const wrap = parentEl.createDiv({ cls: "op-help-expandable" });
   const head = wrap.createDiv({ cls: "op-help-expandable__head" });
+  head.setAttribute("role", "button");
+  head.setAttribute("tabindex", "0");
+  head.setAttribute("aria-expanded", "false");
   head.createSpan({ text: "›", cls: "op-help-expandable__caret" });
   head.createSpan({ text: title, cls: "op-help-expandable__title" });
-  const bodyEl = wrap.createDiv({
+  // Body visibility is CSS-driven (.op-help-expandable.is-open > .op-help-expandable__body),
+  // consistent with OpCollapsible — no inline display manipulation needed.
+  wrap.createDiv({
     cls: "op-help-expandable__body setting-item-description",
     text: body,
   });
-  bodyEl.style.display = "none";
-  head.addEventListener("click", () => {
+  const toggle = (): void => {
     const open = wrap.classList.toggle("is-open");
-    bodyEl.style.display = open ? "" : "none";
+    head.setAttribute("aria-expanded", String(open));
+  };
+  head.addEventListener("click", toggle);
+  head.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" || e.key === " ") {
+      e.preventDefault();
+      toggle();
+    }
   });
 }
 
@@ -1398,9 +1444,12 @@ interface OpCollapsibleOpts {
  * JS-controlled collapsible wrapper. NOT a native <details> — inside a
  * closed <details>, getBoundingClientRect() on rendered children returns
  * all-zeros, which breaks the project-order drag-reorder logic. This
- * primitive toggles `display: none|block` on the body so child rects
- * remain valid the moment the body is visible, and refuses to collapse
- * mid-drag via `canCollapse`.
+ * primitive uses only a CSS class (`is-open`) to control visibility so
+ * child rects remain valid the moment the body is visible, and refuses to
+ * collapse mid-drag via `canCollapse`.
+ *
+ * Keyboard-accessible: header has `role="button"` / `tabindex="0"` and
+ * responds to Enter and Space, matching the ARIA Button pattern.
  */
 export class OpCollapsible {
   readonly root: HTMLElement;
@@ -1412,17 +1461,26 @@ export class OpCollapsible {
     this.opts = opts;
     this.root = parentEl.createDiv({ cls: "op-collapsible" });
     this.header = this.root.createDiv({ cls: "op-collapsible__header" });
+    this.header.setAttribute("role", "button");
+    this.header.setAttribute("tabindex", "0");
     this.header.createSpan({ cls: "op-collapsible__caret", text: "›" });
     this.header.createSpan({ cls: "op-collapsible__title", text: title });
     this.body = this.root.createDiv({ cls: "op-collapsible__body" });
     this.setOpen(opts.startOpen === true);
 
-    this.header.addEventListener("click", () => {
+    const toggle = (): void => {
       if (this.isOpen()) {
         if (opts.canCollapse && !opts.canCollapse()) return;
         this.setOpen(false);
       } else {
         this.setOpen(true);
+      }
+    };
+    this.header.addEventListener("click", toggle);
+    this.header.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" || e.key === " ") {
+        e.preventDefault();
+        toggle();
       }
     });
   }
@@ -1433,7 +1491,8 @@ export class OpCollapsible {
 
   setOpen(open: boolean): void {
     this.root.classList.toggle("is-open", open);
-    this.body.style.display = open ? "" : "none";
+    // aria-expanded lives on the header (the interactive element).
+    this.header.setAttribute("aria-expanded", String(open));
   }
 }
 

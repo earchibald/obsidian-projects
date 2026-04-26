@@ -655,6 +655,12 @@ a.op-sidebar__agent:hover {
   background: var(--background-modifier-hover);
 }
 
+.op-collapsible__header:focus-visible {
+  outline: 2px solid var(--interactive-accent);
+  outline-offset: -2px;
+  border-radius: 4px;
+}
+
 .op-collapsible__caret {
   display: inline-block;
   color: var(--text-muted);
@@ -670,9 +676,15 @@ a.op-sidebar__agent:hover {
   min-width: 0;
 }
 
+/* Body hidden by default; shown when parent has `is-open` class. */
 .op-collapsible__body {
+  display: none;
   padding: 0.25rem 0.75rem 0.6rem;
   border-top: 1px solid var(--background-modifier-border);
+}
+
+.op-collapsible.is-open > .op-collapsible__body {
+  display: block;
 }
 
 .op-help-expandable {
@@ -693,6 +705,12 @@ a.op-sidebar__agent:hover {
   color: var(--text-normal);
 }
 
+.op-help-expandable__head:focus-visible {
+  outline: 2px solid var(--interactive-accent);
+  outline-offset: 2px;
+  border-radius: 2px;
+}
+
 .op-help-expandable__caret {
   transition: transform 100ms ease-out;
 }
@@ -705,9 +723,15 @@ a.op-sidebar__agent:hover {
   font-style: italic;
 }
 
+/* Body hidden by default; shown when parent has `is-open` class. */
 .op-help-expandable__body {
+  display: none;
   margin-top: 0.25rem;
   padding-left: 1rem;
+}
+
+.op-help-expandable.is-open > .op-help-expandable__body {
+  display: block;
 }
 
 .op-overlay-validation {
