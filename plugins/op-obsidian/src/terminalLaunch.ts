@@ -4,6 +4,8 @@ import * as os from "os";
 import * as path from "path";
 import { promisify } from "util";
 
+import { activeWindowId, createTab, createWindow } from "./iterm/driver";
+
 const pExecFile = promisify(execFile);
 
 export type ITermPlacement = "new-tab" | "new-window";
@@ -77,7 +79,7 @@ export async function launchInTerminal(args: LaunchArgs): Promise<LaunchResult> 
     args.issueId
   ) {
     // Layout orchestrator takes over: it manages tmux session naming per
-    // iTerm window and drives AppleScript splits itself.
+    // iTerm window and drives the iTerm WebSocket splits itself.
     const { orchestrateLaunch } = await import("./orchestrator");
     const r = await orchestrateLaunch(
       {
@@ -115,8 +117,20 @@ export async function launchInTerminal(args: LaunchArgs): Promise<LaunchResult> 
       return { scriptPath: innerPath, tmuxSession: session, tmuxWindow: windowName };
     }
 
-    const osa = buildITermOsascript(args.iTermPlacement, session, args.tmuxBinary);
-    await pExecFile("/usr/bin/osascript", ["-e", osa]);
+    const command = buildITermAttachCommand(args.tmuxBinary, session);
+    if (args.iTermPlacement === "new-tab") {
+      const targetWindow = await activeWindowId();
+      if (targetWindow) {
+        await createTab(command, targetWindow);
+      } else {
+        // No iTerm window is currently key (iTerm not running, all windows
+        // minimized, etc.) — fall back to opening a new window. Mirrors the
+        // legacy AppleScript `if (count of windows) = 0 then create window`.
+        await createWindow(command);
+      }
+    } else {
+      await createWindow(command);
+    }
     return { scriptPath: innerPath, tmuxSession: session, tmuxWindow: windowName };
   }
 
@@ -266,37 +280,13 @@ export function buildPrepScript({ tmuxBinary, session, windowName, innerPath }: 
   ].join("\n");
 }
 
-export function buildITermOsascript(
-  placement: ITermPlacement,
-  session: string,
-  tmuxBinary: string = "tmux",
-): string {
-  // iTerm detects `tmux -CC` and surfaces tmux windows as native iTerm
-  // tabs. Session/window prep already ran, so this just attaches.
-  const tmuxCmd = `${shSingleQuote(tmuxBinary)} -CC attach -t ${shSingleQuote(session)}`;
-  const cmd = osaQuote(tmuxCmd);
-
-  if (placement === "new-window") {
-    return [
-      'tell application "iTerm"',
-      "  activate",
-      `  create window with default profile command ${cmd}`,
-      "end tell",
-    ].join("\n");
-  }
-
-  return [
-    'tell application "iTerm"',
-    "  activate",
-    "  if (count of windows) = 0 then",
-    `    create window with default profile command ${cmd}`,
-    "  else",
-    "    tell current window",
-    `      create tab with default profile command ${cmd}`,
-    "    end tell",
-    "  end if",
-    "end tell",
-  ].join("\n");
+// Build the bash command line iTerm runs in the new tab/window. iTerm detects
+// `tmux -CC` on the running command and surfaces tmux windows as native iTerm
+// tabs; session/window prep already ran, so this just attaches. Quoting mirrors
+// the legacy AppleScript path so a tmux binary at `/opt/homebrew/bin/tmux` and
+// a session name with shell metacharacters are still safe.
+export function buildITermAttachCommand(tmuxBinary: string, session: string): string {
+  return `${shSingleQuote(tmuxBinary)} -CC attach -t ${shSingleQuote(session)}`;
 }
 
 // Sanitize arbitrary text into a tmux-safe window name. tmux uses `:`
@@ -313,9 +303,4 @@ export function tmuxWindowName(issueId: string): string {
 
 function shSingleQuote(s: string): string {
   return `'${s.replace(/'/g, `'\\''`)}'`;
-}
-
-// AppleScript double-quoted string: escape backslashes and double quotes.
-function osaQuote(s: string): string {
-  return `"${s.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
 }
