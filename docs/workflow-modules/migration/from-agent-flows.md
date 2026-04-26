@@ -342,10 +342,16 @@ walker. None should affect normal use, but worth flagging:
 - **Workflow with extra steps between `evaluate` and `plan`.** The
   evaluate-step `simple` fast-path scans forward from
   `evaluateIndex + 1` and returns the first step whose canonical id is
-  not `plan`. So if you've inserted `triage` between `evaluate` and
-  `plan`, `simple` complexity skips `plan` *and* lands at `triage`'s
-  next sibling — not at `triage` itself. Tweak the order or scope if
-  you want triage to run on every issue, simple or complex.
+  not `plan`. Critically: if the first non-`plan` step is a *custom*
+  step id (one not in `LEGACY_FLOW_ALIAS`), `aliasResolve` returns
+  `null` and `outputFor(null)` returns `null` — so the fast-path
+  **stalls** (returns `null`, no auto-advance). The loop only skips
+  steps that alias to canonical `plan`; custom step ids stop the scan
+  immediately. Concretely: if you've inserted `triage` between
+  `evaluate` and `plan`, `simple` complexity stalls rather than
+  skipping past `triage`. Put custom steps *after* `implement` (not
+  between `evaluate` and `plan`) if you want them to be reachable
+  through the simple-complexity fast-path.
 - **Embedded newlines in `flow:`.** `validateFlow` rejects step ids with
   embedded `\r\n` characters across all three entry points (`setFlow`,
   the URI handler, the CLI parser). This was an OP-188 adversarial-review

@@ -133,8 +133,12 @@ Now the interesting part. Run the import in Agent-Vault:
 obsidian vault=Agent-Vault op-import-module path=release-checklist.md
 ```
 
-Because `release-checklist.md` has no `project:` field, the importer derives
-`scope: global` and lands the file at `Projects/_op-modules/release-checklist.md`.
+No `--scope` flag was passed, so the importer defaults to `scope: global` and
+lands the file at `Projects/_op-modules/release-checklist.md`. (The default is
+always `global` when `--scope` is omitted from the CLI/URI call, regardless of
+whether the module's frontmatter carries a `project:` field. Pass
+`scope=project project=<slug>` explicitly to land it per-project.)
+
 The body's only `{{vars.<name>}}` reference is `release_command`, and the
 loader walks the four-layer precedence chain looking for a binding:
 
