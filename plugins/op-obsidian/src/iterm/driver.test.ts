@@ -4,11 +4,14 @@ vi.mock("./client", () => ({
   sessionExists: vi.fn(async (_id: string) => false),
   selectSession: vi.fn(async () => undefined),
   createWindow: vi.fn(async () => ({ windowId: "ws-w", sessionId: "ws-s" })),
+  createTab: vi.fn(async () => ({ windowId: "ws-w", sessionId: "ws-s" })),
   splitSession: vi.fn(async () => "ws-split"),
   setSessionName: vi.fn(async () => undefined),
   setWindowName: vi.fn(async () => undefined),
   buildLayoutWindow: vi.fn(async () => ({ windowId: "ws-w", sessionIds: ["ws-s"] })),
   applySplit: vi.fn(async () => "ws-apply"),
+  activeWindowId: vi.fn(async () => undefined),
+  closeWindow: vi.fn(async () => undefined),
 }));
 
 import * as wsClient from "./client";
@@ -26,7 +29,22 @@ describe("iterm/driver pass-through", () => {
 
   it("forwards createWindow", async () => {
     expect(await driver.createWindow("cmd")).toEqual({ windowId: "ws-w", sessionId: "ws-s" });
-    expect(wsClient.createWindow).toHaveBeenCalledWith("cmd");
+    expect(wsClient.createWindow).toHaveBeenCalledWith("cmd", {});
+  });
+
+  it("forwards createWindow opts (e.g. activate:false for background launch)", async () => {
+    await driver.createWindow("cmd", { activate: false });
+    expect(wsClient.createWindow).toHaveBeenCalledWith("cmd", { activate: false });
+  });
+
+  it("forwards createTab", async () => {
+    await driver.createTab("cmd", "w");
+    expect(wsClient.createTab).toHaveBeenCalledWith("cmd", "w", {});
+  });
+
+  it("forwards createTab opts (activate:false for background launch)", async () => {
+    await driver.createTab("cmd", "w", { activate: false });
+    expect(wsClient.createTab).toHaveBeenCalledWith("cmd", "w", { activate: false });
   });
 
   it("forwards splitSession", async () => {

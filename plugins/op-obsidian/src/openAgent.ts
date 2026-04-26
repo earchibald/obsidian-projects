@@ -18,6 +18,7 @@ import { launchInTerminal } from "./terminalLaunch";
 import type { AgentDetector } from "./agentDetect";
 import { AgentPickerModal } from "./modals";
 import { userError } from "./userError";
+import { iTermDefaultsDomainPresent, showITermTmuxPrefsNotice } from "./iTermPrefs";
 
 /** Arguments accepted by {@link openAgent}. */
 export interface OpenAgentArgs {
@@ -139,6 +140,7 @@ export async function openAgent(
     issueId: args.entry.id,
     issueTitle: args.entry.title,
     agentId,
+    backgroundLaunch: settings.backgroundLaunch,
     orchestrator: {
       settings,
       registry: {
@@ -151,6 +153,13 @@ export async function openAgent(
     },
   });
 
+  // OP-155 §4 Step 4: first iTerm launch — surface the one-time prefs Notice
+  // and persist the bit. Fire-and-forget; failures (defaults read errors,
+  // settings-save errors) must not block the agent launch.
+  if (settings.terminal === "iTerm" && !settings.iTermPrefsNoticeShown) {
+    void maybeShowITermPrefsNotice(settings, saveSettings);
+  }
+
   return {
     issueId: args.entry.id,
     agent: agentId,
@@ -160,6 +169,20 @@ export async function openAgent(
     tmuxSession,
     tmuxWindow,
   };
+}
+
+async function maybeShowITermPrefsNotice(
+  settings: OpSettings,
+  saveSettings: () => Promise<void>,
+): Promise<void> {
+  try {
+    if (!(await iTermDefaultsDomainPresent())) return;
+    showITermTmuxPrefsNotice();
+    settings.iTermPrefsNoticeShown = true;
+    await saveSettings();
+  } catch (err) {
+    console.warn("[op-obsidian] iTerm prefs Notice failed:", err);
+  }
 }
 
 async function pickAgent(

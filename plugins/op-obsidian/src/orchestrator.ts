@@ -51,6 +51,12 @@ export interface OrchestrateArgs {
   // Session name for the "work" tmux session in use. The orchestrator also
   // derives per-window tmux sessions (e.g. op-agents-1, op-agents-2).
   baseTmuxSession: string;
+  // OP-155 §4 Step 1: when true, do not bring iTerm to the foreground.
+  // `open -ga iTerm` is run first so the WS connect succeeds, and the
+  // `createWindow` call is issued with `activate: false`. The split path
+  // (growth into an existing window) does not need additional treatment —
+  // `splitSession` does not call ActivateRequest in the first place.
+  backgroundLaunch?: boolean;
 }
 
 export interface OrchestrateResult {
@@ -197,7 +203,14 @@ export async function orchestrateLaunch(
 
   await ensureAgentWindow({ args, tmuxSession, windowName });
   const viewScript = await writeViewScript({ args, tmuxSession, tmuxWindow: windowName });
-  const { windowId, sessionId } = await createWindow(quoteForBash(viewScript));
+  // OP-155 §4 Step 1: cold-start iTerm in the background and skip the WS
+  // ActivateRequest when `backgroundLaunch` is on.
+  if (args.backgroundLaunch) {
+    await pExecFile("/usr/bin/open", ["-ga", "iTerm"]);
+  }
+  const { windowId, sessionId } = await createWindow(quoteForBash(viewScript), {
+    activate: !args.backgroundLaunch,
+  });
   await setWindowName(windowId, tmuxSession);
   await setSessionName(sessionId, sessionTitle);
 

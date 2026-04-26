@@ -2972,6 +2972,7 @@ export default class OpPlugin extends Plugin {
         issueId,
         agentId,
         debug: true,
+        backgroundLaunch: this.settings.backgroundLaunch,
       });
       notify(
         `op-debug-agent-launch: ${issueId} (tmux: ${res.tmuxSession}:${res.tmuxWindow})`,

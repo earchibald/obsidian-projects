@@ -62,10 +62,17 @@ function customCommandProperties(command: string): iterm2.ProfileProperty[] {
   ];
 }
 
-export async function createWindow(command: string): Promise<CreateWindowResult> {
-  // Raise iTerm first so the new window is visible when it appears. The
-  // legacy AppleScript did `activate` before `create window`.
-  await activateITerm();
+// `activate` (default true) controls whether iTerm is brought to the
+// foreground before the create call — mirroring the legacy AppleScript path's
+// `activate`-then-`create window` pair. Background-launch mode (OP-155 Step 1)
+// passes `activate: false` so a launch from inside Obsidian doesn't steal
+// focus; the caller is expected to have already ensured iTerm is running
+// (e.g. via `open -ga iTerm`) so the WS connection succeeds.
+export async function createWindow(
+  command: string,
+  opts: { activate?: boolean } = {},
+): Promise<CreateWindowResult> {
+  if (opts.activate !== false) await activateITerm();
 
   const reply = await call({
     createTabRequest: iterm2.CreateTabRequest.create({
@@ -76,12 +83,14 @@ export async function createWindow(command: string): Promise<CreateWindowResult>
 }
 
 // Add a tab to an existing iTerm window. Mirrors the AppleScript path's
-// `tell current window to create tab with default profile command …`. The
-// AppleScript activated iTerm before issuing the create call; we do the same
-// here so the new tab is visible. Returns `{windowId, sessionId}` of the new
-// tab — windowId echoes the hosting window in iTerm's reply.
-export async function createTab(command: string, windowId: string): Promise<CreateWindowResult> {
-  await activateITerm();
+// `tell current window to create tab with default profile command …`. See
+// `createWindow` for the `activate` flag semantics.
+export async function createTab(
+  command: string,
+  windowId: string,
+  opts: { activate?: boolean } = {},
+): Promise<CreateWindowResult> {
+  if (opts.activate !== false) await activateITerm();
 
   const reply = await call({
     createTabRequest: iterm2.CreateTabRequest.create({

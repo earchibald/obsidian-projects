@@ -307,3 +307,124 @@ describe("client write ops (fake transport)", () => {
     });
   });
 });
+
+// OP-155 §4 Step 1: createTab/createWindow expose an `activate` flag (default
+// true). Background-launch passes `activate: false` so iTerm doesn't come to
+// the foreground when an agent launches. Behavior is verified by counting
+// requests through a multi-message transport: the activate-then-create pair
+// becomes a single create when the flag is off.
+function multiTransport(reply: iterm2.IServerOriginatedMessage): {
+  transport: ITermTransport;
+  messages: iterm2.IClientOriginatedMessage[];
+} {
+  const messages: iterm2.IClientOriginatedMessage[] = [];
+  const transport = {
+    request: vi.fn(async (msg: iterm2.IClientOriginatedMessage) => {
+      messages.push(msg);
+      return iterm2.ServerOriginatedMessage.create(reply);
+    }),
+    connect: vi.fn(async () => undefined),
+    close: vi.fn(),
+  } as unknown as ITermTransport;
+  return { transport, messages };
+}
+
+async function withMultiTransport<T>(
+  reply: iterm2.IServerOriginatedMessage,
+  fn: (
+    messages: iterm2.IClientOriginatedMessage[],
+  ) => Promise<T>,
+): Promise<T> {
+  const { transport, messages } = multiTransport(reply);
+  const conn = await import("./connection");
+  conn.__setStateForTests({ transport, cookie: { cookie: "c", key: "k" }, socketPath: "/tmp/fake" });
+  const client = await import("./client");
+  client.configureClient({ version: "test" });
+  try {
+    return await fn(messages);
+  } finally {
+    conn.__setStateForTests(null);
+  }
+}
+
+describe("client activate flag (OP-155 Step 1)", () => {
+  it("createWindow with activate:false skips the ActivateRequest", async () => {
+    await withMultiTransport(
+      {
+        createTabResponse: {
+          status: iterm2.CreateTabResponse.Status.OK,
+          windowId: "w-1",
+          sessionId: "s-1",
+        },
+      },
+      async (messages) => {
+        const { createWindow } = await import("./client");
+        await createWindow("bash /tmp/x.sh", { activate: false });
+        const types = messages.map((m) =>
+          m.activateRequest ? "activate" : m.createTabRequest ? "createTab" : "?",
+        );
+        expect(types).toEqual(["createTab"]);
+      },
+    );
+  });
+
+  it("createWindow with activate:true (default) sends ActivateRequest first", async () => {
+    await withMultiTransport(
+      {
+        createTabResponse: {
+          status: iterm2.CreateTabResponse.Status.OK,
+          windowId: "w-1",
+          sessionId: "s-1",
+        },
+      },
+      async (messages) => {
+        const { createWindow } = await import("./client");
+        await createWindow("bash /tmp/x.sh");
+        const types = messages.map((m) =>
+          m.activateRequest ? "activate" : m.createTabRequest ? "createTab" : "?",
+        );
+        expect(types).toEqual(["activate", "createTab"]);
+      },
+    );
+  });
+
+  it("createTab with activate:false skips the ActivateRequest", async () => {
+    await withMultiTransport(
+      {
+        createTabResponse: {
+          status: iterm2.CreateTabResponse.Status.OK,
+          windowId: "w-existing",
+          sessionId: "s-new",
+        },
+      },
+      async (messages) => {
+        const { createTab } = await import("./client");
+        await createTab("bash /tmp/y.sh", "w-existing", { activate: false });
+        const types = messages.map((m) =>
+          m.activateRequest ? "activate" : m.createTabRequest ? "createTab" : "?",
+        );
+        expect(types).toEqual(["createTab"]);
+      },
+    );
+  });
+
+  it("createTab default behavior is unchanged (activates first)", async () => {
+    await withMultiTransport(
+      {
+        createTabResponse: {
+          status: iterm2.CreateTabResponse.Status.OK,
+          windowId: "w-existing",
+          sessionId: "s-new",
+        },
+      },
+      async (messages) => {
+        const { createTab } = await import("./client");
+        await createTab("bash /tmp/y.sh", "w-existing");
+        const types = messages.map((m) =>
+          m.activateRequest ? "activate" : m.createTabRequest ? "createTab" : "?",
+        );
+        expect(types).toEqual(["activate", "createTab"]);
+      },
+    );
+  });
+});
