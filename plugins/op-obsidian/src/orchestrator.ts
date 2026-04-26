@@ -85,7 +85,7 @@ export async function orchestrateLaunch(
   // Re-launching an existing issue: if the session still exists in iTerm,
   // just select it. Otherwise fall through to fresh assignment — the user
   // likely closed the pane, and the issueId → session mapping is stale.
-  const sessionTitle = args.issueTitle && args.issueTitle.length > 0 ? args.issueTitle : args.issueId;
+  const sessionTitle = labelWithId(args.issueId, args.issueTitle);
   const existing = reg.surfaces[args.issueId];
   if (existing && (await sessionExists(existing.sessionId))) {
     await selectSession(existing.sessionId);
@@ -295,14 +295,20 @@ interface BuildViewArgs {
   issueTitle?: string;
 }
 
-// OP-172: emit BOTH OSC 1 (icon/tab name = issue id) and OSC 2 (window title =
-// issue title) before `exec tmux attach`. Without OSC 1 the iTerm session-name
-// slot was being auto-set to the running command name ("tmux"), so every pane
-// label read "tmux" — `setSessionName` lands on iTerm's profile-name slot,
-// which is a different field from what the tab label tracks. OSC 1 pins the
-// tab label to `<issueId>` per-pane; tmux without `set-titles on` does not
-// re-emit OSC 1/2 across pane focus changes, so this stays sticky and avoids
-// the OP-103 regression where a focused pane's id leaked to the window title.
+// OP-172: emit BOTH OSC 1 (icon/tab name) and OSC 2 (window title) before
+// `exec tmux attach`. Without OSC 1 the iTerm session-name slot was being
+// auto-set to the running command name ("tmux"), so every pane label read
+// "tmux" — `setSessionName` lands on iTerm's profile-name slot, which is
+// a different field from what the tab label tracks. tmux without
+// `set-titles on` does not re-emit OSC 1/2 across pane focus changes, so
+// this stays sticky and avoids the OP-103 regression where a focused
+// pane's id leaked to the window title.
+//
+// OP-177: both payloads are `<issueId> <issueTitle>` (e.g.
+// "OP-177 iterm tmux windows…") so the visible label always carries the
+// ID. Falls back to bare `<issueId>` when title is empty/missing.
+// `labelWithId` skips the prefix when the title already starts with the
+// id (basename fallback in `IssueStore.parseIssue` — fm.title missing).
 export function buildViewScript({
   tmuxBinary,
   tmuxSession,
@@ -316,10 +322,9 @@ export function buildViewScript({
   const groupSess = shSingleQuote(groupSessName);
   const groupSessTarget = shSingleQuote(`=${groupSessName}`);
   const win = shSingleQuote(tmuxWindow);
-  const tabName = shSingleQuote(oscSafe(issueId));
-  const windowTitle = shSingleQuote(
-    oscSafe(issueTitle && issueTitle.length > 0 ? issueTitle : issueId),
-  );
+  const label = oscSafe(labelWithId(issueId, issueTitle));
+  const tabName = shSingleQuote(label);
+  const windowTitle = shSingleQuote(label);
   // OP-178: the per-pane grouped session shares its window list with the
   // parent op-agents-N session. When the agent's window is unlinked (e.g. on
   // /quit) tmux silently switches the attached client to the next window —
@@ -452,6 +457,18 @@ function shSingleQuote(s: string): string {
 // terminate or inject into an OSC sequence payload.
 function oscSafe(s: string): string {
   return s.replace(/[\x00-\x1f\x7f]/g, "");
+}
+
+// Build a visible label of the form `<issueId> <issueTitle>` for tab/window
+// titles. When the title already starts with `<issueId>` (basename fallback
+// path in `IssueStore.parseIssue` — fm.title missing) skip the prefix to
+// avoid `OP-177 OP-177 …`. Falls back to bare `<issueId>` for empty title.
+export function labelWithId(issueId: string, issueTitle?: string): string {
+  if (!issueTitle || issueTitle.length === 0) return issueId;
+  if (issueTitle === issueId || issueTitle.startsWith(`${issueId} `)) {
+    return issueTitle;
+  }
+  return `${issueId} ${issueTitle}`;
 }
 
 // iTerm's `create window with default profile command "..."` takes a bash

@@ -1,6 +1,11 @@
 import { describe, it, expect } from "vitest";
 
-import { buildViewScript, firstEmptyCell, pruneDeadSessionSlots } from "./orchestrator";
+import {
+  buildViewScript,
+  firstEmptyCell,
+  labelWithId,
+  pruneDeadSessionSlots,
+} from "./orchestrator";
 import type { RegistryData, WindowState } from "./layout/registry";
 
 function makeReg(win: WindowState, surfaces: RegistryData["surfaces"] = {}): RegistryData {
@@ -104,31 +109,46 @@ describe("buildViewScript", () => {
     issueTitle: "research - can we actually name iterm2 tmux windows",
   };
 
-  it("emits OSC 1 (tab/icon name) with the issueId before exec", () => {
+  it("emits OSC 1 (tab/icon name) with `<id> <title>` before exec", () => {
     const out = buildViewScript(baseArgs);
-    expect(out).toContain(`printf '\\033]1;%s\\007' 'OP-172'`);
+    expect(out).toContain(
+      `printf '\\033]1;%s\\007' 'OP-172 research - can we actually name iterm2 tmux windows'`,
+    );
     const oscIdx = out.indexOf(`printf '\\033]1;`);
     const execIdx = out.indexOf("exec");
     expect(oscIdx).toBeGreaterThan(-1);
     expect(execIdx).toBeGreaterThan(oscIdx);
   });
 
-  it("emits OSC 2 (window title) with the issueTitle when present", () => {
+  it("emits OSC 2 (window title) with `<id> <title>` when title present", () => {
     const out = buildViewScript(baseArgs);
     expect(out).toContain(
-      `printf '\\033]2;%s\\007' 'research - can we actually name iterm2 tmux windows'`,
+      `printf '\\033]2;%s\\007' 'OP-172 research - can we actually name iterm2 tmux windows'`,
     );
   });
 
-  it("falls back to issueId for OSC 2 when issueTitle is empty", () => {
+  it("falls back to bare issueId for both OSC 1 and OSC 2 when issueTitle is empty", () => {
     const out = buildViewScript({ ...baseArgs, issueTitle: "" });
+    expect(out).toContain(`printf '\\033]1;%s\\007' 'OP-172'`);
     expect(out).toContain(`printf '\\033]2;%s\\007' 'OP-172'`);
   });
 
-  it("falls back to issueId for OSC 2 when issueTitle is missing", () => {
+  it("falls back to bare issueId for both OSC 1 and OSC 2 when issueTitle is missing", () => {
     const { issueTitle, ...rest } = baseArgs;
     const out = buildViewScript(rest);
+    expect(out).toContain(`printf '\\033]1;%s\\007' 'OP-172'`);
     expect(out).toContain(`printf '\\033]2;%s\\007' 'OP-172'`);
+  });
+
+  it("does not double-prefix when issueTitle already starts with the issueId (basename fallback)", () => {
+    const out = buildViewScript({
+      ...baseArgs,
+      issueTitle: "OP-172 research - can we actually name iterm2 tmux windows",
+    });
+    expect(out).toContain(
+      `printf '\\033]1;%s\\007' 'OP-172 research - can we actually name iterm2 tmux windows'`,
+    );
+    expect(out).not.toContain("OP-172 OP-172");
   });
 
   it("does not enable tmux set-titles forwarding (OP-103 regression guard)", () => {
@@ -142,8 +162,10 @@ describe("buildViewScript", () => {
       ...baseArgs,
       issueTitle: "evil\x1b]0;injected\x07title",
     });
-    // Control chars stripped → only safe text survives in the OSC 2 payload
-    expect(out).toContain(`printf '\\033]2;%s\\007' 'evil]0;injectedtitle'`);
+    // Control chars stripped → only safe text survives in the (combined) payload
+    expect(out).toContain(
+      `printf '\\033]2;%s\\007' 'OP-172 evil]0;injectedtitle'`,
+    );
   });
 
   it("strips control characters (ESC, BEL) from issueId in OSC 1 payload", () => {
@@ -151,7 +173,9 @@ describe("buildViewScript", () => {
       ...baseArgs,
       issueId: "OP\x1b-172",
     });
-    expect(out).toContain(`printf '\\033]1;%s\\007' 'OP-172'`);
+    expect(out).toContain(
+      `printf '\\033]1;%s\\007' 'OP-172 research - can we actually name iterm2 tmux windows'`,
+    );
   });
 
   it("creates the per-pane grouped session and attaches with select-window", () => {
@@ -205,5 +229,26 @@ describe("buildViewScript", () => {
     // won't match and the if-shell branch won't fire.
     expect(out).toContain(`#{==:#{hook_window_name},OP-178}`);
     expect(out).toContain(`kill-session -t =view-OP-178`);
+  });
+});
+
+describe("labelWithId", () => {
+  it("prefixes the title with the issueId", () => {
+    expect(labelWithId("OP-177", "iterm tmux windows…")).toBe("OP-177 iterm tmux windows…");
+  });
+
+  it("returns bare issueId when title is empty/missing", () => {
+    expect(labelWithId("OP-177", "")).toBe("OP-177");
+    expect(labelWithId("OP-177", undefined)).toBe("OP-177");
+  });
+
+  it("does not double-prefix when title already starts with `<id> `", () => {
+    expect(labelWithId("OP-177", "OP-177 iterm tmux windows…")).toBe(
+      "OP-177 iterm tmux windows…",
+    );
+  });
+
+  it("returns the title as-is when it equals the issueId", () => {
+    expect(labelWithId("OP-177", "OP-177")).toBe("OP-177");
   });
 });
