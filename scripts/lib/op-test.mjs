@@ -1,17 +1,24 @@
-// Shared helpers for OP-Test test-vault scripts (OP-147).
+// Shared helpers for OP-Test test-vault scripts (OP-147, OP-175).
 //
 // Single source of truth for:
 //   - the OP-Test vault path (no env-var override)
-//   - the active-vault assertion against the running Obsidian window
+//   - the OP-Test-open assertion (vault registered + reachable, not necessarily focused)
 //   - thin wrappers around `obsidian` CLI and `git` so error reporting stays
 //     consistent across dev-sync / build-seeds / reset-test-vault.
+//
+// All `obsidian` CLI calls go through `runObsidian`, which prepends
+// `vault=OP-Test` so routing is explicit per-call (OP-171/OP-175). This means
+// no script in this directory cares which Obsidian window is currently
+// focused — it will always hit OP-Test. Callers that need a different vault
+// should use spawnSync directly.
 
-import { realpathSync, existsSync } from "node:fs";
+import { existsSync, realpathSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { homedir } from "node:os";
 import { join, sep } from "node:path";
 
 export const OP_TEST_VAULT = join(homedir(), "Documents/OP-Test/OP-Test");
+export const OP_TEST_VAULT_NAME = "OP-Test";
 export const OP_TEST_PLUGIN_DEST = join(
   OP_TEST_VAULT,
   ".obsidian/plugins/op-obsidian",
@@ -22,81 +29,73 @@ export function fail(msg) {
   process.exit(1);
 }
 
-// Resolve a filesystem path through realpath if it exists; otherwise return
-// the input unchanged. Also strips any trailing path separator so that
-// "/a/b/" and "/a/b" compare equal (guards against `obsidian vault` emitting
-// a trailing slash on some CLI versions).
-export function resolvePath(p) {
-  let resolved;
-  try {
-    resolved = realpathSync(p);
-  } catch {
-    resolved = p;
-  }
-  // Strip trailing separator(s). realpathSync normalises on most platforms but
-  // raw CLI-returned paths may not have been through it.
-  while (resolved.length > 1 && resolved.endsWith(sep)) {
-    resolved = resolved.slice(0, -1);
-  }
-  return resolved;
-}
-
-// `obsidian vault` prints a tab-separated key/value table:
-//   name<TAB>Agent-Vault
-//   path<TAB>/Users/.../Agent-Vault
-// Returns { name, path } or throws if the CLI is missing or returns no path.
-export function readActiveVault() {
-  const r = spawnSync("obsidian", ["vault"], { encoding: "utf8" });
-  if (r.error) {
-    fail(`obsidian CLI not found on PATH (${r.error.message}). Install obsidian-cli first.`);
-  }
-  if (r.status !== 0) {
-    fail(
-      `\`obsidian vault\` failed (exit ${r.status}). Is the Obsidian app running with a vault open?\n${r.stderr || r.stdout}`,
-    );
-  }
-  const lines = r.stdout.split("\n").filter(Boolean);
-  const fields = {};
-  for (const line of lines) {
-    const idx = line.indexOf("\t");
-    if (idx === -1) continue;
-    fields[line.slice(0, idx).trim()] = line.slice(idx + 1).trim();
-  }
-  if (!fields.path) {
-    fail(`\`obsidian vault\` returned no path field. Raw output:\n${r.stdout}`);
-  }
-  return { name: fields.name ?? "", path: fields.path };
-}
-
-// Refuse to proceed unless the active Obsidian window is OP-Test.
-// Resolves both sides through realpath so symlinked vault dirs still match.
-export function assertActiveVaultIsOpTest() {
+// Refuse to proceed unless the OP-Test vault is registered with the running
+// Obsidian app and reachable via `vault=OP-Test`. Does NOT require OP-Test to
+// be the focused window — `runObsidian` routes every call explicitly.
+//
+// Probe: `obsidian vault=OP-Test eval code='app.vault.getName()'`. The CLI
+// returns exit 0 in both the hit and miss cases on the versions we ship
+// against, so we parse stdout instead of trusting the exit code:
+//   hit  → stdout starts with "=> OP-Test"
+//   miss → stdout is "Vault not found."
+export function assertOpTestVaultOpen() {
   if (!existsSync(OP_TEST_VAULT)) {
     fail(
       `OP-Test vault is missing at ${OP_TEST_VAULT}.\n` +
         `Create the directory and run \`git init\` inside it before re-running.`,
     );
   }
-  const expected = resolvePath(OP_TEST_VAULT);
-  const active = readActiveVault();
-  const actual = resolvePath(active.path);
-  if (actual !== expected) {
+  const r = spawnSync(
+    "obsidian",
+    [`vault=${OP_TEST_VAULT_NAME}`, "eval", "code=app.vault.getName()"],
+    { encoding: "utf8" },
+  );
+  if (r.error) {
+    fail(`obsidian CLI not found on PATH (${r.error.message}). Install obsidian-cli first.`);
+  }
+  const stdout = (r.stdout || "").trim();
+  const stderr = (r.stderr || "").trim();
+  if (r.status !== 0 || /vault not found/i.test(stdout)) {
     fail(
-      `Active Obsidian vault is not OP-Test.\n` +
-        `  expected: ${expected}\n` +
-        `  active:   ${actual} (${active.name || "unnamed"})\n\n` +
-        `Activate the OP-Test window in Obsidian and re-run (these scripts call \`obsidian plugin:reload\` internally without \`vault=OP-Test\`, so they still require the OP-Test window to be focused).`,
+      `OP-Test vault is not open in Obsidian.\n` +
+        `  probe: obsidian vault=${OP_TEST_VAULT_NAME} eval code='app.vault.getName()'\n` +
+        `  exit:  ${r.status}\n` +
+        `  out:   ${stdout || "(empty)"}\n` +
+        (stderr ? `  err:   ${stderr}\n` : "") +
+        `\nOpen the OP-Test vault in Obsidian (any window — focus is no longer required) and re-run.`,
     );
   }
-  return { vaultPath: actual, vaultName: active.name };
+  if (!stdout.includes(OP_TEST_VAULT_NAME)) {
+    fail(
+      `OP-Test probe returned an unexpected payload — refusing to proceed.\n` +
+        `  out: ${stdout || "(empty)"}\n`,
+    );
+  }
+  return { vaultName: OP_TEST_VAULT_NAME, vaultPath: OP_TEST_VAULT };
+}
+
+// Resolve through realpath if the path exists; strip trailing separator. Used
+// only by `assertNotAgentVault` so the path-segment check sees the canonical
+// form even when the caller passed a symlinked or trailing-slashed path.
+function resolvePath(p) {
+  let resolved;
+  try {
+    resolved = realpathSync(p);
+  } catch {
+    resolved = p;
+  }
+  while (resolved.length > 1 && resolved.endsWith(sep)) {
+    resolved = resolved.slice(0, -1);
+  }
+  return resolved;
 }
 
 // Belt-and-suspenders: refuse any path whose resolved form has "Agent-Vault"
 // as a distinct path segment. A substring match would accidentally block
 // legitimately-named paths such as ~/old-Agent-Vault-archive/. Conversely,
-// a renamed Agent-Vault wouldn't be caught here — the active-vault assertion
-// is the primary guard; this one only catches muscle-memory copy-paste errors
-// that wire a different target path.
+// a renamed Agent-Vault wouldn't be caught here — the OP-Test-open assertion
+// + the explicit `vault=OP-Test` routing are the primary guards; this one
+// catches muscle-memory copy-paste errors that wire a different target path.
 export function assertNotAgentVault(targetPath) {
   const resolved = resolvePath(targetPath);
   const parts = resolved.split(sep);
@@ -108,12 +107,18 @@ export function assertNotAgentVault(targetPath) {
   }
 }
 
+// Run the `obsidian` CLI with `vault=OP-Test` prepended so the call is
+// routed at OP-Test regardless of which Obsidian window is currently focused
+// (OP-175). All scripts in this directory exclusively target OP-Test, so the
+// prepend is unconditional. If a future caller needs a different vault, use
+// spawnSync directly rather than threading an opt-out through here.
 export function runObsidian(args, { allowFail = false } = {}) {
-  const r = spawnSync("obsidian", args, { encoding: "utf8" });
+  const fullArgs = [`vault=${OP_TEST_VAULT_NAME}`, ...args];
+  const r = spawnSync("obsidian", fullArgs, { encoding: "utf8" });
   if (r.error) fail(`obsidian CLI not found: ${r.error.message}`);
   if (r.status !== 0 && !allowFail) {
     fail(
-      `\`obsidian ${args.join(" ")}\` failed (exit ${r.status})\n` +
+      `\`obsidian ${fullArgs.join(" ")}\` failed (exit ${r.status})\n` +
         `${r.stderr || ""}\n${r.stdout || ""}`.trim(),
     );
   }

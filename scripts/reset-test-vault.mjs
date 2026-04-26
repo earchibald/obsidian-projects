@@ -11,7 +11,7 @@
 
 import {
   OP_TEST_VAULT,
-  assertActiveVaultIsOpTest,
+  assertOpTestVaultOpen,
   fail,
   runGit,
   runObsidian,
@@ -42,7 +42,7 @@ if (!VALID_SEEDS.has(bare)) {
 }
 const tag = `seed/${bare}`;
 
-assertActiveVaultIsOpTest();
+assertOpTestVaultOpen();
 
 const tagCheck = runGit(["rev-parse", "--verify", `refs/tags/${tag}`], {
   allowFail: true,

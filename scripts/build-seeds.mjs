@@ -8,7 +8,8 @@
 //   node scripts/build-seeds.mjs
 //
 // Preconditions:
-//   - OP-Test is the active Obsidian vault.
+//   - OP-Test is open in Obsidian (any window — focus is not required since
+//     OP-175; calls route via `vault=OP-Test` explicitly).
 //   - OP-Test git working tree is clean (commit/stash any untracked work first).
 //   - `seed/empty` tag exists OR HEAD is the desired empty baseline (the
 //     script tags HEAD as seed/empty if the tag is absent on first run).
@@ -29,7 +30,7 @@ import { join } from "node:path";
 
 import {
   OP_TEST_VAULT,
-  assertActiveVaultIsOpTest,
+  assertOpTestVaultOpen,
   fail,
   runGit,
   runObsidian,
@@ -40,7 +41,7 @@ const FIXTURE_CLONE_PATH = join(homedir(), "Documents/OP-Test", FIXTURE_REPO_NAM
 const FIXTURE_DESCRIPTION =
   "Disposable fixture repo for op-obsidian functional testing — no production use.";
 
-assertActiveVaultIsOpTest();
+assertOpTestVaultOpen();
 assertCleanTree();
 ensureBaselineTag();
 
