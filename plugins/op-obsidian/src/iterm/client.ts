@@ -65,6 +65,34 @@ function customCommandProperties(command: string): iterm2.ProfileProperty[] {
 export async function createWindow(command: string): Promise<CreateWindowResult> {
   // Raise iTerm first so the new window is visible when it appears. The
   // legacy AppleScript did `activate` before `create window`.
+  await activateITerm();
+
+  const reply = await call({
+    createTabRequest: iterm2.CreateTabRequest.create({
+      customProfileProperties: customCommandProperties(command),
+    }),
+  });
+  return parseCreateTabResponse(reply, "createWindow");
+}
+
+// Add a tab to an existing iTerm window. Mirrors the AppleScript path's
+// `tell current window to create tab with default profile command …`. The
+// AppleScript activated iTerm before issuing the create call; we do the same
+// here so the new tab is visible. Returns `{windowId, sessionId}` of the new
+// tab — windowId echoes the hosting window in iTerm's reply.
+export async function createTab(command: string, windowId: string): Promise<CreateWindowResult> {
+  await activateITerm();
+
+  const reply = await call({
+    createTabRequest: iterm2.CreateTabRequest.create({
+      windowId,
+      customProfileProperties: customCommandProperties(command),
+    }),
+  });
+  return parseCreateTabResponse(reply, `createTab(window=${windowId})`);
+}
+
+async function activateITerm(): Promise<void> {
   await call({
     activateRequest: iterm2.ActivateRequest.create({
       activateApp: iterm2.ActivateRequest.App.create({
@@ -73,21 +101,44 @@ export async function createWindow(command: string): Promise<CreateWindowResult>
       }),
     }),
   });
+}
 
-  const reply = await call({
-    createTabRequest: iterm2.CreateTabRequest.create({
-      customProfileProperties: customCommandProperties(command),
-    }),
-  });
+function parseCreateTabResponse(
+  reply: iterm2.ServerOriginatedMessage,
+  context: string,
+): CreateWindowResult {
   const sub = reply.createTabResponse;
-  if (!sub) throw new Error("op: iTerm createWindow: missing createTabResponse");
+  if (!sub) throw new Error(`op: iTerm ${context}: missing createTabResponse`);
   if (sub.status !== undefined && sub.status !== iterm2.CreateTabResponse.Status.OK) {
-    throw new Error(`op: iTerm createWindow failed with status=${sub.status}`);
+    throw new Error(`op: iTerm ${context} failed with status=${sub.status}`);
   }
   if (!sub.windowId || !sub.sessionId) {
-    throw new Error("op: iTerm createWindow reply missing window_id or session_id");
+    throw new Error(`op: iTerm ${context} reply missing window_id or session_id`);
   }
   return { windowId: sub.windowId, sessionId: sub.sessionId };
+}
+
+// Returns the windowId of the iTerm window that is currently key (frontmost),
+// or undefined when no iTerm window is key (iTerm not frontmost, all windows
+// minimized, or iTerm has no windows). Mimics AppleScript `tell application
+// "iTerm" to current window`. iTerm's Python API uses the same FocusRequest
+// path inside `App.current_terminal_window`.
+export async function activeWindowId(): Promise<string | undefined> {
+  const reply = await call({ focusRequest: iterm2.FocusRequest.create({}) });
+  const fr = reply.focusResponse;
+  if (!fr) throw new Error("op: iTerm activeWindowId: missing focusResponse");
+  for (const note of fr.notifications ?? []) {
+    const w = note.window;
+    if (
+      w &&
+      w.windowStatus ===
+        iterm2.FocusChangedNotification.Window.WindowStatus.TERMINAL_WINDOW_BECAME_KEY &&
+      w.windowId
+    ) {
+      return w.windowId;
+    }
+  }
+  return undefined;
 }
 
 export async function splitSession(

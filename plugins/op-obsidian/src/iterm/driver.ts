@@ -24,6 +24,14 @@ export async function createWindow(command: string): Promise<CreateWindowResult>
   return wsClient.createWindow(command);
 }
 
+export async function createTab(command: string, windowId: string): Promise<CreateWindowResult> {
+  return wsClient.createTab(command, windowId);
+}
+
+export async function activeWindowId(): Promise<string | undefined> {
+  return wsClient.activeWindowId();
+}
+
 export async function splitSession(
   sessionId: string,
   dir: "vertical" | "horizontal",
