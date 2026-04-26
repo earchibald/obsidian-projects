@@ -45,6 +45,20 @@ describe("deriveTitle", () => {
       "one",
     );
   });
+
+  it("strips zero-width space / invisible chars so the title is never visually empty but non-empty", () => {
+    // U+200B is not stripped by String.prototype.trim() — without explicit
+    // handling, a line containing only a ZWS would produce a title that looks
+    // blank in the modal but passes the "title is required" validation.
+    expect(deriveTitle("\u200B")).toBe("");
+    expect(deriveTitle("\u200B\u200C\u200D\uFEFF\u00AD")).toBe("");
+    // ZWS mixed with real text is normalised out but the real text survives.
+    expect(deriveTitle("\u200Bfoo\u200B bar")).toBe("foo bar");
+  });
+
+  it("handles tab-indented list bullets", () => {
+    expect(deriveTitle("\t- foo bar")).toBe("foo bar");
+  });
 });
 
 describe("packScope", () => {
@@ -75,6 +89,18 @@ describe("packScope", () => {
 
   it("trims a whitespace-only fallback to nothing", () => {
     expect(packScope({ text: "", fallbackBacklinkTo: "   " })).toBe("");
+  });
+
+  it("sanitises wikilink-breaking chars from the fallback note title", () => {
+    // A note name containing ]] would prematurely close the [[ … ]] span and
+    // produce a split or broken wikilink in the rendered markdown.
+    expect(packScope({ text: "", fallbackBacklinkTo: "Meeting notes [2026-01]]" })).toBe(
+      "Source: [[Meeting notes 2026-01]]",
+    );
+    // Other wikilink-special chars are also stripped.
+    expect(packScope({ text: "", fallbackBacklinkTo: "Foo | bar # baz ^ qux" })).toBe(
+      "Source: [[Foo  bar  baz  qux]]",
+    );
   });
 });
 

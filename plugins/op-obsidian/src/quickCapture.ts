@@ -31,7 +31,14 @@ export function deriveTitle(text: string): string {
   if (!text) return "";
   const lines = text.split(/\r?\n/);
   for (const raw of lines) {
-    const stripped = stripMarkdownNoise(raw).trim();
+    // Strip Markdown noise first, then ASCII whitespace, then zero-width /
+    // invisible Unicode characters that `String.prototype.trim()` does not
+    // remove (U+200B ZERO WIDTH SPACE, U+200C ZWNJ, U+200D ZWJ, U+00AD SOFT
+    // HYPHEN, U+FEFF BOM). Without this step a line containing only a ZWS
+    // would produce a title that looks blank in the modal but passes the
+    // "title is required" validation, silently creating an invisible-titled
+    // issue.
+    const stripped = stripMarkdownNoise(raw).trim().replace(/[\u00AD\u200B-\u200D\uFEFF]/g, "");
     if (stripped.length === 0) continue;
     const collapsed = stripped.replace(/\s+/g, " ");
     return collapsed.length > TITLE_MAX ? collapsed.slice(0, TITLE_MAX).trimEnd() : collapsed;
@@ -80,7 +87,11 @@ export function packScope({ text, fallbackBacklinkTo }: PackScopeOpts): string {
   const trimmed = (text ?? "").replace(/\s+$/g, "");
   if (trimmed.trim().length > 0) return trimmed;
   if (fallbackBacklinkTo && fallbackBacklinkTo.trim().length > 0) {
-    return `Source: [[${fallbackBacklinkTo.trim()}]]`;
+    // Strip characters that are syntactically meaningful inside a wikilink so
+    // a note named e.g. "Meeting [2026-01]]" does not prematurely close the
+    // `[[ … ]]` span and produce a broken or split link.
+    const safeTitle = fallbackBacklinkTo.trim().replace(/[[\]|#^]/g, "");
+    return `Source: [[${safeTitle}]]`;
   }
   return "";
 }

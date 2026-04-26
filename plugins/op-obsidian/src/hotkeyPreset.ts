@@ -2,7 +2,7 @@
  * Default hotkey preset for the op-obsidian plugin (OP-152).
  *
  * Two responsibilities:
- *  - {@link defaultPreset} — the pure list of 10 keybindings the preset binds.
+ *  - {@link defaultPreset} — the pure list of 12 keybindings the preset binds.
  *  - {@link applyPreset} — best-effort write into Obsidian's
  *    `app.hotkeyManager.customKeys`, with collision-skipping and a JSON-snippet
  *    fallback when the internal API has drifted.

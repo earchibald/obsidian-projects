@@ -1527,6 +1527,11 @@ export default class OpPlugin extends Plugin {
       new Notice("op: clipboard unavailable — fill the form manually.");
       text = "";
     }
+    // readText() resolves with "" when the clipboard is empty (no rejection).
+    // Surface a Notice so the user understands why the modal opened blank.
+    if (!text.trim()) {
+      new Notice("op: clipboard was empty — fill the form manually.");
+    }
     const file = this.app.workspace.getActiveFile();
     const title = deriveTitle(text);
     const scopeBody = packScope({ text });
