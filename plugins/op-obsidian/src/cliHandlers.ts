@@ -236,6 +236,44 @@ export function parseEditWorkflowParams(
   return { ok: true, value: { project } };
 }
 
+export function parseEditModuleParams(
+  params: Record<string, string>,
+): ParamsResult<{ moduleId: string; scopeKind: "global" | "project"; project?: string }> {
+  const moduleId = (params.module ?? params.id ?? "").trim();
+  if (!moduleId) {
+    return { ok: false, error: "op-edit-module failed: --module is required" };
+  }
+  const project = params.project?.trim() || params.slug?.trim() || undefined;
+  // Default to per-project scope when a project slug is supplied; default to
+  // global otherwise. Authors who want a project-scoped module without a slug
+  // are bounced back via the explicit `scope=project` arg without `project=`,
+  // which is rejected as a hard error so the caller is forced to disambiguate.
+  let scopeKindRaw = params.scope?.trim().toLowerCase();
+  if (scopeKindRaw && scopeKindRaw !== "global" && scopeKindRaw !== "project") {
+    return {
+      ok: false,
+      error: `op-edit-module failed: --scope must be "global" or "project" (got ${JSON.stringify(scopeKindRaw)})`,
+    };
+  }
+  if (!scopeKindRaw) {
+    scopeKindRaw = project ? "project" : "global";
+  }
+  if (scopeKindRaw === "project" && !project) {
+    return {
+      ok: false,
+      error: "op-edit-module failed: --project is required when --scope=project",
+    };
+  }
+  return {
+    ok: true,
+    value: {
+      moduleId,
+      scopeKind: scopeKindRaw as "global" | "project",
+      project,
+    },
+  };
+}
+
 export function parseGetSkillParams(
   params: Record<string, string>,
 ): ParamsResult<{ name: string }> {

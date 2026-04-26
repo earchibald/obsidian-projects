@@ -12,7 +12,9 @@ import {
   AppendCommitModal,
   FindIssueModal,
   IssuePickerModal,
+  ModulePickerModal,
   NewIssueModal,
+  NewModuleIdModal,
   ProjectSuggestModal,
   RelationPickerModal,
   ScaffoldProjectModal,
@@ -94,6 +96,7 @@ import {
   parseLinkCheckParams,
   parseGetWorkflowParams,
   parseEditWorkflowParams,
+  parseEditModuleParams,
   parseGetSkillParams,
   parseExplainWorkflowParams,
   parseListVarsParams,
@@ -109,6 +112,10 @@ import { AgentDetector } from "./agentDetect";
 import { AGENT_IDS, isAgentLaunchMode, type AgentId, type AgentLaunchMode } from "./agentProfiles";
 import { openAgent, clearAgentOnIssue, resolveProfile } from "./openAgent";
 import { editWorkflow } from "./editWorkflow";
+import { editModule } from "./editModule";
+import { loadModules } from "./workflowModule";
+import { VarEditorSuggest } from "./varSuggestObsidian";
+import { readAgentList, readModelScalarOrList } from "./varSuggest";
 import { launchInTerminal, SHARED_TMUX_SESSION, tmuxWindowName } from "./terminalLaunch";
 import { installAgentHooks, type HookInstallResult } from "./agentHooks";
 import { userError } from "./userError";
@@ -272,6 +279,12 @@ export default class OpPlugin extends Plugin {
     });
 
     this.addSettingTab(new OpSettingsTab(this.app, this));
+
+    // OP-202: `{{` autocomplete + vars-block snippet for workflow modules
+    // and per-project WORKFLOW.md files. The suggestor is a no-op on every
+    // other note (its onTrigger gates on path), so registering globally is
+    // safe — Obsidian dispatches triggers to any registered EditorSuggest.
+    this.registerEditorSuggest(new VarEditorSuggest(this.app));
 
     this.bus = new EventBus();
     this.store = new IssueStore(this.app, this.bus);
@@ -704,6 +717,24 @@ export default class OpPlugin extends Plugin {
     });
 
     this.addCommand({
+      id: "op-edit-module",
+      name: "op: edit workflow module",
+      callback: () => this.runEditModuleCommand(),
+    });
+
+    this.addCommand({
+      id: "op-switch-model-to-per-agent-map",
+      name: "op: switch workflow model: to per-agent map",
+      checkCallback: (checking) => {
+        const candidate = this.activeKeyedMapCandidate();
+        if (checking) return candidate !== null;
+        if (!candidate) return false;
+        void this.runSwitchModelToKeyedMap(candidate.path, candidate.workflow);
+        return true;
+      },
+    });
+
+    this.addCommand({
       id: "op-launch-next-stage",
       name: "op: launch next flow stage",
       callback: () => this.runLaunchNextStageCommand(),
@@ -898,6 +929,12 @@ export default class OpPlugin extends Plugin {
     this.registerObsidianProtocolHandler("op-list-vars", (params) => {
       this.runUri("op-list-vars", normalizeUriParams(params), (p) =>
         handleOpListVarsUriPure(this.uriDeps(), p),
+      );
+    });
+
+    this.registerObsidianProtocolHandler("op-edit-module", (params) => {
+      this.runUri("op-edit-module", normalizeUriParams(params), (p) =>
+        this.handleOpEditModuleUri(p),
       );
     });
 
@@ -1153,6 +1190,25 @@ export default class OpPlugin extends Plugin {
         },
       },
       (params) => this.handleOpListVarsCli(params),
+    );
+
+    this.registerCliHandler(
+      "op-edit-module",
+      "Launch an agent in tmux to author or refine a single workflow module.",
+      {
+        module: { value: "<id>", description: "Module id (filename basename, no .md)" },
+        project: {
+          value: "<slug>",
+          description:
+            "Project slug — required for per-project modules; omit for globals (Projects/_op-modules/).",
+        },
+        scope: {
+          value: "<global|project>",
+          description:
+            "Module scope. Defaults to `project` when --project is supplied, else `global`.",
+        },
+      },
+      (params) => this.handleOpEditModuleCli(params),
     );
 
     this.registerCliHandler(
@@ -2813,6 +2869,49 @@ export default class OpPlugin extends Plugin {
     }
   }
 
+  private async handleOpEditModuleCli(params: Record<string, string>): Promise<string> {
+    const command = "op-edit-module";
+    try {
+      const parsed = parseEditModuleParams(params);
+      if (!parsed.ok) return parsed.error;
+      const res = await editModule(
+        this.app,
+        this.settings,
+        this.detector,
+        () => this.saveSettings(),
+        {
+          moduleId: parsed.value.moduleId,
+          scopeKind: parsed.value.scopeKind,
+          projectSlug: parsed.value.project,
+        },
+      );
+      if (!res) {
+        const msg = "cancelled or no agent available";
+        await writeUriResponse(this.app, { ok: false, command, error: msg });
+        return `${command} failed: ${msg}`;
+      }
+      await writeUriResponse(this.app, {
+        ok: true,
+        command,
+        moduleId: res.moduleId,
+        scopeKind: res.scopeKind,
+        project: res.projectSlug ?? null,
+        agent: res.agent,
+        workingDir: res.workingDir,
+        modulePath: res.modulePath,
+        scriptPath: res.scriptPath,
+        tmuxSession: res.tmuxSession,
+        tmuxWindow: res.tmuxWindow,
+      });
+      return `${command}: ${res.moduleId} (${res.scopeKind}${res.projectSlug ? ` ${res.projectSlug}` : ""}) → ${res.agent} (tmux: ${res.tmuxSession}:${res.tmuxWindow})`;
+    } catch (err: any) {
+      const msg = err?.message ?? String(err);
+      console.error("[op-obsidian]", command, err);
+      await writeUriResponse(this.app, { ok: false, command, error: msg });
+      return `${command} failed: ${msg}`;
+    }
+  }
+
   private async handleOpSetScopeCli(params: Record<string, string>): Promise<string> {
     const command = "op-set-scope";
     try {
@@ -3254,6 +3353,160 @@ export default class OpPlugin extends Plugin {
     }).open();
   }
 
+  private runEditModuleCommand(): void {
+    const projects = applyProjectOrder(listProjects(this.app), this.settings.projectOrder);
+    // Discover existing modules across the vault — globals + per-project.
+    // Listing them here is best-effort (the agent itself can author a new
+    // file at any path); the picker exposes "create new" entries below the
+    // existing ones so users always have a way out of the discovery list.
+    const all = loadModules(this.app, {});
+    type Pick =
+      | { kind: "existing"; moduleId: string; scopeKind: "global" | "project"; projectSlug?: string; label: string }
+      | { kind: "new-global"; label: string }
+      | { kind: "new-project"; projectSlug: string; label: string };
+    const items: Pick[] = [];
+    for (const m of all.modules) {
+      if (m.source.kind === "global") {
+        items.push({
+          kind: "existing",
+          moduleId: m.id,
+          scopeKind: "global",
+          label: `${m.id}  (global)`,
+        });
+      } else {
+        items.push({
+          kind: "existing",
+          moduleId: m.id,
+          scopeKind: "project",
+          projectSlug: m.source.projectSlug,
+          label: `${m.id}  (project: ${m.source.projectSlug})`,
+        });
+      }
+    }
+    items.push({ kind: "new-global", label: "+ New global module…" });
+    for (const p of projects) {
+      items.push({
+        kind: "new-project",
+        projectSlug: p.slug,
+        label: `+ New project module in ${p.slug}…`,
+      });
+    }
+    new ModulePickerModal(this.app, items, (pick) => {
+      void this.handleEditModulePick(pick);
+    }).open();
+  }
+
+  private async handleEditModulePick(
+    pick:
+      | { kind: "existing"; moduleId: string; scopeKind: "global" | "project"; projectSlug?: string }
+      | { kind: "new-global" }
+      | { kind: "new-project"; projectSlug: string },
+  ): Promise<void> {
+    if (pick.kind === "existing") {
+      await this.doEditModule({
+        moduleId: pick.moduleId,
+        scopeKind: pick.scopeKind,
+        projectSlug: pick.projectSlug,
+      });
+      return;
+    }
+    const scopeKind: "global" | "project" = pick.kind === "new-global" ? "global" : "project";
+    const projectSlug = pick.kind === "new-project" ? pick.projectSlug : undefined;
+    new NewModuleIdModal(this.app, scopeKind, projectSlug, (moduleId) => {
+      void this.doEditModule({ moduleId, scopeKind, projectSlug });
+    }).open();
+  }
+
+  private async doEditModule(args: {
+    moduleId: string;
+    scopeKind: "global" | "project";
+    projectSlug?: string;
+  }): Promise<void> {
+    try {
+      const res = await editModule(
+        this.app,
+        this.settings,
+        this.detector,
+        () => this.saveSettings(),
+        args,
+      );
+      if (res) {
+        notify(
+          `op-edit-module: ${res.moduleId} (${res.scopeKind}) → ${res.agent} in ${res.workingDir} (tmux: ${res.tmuxSession}:${res.tmuxWindow})`,
+        );
+      }
+    } catch (err: any) {
+      console.error("[op-obsidian] op-edit-module failed", err);
+      notify(`op-edit-module failed: ${err?.message ?? err}`);
+    }
+  }
+
+  /**
+   * Returns the active workflow file iff it qualifies for the keyed-map
+   * affordance per OP-202: file is `Projects/<slug>/WORKFLOW.md`, declares
+   * more than one agent in `default_agent`, and `default_model` is currently
+   * a scalar/list (not yet a per-agent map). Pure-ish — only `app.workspace`
+   * and `metadataCache` are touched. Returns `null` when the affordance does
+   * not apply (this is the gate for the palette command's checkCallback).
+   */
+  private activeKeyedMapCandidate():
+    | {
+        path: string;
+        workflow: {
+          defaultAgent: string[];
+          defaultModelValues: string[];
+        };
+      }
+    | null {
+    const file = this.app.workspace.getActiveFile();
+    if (!file) return null;
+    if (!file.path.endsWith("/WORKFLOW.md")) return null;
+    const fm = this.app.metadataCache.getFileCache(file)?.frontmatter;
+    if (!fm) return null;
+    const agents = readAgentList(fm.default_agent);
+    if (agents.length < 2) return null;
+    const modelValues = readModelScalarOrList(fm.default_model);
+    if (modelValues === null) return null; // already a per-agent map (or invalid)
+    // Don't offer conversion when there are no model values to distribute —
+    // an empty / absent default_model isn't meaningful to promote to a
+    // per-agent keyed map (every agent would get an empty string, which is
+    // no more informative than leaving the field absent).
+    if (modelValues.length === 0) return null;
+    return {
+      path: file.path,
+      workflow: { defaultAgent: agents, defaultModelValues: modelValues },
+    };
+  }
+
+  private async runSwitchModelToKeyedMap(
+    path: string,
+    workflow: { defaultAgent: string[]; defaultModelValues: string[] },
+  ): Promise<void> {
+    try {
+      const file = this.app.vault.getAbstractFileByPath(path);
+      if (!file || !(file instanceof TFile)) {
+        notify(`op-switch-model: file not found at ${path}`);
+        return;
+      }
+      const map: Record<string, string | string[]> = {};
+      for (const agent of workflow.defaultAgent) {
+        map[agent] =
+          workflow.defaultModelValues.length === 1
+            ? workflow.defaultModelValues[0]
+            : workflow.defaultModelValues.slice();
+      }
+      await this.app.fileManager.processFrontMatter(file, (fm: Record<string, unknown>) => {
+        fm.default_model = map;
+      });
+      notify(
+        `op-switch-model: ${path} default_model converted to per-agent map (${workflow.defaultAgent.length} agents).`,
+      );
+    } catch (err: any) {
+      console.error("[op-obsidian] op-switch-model failed", err);
+      notify(`op-switch-model failed: ${err?.message ?? err}`);
+    }
+  }
+
   private async doEditWorkflow(slug: string): Promise<void> {
     try {
       const res = await editWorkflow(
@@ -3399,6 +3652,40 @@ export default class OpPlugin extends Plugin {
       agent: res.agent,
       workingDir: res.workingDir,
       workflowPath: res.workflowPath,
+      scriptPath: res.scriptPath,
+      tmuxSession: res.tmuxSession,
+      tmuxWindow: res.tmuxWindow,
+    };
+  }
+
+  private async handleOpEditModuleUri(
+    params: Record<string, string>,
+  ): Promise<UriResponsePayload> {
+    const parsed = parseEditModuleParams(params);
+    if (!parsed.ok) throw new Error(parsed.error);
+    const res = await editModule(
+      this.app,
+      this.settings,
+      this.detector,
+      () => this.saveSettings(),
+      {
+        moduleId: parsed.value.moduleId,
+        scopeKind: parsed.value.scopeKind,
+        projectSlug: parsed.value.project,
+      },
+    );
+    if (!res) {
+      throw new Error("op-edit-module was cancelled or no agent available");
+    }
+    return {
+      ok: true,
+      command: "op-edit-module",
+      moduleId: res.moduleId,
+      scopeKind: res.scopeKind,
+      project: res.projectSlug ?? null,
+      agent: res.agent,
+      workingDir: res.workingDir,
+      modulePath: res.modulePath,
       scriptPath: res.scriptPath,
       tmuxSession: res.tmuxSession,
       tmuxWindow: res.tmuxWindow,

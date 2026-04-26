@@ -11,6 +11,7 @@ import {
   parseScaffoldParams,
   parseGetWorkflowParams,
   parseEditWorkflowParams,
+  parseEditModuleParams,
   parseGetSkillParams,
   parseExplainWorkflowParams,
   parseListVarsParams,
@@ -231,6 +232,44 @@ describe("parseEditWorkflowParams", () => {
   it("project beats slug when both present", () => {
     const r = parseEditWorkflowParams({ project: "a", slug: "b" });
     expect(r.ok && r.value.project).toBe("a");
+  });
+});
+
+describe("parseEditModuleParams", () => {
+  it("requires --module (id alias)", () => {
+    expect(parseEditModuleParams({}).ok).toBe(false);
+    const r = parseEditModuleParams({ id: "orient" });
+    expect(r.ok && r.value.moduleId).toBe("orient");
+  });
+  it("defaults scope=global without --project", () => {
+    const r = parseEditModuleParams({ module: "orient" });
+    expect(r.ok && r.value.scopeKind).toBe("global");
+  });
+  it("defaults scope=project when --project is supplied", () => {
+    const r = parseEditModuleParams({ module: "house", project: "demo" });
+    expect(r.ok && r.value.scopeKind).toBe("project");
+    expect(r.ok && r.value.project).toBe("demo");
+  });
+  it("rejects scope=project without --project", () => {
+    const r = parseEditModuleParams({ module: "house", scope: "project" });
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.error).toMatch(/--project is required/);
+  });
+  it("rejects an unknown scope value", () => {
+    const r = parseEditModuleParams({ module: "house", scope: "weird" });
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.error).toMatch(/scope/);
+  });
+  it("accepts scope=global with an explicit --project (project used only as working-dir hint)", () => {
+    // When scope=global is supplied explicitly alongside project=demo, the
+    // module path is still the global path. `project` is forwarded as a
+    // working-directory hint so the agent gets repo context.
+    const r = parseEditModuleParams({ module: "foo", project: "demo", scope: "global" });
+    expect(r.ok).toBe(true);
+    if (r.ok) {
+      expect(r.value.scopeKind).toBe("global");
+      expect(r.value.project).toBe("demo");
+    }
   });
 });
 

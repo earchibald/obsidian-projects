@@ -95,6 +95,87 @@ export class ProjectSuggestModal extends FuzzySuggestModal<ProjectInfo> {
   }
 }
 
+export type ModulePickerItem =
+  | {
+      kind: "existing";
+      moduleId: string;
+      scopeKind: "global" | "project";
+      projectSlug?: string;
+      label: string;
+    }
+  | { kind: "new-global"; label: string }
+  | { kind: "new-project"; projectSlug: string; label: string };
+
+export class ModulePickerModal extends FuzzySuggestModal<ModulePickerItem> {
+  constructor(
+    app: App,
+    private items: ModulePickerItem[],
+    private onChoose: (item: ModulePickerItem) => void,
+  ) {
+    super(app);
+    this.setPlaceholder("Pick a workflow module to edit (or create a new one)…");
+  }
+  getItems(): ModulePickerItem[] {
+    return this.items;
+  }
+  getItemText(p: ModulePickerItem): string {
+    return p.label;
+  }
+  onChooseItem(p: ModulePickerItem): void {
+    this.onChoose(p);
+  }
+}
+
+export class NewModuleIdModal extends Modal {
+  private value = "";
+
+  constructor(
+    app: App,
+    private scopeKind: "global" | "project",
+    private projectSlug: string | undefined,
+    private onSubmit: (moduleId: string) => void,
+  ) {
+    super(app);
+  }
+
+  onOpen(): void {
+    const { contentEl } = this;
+    contentEl.empty();
+    const where =
+      this.scopeKind === "global"
+        ? "Projects/_op-modules/"
+        : `Projects/${this.projectSlug ?? ""}/MODULES/`;
+    contentEl.createEl("h2", { text: "New workflow module" });
+    contentEl.createEl("p", {
+      text: `The new module will be created at ${where}<id>.md when the agent writes it.`,
+      cls: "op-new-module-modal__hint",
+    });
+    new Setting(contentEl)
+      .setName("Module id")
+      .setDesc("Filename basename, no .md. Lowercase + hyphens recommended.")
+      .addText((t) =>
+        t.setPlaceholder("orient").onChange((v) => {
+          this.value = v;
+        }),
+      );
+    new Setting(contentEl).addButton((b) =>
+      b
+        .setButtonText("Create")
+        .setCta()
+        .onClick(() => {
+          const id = this.value.trim();
+          if (!id) return;
+          this.onSubmit(id);
+          this.close();
+        }),
+    );
+  }
+
+  onClose(): void {
+    this.contentEl.empty();
+  }
+}
+
 export interface NewIssueSubmitOptions {
   launchPlan: boolean;
   startFlow: boolean;
