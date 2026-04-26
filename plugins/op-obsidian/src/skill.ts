@@ -14,7 +14,7 @@ export interface GetSkillResult {
 }
 
 export function getSkill(name: string): GetSkillResult {
-  const trimmed = name.trim();
+  const trimmed = name.trim().toLowerCase();
   const target = trimmed === "" ? "skill" : trimmed;
   if (!isSkillName(target)) {
     throw new Error(
