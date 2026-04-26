@@ -29,7 +29,7 @@ Once the plugin is confirmed enabled, fetch the operating manual:
 obsidian op-get-skill            # writes the body to Projects/_scratch/op-last-response.md
 ```
 
-Read the `content` field from that JSON payload (or pass `name=skill` explicitly — currently the only recognized name; case-insensitive). The body covers: the full `op-*` command surface (`scaffold`, `new`, `work`, `append-commit`, `set-pr`, `set-scope`, `resolve`, …), each verb's lifecycle rules (Plan/Notes/Summary/Tasks reconciliation, GitHub issue mirroring, `commits:` back-fill, semver bumping, `obsidian://` link rendering), and the cross-project surfaces (`all-projects.base`, DOCS folder layout).
+Read the `content` field from that JSON payload (or pass `name=skill` explicitly — currently the only recognized name; case-insensitive). The body covers: the full `op-*` command surface (`scaffold`, `new`, `work`, `append-commit`, `set-pr`, `set-scope`, `resolve`, plus the workflow-modules verbs: `edit-workflow`, `edit-module`, `explain-workflow`, `list-vars`, `export-module`, `import-module`, `undo-last-import`), each verb's lifecycle rules (Plan/Notes/Summary/Tasks reconciliation, GitHub issue mirroring, `commits:` back-fill, semver bumping, `obsidian://` link rendering), the workflow-modules system that composes per-step injection at agent launch (governed by the `workflowMode` setting), and the cross-project surfaces (`all-projects.base`, DOCS folder layout).
 
 If `op-get-skill` is unrecognized, the installed plugin predates this command. Tell the user to update `op-obsidian` (`>= 0.61.0`) — do **not** fall back to running raw CLI mutations from memory.
 

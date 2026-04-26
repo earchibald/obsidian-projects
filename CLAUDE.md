@@ -32,6 +32,15 @@ Always, in order:
    ```
    Also spot-check the plugin instance: `obsidian vault=OP-Test eval code='app.plugins.plugins["op-obsidian"]'` should return a live object with your commands registered.
 
+   **Workflow-modules smoke probe.** When the change touches the workflow composer, modules, settings, or any code path that feeds a launched agent's prompt, also run `op-explain-workflow` against an OP-Test issue to verify the composed prompt is intact:
+
+   ```bash
+   obsidian vault=OP-Test op-explain-workflow issue=TST-5 mode=kickoff
+   obsidian vault=OP-Test op-list-vars project=testing issue=TST-5
+   ```
+
+   Both are read-only and emit a JSON payload to `Projects/_scratch/op-last-response.md`. Expect no `error`-severity diagnostics for the seeded `seed/workflow-modules` checkpoint; any new error there is a regression. Pair with `node scripts/smoke-workflow-modules.mjs` (which runs the same probes plus assertions about the precedence chain) when the change is non-trivial.
+
 5. **Smoke-test Settings UIs.** When the change touches the op-obsidian Settings tab — Project order, working dirs, agent overlays, flow chaining, GitHub integration — `executeCommandById` won't reach it. Use `app.setting.openTabById` to render the tab synchronously and assert against the live DOM. Pass `vault=OP-Test` on every call:
 
    ```bash

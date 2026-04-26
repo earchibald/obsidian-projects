@@ -17,6 +17,7 @@ Both components read and write the same schema. You can drive the vault entirely
 - **`op-obsidian` plugin** (`plugins/op-obsidian/`) — The Obsidian community plugin.
   - **Sidebar view** — Open, in-flight, and resolved issue tabs.
   - **Command palette** — Native Obsidian commands for every workflow step.
+  - **Workflow modules** — Per-step prompt composition from small reusable markdown files (global at `Projects/_op-modules/`, per-project at `Projects/<slug>/MODULES/`), driven by a typed workflow file with `extends:` inheritance, a `{{var}}` template engine with four-layer precedence (module default → global user → project user → launch override), and per-step agent/model selection. Replaces the monolithic `WORKFLOW.md` of older installs; see `docs/workflow-modules/` for the conceptual overview and `docs/specs/workflow-{module,file}-schema.md` for the file-format reference.
   - **Agent orchestration** — Launching Claude (and, on a best-effort basis, Gemini or Copilot — see below) in tmux windows directly from an issue note.
 - **Marketplace** — `.claude-plugin/marketplace.json` at repo root.
 
@@ -167,7 +168,7 @@ Moving from loose command files to a **skill + plugin** architecture provides se
 2.  **Namespace Isolation:** `/op:*` commands won't collide with other project commands.
 3.  **Deterministic Operations:** The `op-obsidian` plugin handles complex file moves, ID numbering, and schema enforcement using typed code, while the `op` skill focuses on high-level reasoning.
 4.  **Authoritative Context:** A single `SKILL.md` file serves as the source of truth for Claude, replacing fragmented command preambles.
-5.  **Workflow-agnostic:** The skill and plugin manage vault state and the issue schema; they do **not** define a development workflow. Branching, worktrees, PR requirements, release cadence, and version bumping are each project's own concern, documented in that project's `CLAUDE.md`. Drive the `op-*` capabilities (`commits:`, `pr:`, `version:`, `github_issue:`) the way your project wants — straight-to-main, PR-required, multi-stage pipelines, or anything in between.
+5.  **Workflow-agnostic:** The skill and plugin manage vault state and the issue schema; they do **not** define a development workflow. Branching, worktrees, PR requirements, release cadence, and version bumping are each project's own concern, expressed as **workflow modules** (small reusable markdown files) composed by a per-project workflow file. Modules can be shared across projects (global at `Projects/_op-modules/`), overridden per-project (`Projects/<slug>/MODULES/`), or imported from another vault. Drive the `op-*` capabilities (`commits:`, `pr:`, `version:`, `github_issue:`) the way your project wants — straight-to-main, PR-required, multi-stage pipelines, or anything in between — and let the workflow modules system inject the right rules at the right step of every agent launch.
 
 See `docs/plans/2026-04-18-skill-and-plugin-packaging.md` and `docs/specs/OP-19-plugin-split-recommendation.md` for more rationale.
 
