@@ -1,0 +1,274 @@
+import { App, TFile, normalizePath } from "obsidian";
+import {
+  classifyLegacy,
+  parseWorkflowFile,
+  synthesizeLegacyWorkflow,
+  validateWorkflowModels,
+  type WorkflowFile,
+  type WorkflowStep,
+} from "./workflowFilePure";
+import type { WorkflowDiagnostic } from "./workflowDiagnostic";
+
+export type {
+  AgentSpec,
+  BadModelSpec,
+  LegacyClassification,
+  LegacyShape,
+  ModelSpec,
+  ParseAgentSpecResult,
+  ParseModelSpecResult,
+  ParseWorkflowArgs,
+  ParseWorkflowResult,
+  WorkflowFile,
+  WorkflowFileSource,
+  WorkflowStep,
+} from "./workflowFilePure";
+export {
+  classifyLegacy,
+  parseAgentSpec,
+  parseModelSpec,
+  parseWorkflowFile,
+  stripWorkflowFrontmatter,
+  synthesizeLegacyWorkflow,
+  validateWorkflowModels,
+} from "./workflowFilePure";
+
+const PROJECTS_ROOT = "Projects/";
+
+export interface LoadWorkflowResult {
+  /** Resolved + merged workflow, or `null` if the file couldn't be salvaged. */
+  workflow: WorkflowFile | null;
+  diagnostics: WorkflowDiagnostic[];
+}
+
+/**
+ * Load a project's `WORKFLOW.md`, applying:
+ *   - Legacy fallback ladder (six shapes — see `classifyLegacy`).
+ *   - One level of `extends:` inheritance against another workflow file
+ *     (typically `Projects/_op-workflow.md`). Transitive chains are NOT
+ *     followed — a parent's own `extends:` is ignored with a `schema-mismatch`
+ *     diagnostic.
+ *   - Model-name validation against `modelRegistry`.
+ *
+ * Pure logic (parsing, classification, merging) lives in `workflowFilePure.ts`.
+ * This function is the IO seam:
+ *
+ *   1. Read the file's raw content + frontmatter (via metadataCache).
+ *   2. Classify shape → modern or legacy-1..5.
+ *   3. Modern → `parseWorkflowFile`. Legacy 1/2/3/5 → `synthesizeLegacyWorkflow`.
+ *      Legacy 4 → emit `schema-mismatch` and return null.
+ *   4. If the modern workflow declared `extends:`, recursively load the parent
+ *      (one level only) and merge.
+ *   5. Run `validateWorkflowModels` on the final merged workflow.
+ *
+ * Caller responsibility: invoke after `workspace.onLayoutReady` so
+ * `metadataCache` has resolved frontmatter for the project's files. Earlier
+ * calls may surface spurious `malformed-frontmatter` diagnostics.
+ */
+export async function loadWorkflowFile(
+  app: App,
+  project: string,
+): Promise<LoadWorkflowResult> {
+  const slug = project.trim();
+  if (!slug) {
+    return {
+      workflow: null,
+      diagnostics: [
+        {
+          code: "malformed-frontmatter",
+          severity: "error",
+          message: "loadWorkflowFile: project slug is required.",
+          extra: { field: "project" },
+        },
+      ],
+    };
+  }
+  const path = normalizePath(`${PROJECTS_ROOT}${slug}/WORKFLOW.md`);
+  return loadAtPath(app, { path, project: slug, allowExtends: true });
+}
+
+interface LoadAtPathArgs {
+  path: string;
+  project: string;
+  /**
+   * When `false`, the loader rejects an `extends:` field on the loaded file
+   * with a `schema-mismatch` diagnostic. Used for the recursive call so we
+   * enforce the "one level only" v1 rule.
+   */
+  allowExtends: boolean;
+}
+
+async function loadAtPath(app: App, args: LoadAtPathArgs): Promise<LoadWorkflowResult> {
+  const file = app.vault.getAbstractFileByPath(args.path);
+  if (!(file instanceof TFile)) {
+    return {
+      workflow: null,
+      diagnostics: [
+        {
+          code: "schema-mismatch",
+          severity: "error",
+          message: `Workflow file not found: ${args.path}.`,
+          extra: { path: args.path, expected: "existing TFile", actual: "missing" },
+        },
+      ],
+    };
+  }
+  const raw = await app.vault.read(file);
+  // metadataCache.getFileCache(file)?.frontmatter:
+  //   - `undefined` when frontmatter is absent or YAML parsed to null
+  //   - the parsed object otherwise (`{}` for an empty fence)
+  // We disambiguate "no fence at all" from "fence with null/empty content"
+  // using the raw content's leading `---`.
+  const fmCached = app.metadataCache.getFileCache(file)?.frontmatter;
+  const fmInput: Record<string, unknown> | null | undefined = raw.startsWith("---")
+    ? fmCached === undefined
+      ? null
+      : fmCached
+    : undefined;
+
+  const classification = classifyLegacy(raw, fmInput);
+
+  // Legacy 1/2/3/5 — synthesize a workflow from the body.
+  if (
+    classification.shape === "legacy-1" ||
+    classification.shape === "legacy-2" ||
+    classification.shape === "legacy-3" ||
+    classification.shape === "legacy-5"
+  ) {
+    const workflow = synthesizeLegacyWorkflow({
+      path: args.path,
+      project: args.project,
+      body: classification.body,
+      shape: classification.shape,
+    });
+    return { workflow, diagnostics: [legacyShapeDiagnostic(args.path, classification.shape)] };
+  }
+
+  // Legacy 4 — wrong type. Drop the file with a schema-mismatch diagnostic.
+  if (classification.shape === "legacy-4") {
+    const actualType = (fmInput && typeof fmInput === "object" && !Array.isArray(fmInput))
+      ? (fmInput as Record<string, unknown>).type
+      : undefined;
+    return {
+      workflow: null,
+      diagnostics: [
+        {
+          code: "schema-mismatch",
+          severity: "error",
+          message: `${args.path}: type must be "workflow", got "${String(actualType)}".`,
+          extra: { path: args.path, field: "type", expected: "workflow", actual: String(actualType) },
+        },
+      ],
+    };
+  }
+
+  // Modern — hand off to the pure parser.
+  const parsed = parseWorkflowFile({
+    path: args.path,
+    project: args.project,
+    frontmatter: fmInput as Record<string, unknown>,
+  });
+  if (!parsed.workflow) {
+    return { workflow: null, diagnostics: parsed.diagnostics };
+  }
+
+  let workflow = parsed.workflow;
+  const diagnostics = [...parsed.diagnostics];
+
+  // extends: one level only. The recursive load forbids further extension.
+  if (workflow.extendsPath !== null) {
+    if (!args.allowExtends) {
+      diagnostics.push({
+        code: "schema-mismatch",
+        severity: "warning",
+        message: `${args.path}: nested extends is not supported (v1 allows one level only). Ignoring grandparent.`,
+        extra: { path: args.path, field: "extends", expected: "absent for parent files", actual: workflow.extendsPath },
+      });
+    } else {
+      const parentLoad = await loadAtPath(app, {
+        path: normalizePath(workflow.extendsPath),
+        project: args.project,
+        allowExtends: false,
+      });
+      diagnostics.push(...parentLoad.diagnostics);
+      if (parentLoad.workflow) {
+        workflow = mergeWorkflows(parentLoad.workflow, workflow);
+      }
+    }
+  }
+
+  // Validate models on the post-merge workflow.
+  diagnostics.push(...validateWorkflowModels(workflow));
+
+  return { workflow, diagnostics };
+}
+
+function legacyShapeDiagnostic(path: string, shape: string): WorkflowDiagnostic {
+  return {
+    code: "schema-mismatch",
+    severity: "warning",
+    message:
+      `${path}: parsed via legacy fallback (${shape}). Body wrapped into a synthetic kickoff step. ` +
+      `Migrate to the modern schema (\`type: workflow\`, \`schema: 1\`, \`steps: [...]\`) — see ` +
+      `docs/specs/workflow-file-schema.md.`,
+    extra: { path, field: "<file>", expected: "modern schema", actual: shape },
+  };
+}
+
+/**
+ * Shallow-merge a parent workflow with a child. Child wins on top-level
+ * collisions (`defaultAgent`, `defaultModel`, `extendsPath`). Steps are
+ * concatenated parent-first, child-second; a child step that repeats a
+ * parent's `step:` id replaces the parent entry by id (the merged step list
+ * preserves parent order for inherited steps and child order for new steps).
+ *
+ * `source` and `project` come from the child — the merged workflow identifies
+ * as the child file. `isLegacy` is OR'd: any legacy ancestor taints the chain.
+ *
+ * Pure: no IO, exposed for testability.
+ */
+export function mergeWorkflows(parent: WorkflowFile, child: WorkflowFile): WorkflowFile {
+  // Map child step ids for fast override lookup.
+  const childById = new Map<string, WorkflowStep>();
+  for (const s of child.steps) childById.set(s.step, s);
+
+  const mergedSteps: WorkflowStep[] = [];
+  const consumedChildIds = new Set<string>();
+
+  // Walk parent steps first; substitute child override when present.
+  for (const ps of parent.steps) {
+    const override = childById.get(ps.step);
+    if (override) {
+      mergedSteps.push(override);
+      consumedChildIds.add(ps.step);
+    } else {
+      mergedSteps.push(ps);
+    }
+  }
+  // Append remaining child-only steps in their original order.
+  for (const cs of child.steps) {
+    if (!consumedChildIds.has(cs.step)) mergedSteps.push(cs);
+  }
+
+  return {
+    source: child.source,
+    type: "workflow",
+    schema: 1,
+    project: child.project,
+    defaultAgent: child.defaultAgent.length > 0 ? child.defaultAgent : parent.defaultAgent,
+    defaultModel: defaultModelFallback(parent.defaultModel, child.defaultModel),
+    extendsPath: child.extendsPath, // child's `extends:` describes how it got here; preserved for surfacing
+    steps: mergedSteps,
+  };
+}
+
+function defaultModelFallback(
+  parent: WorkflowFile["defaultModel"],
+  child: WorkflowFile["defaultModel"],
+): WorkflowFile["defaultModel"] {
+  // Treat an empty `kind: "all"` list on the child as "child didn't supply
+  // a default" and fall through to the parent.
+  if (child.kind === "all" && child.values.length === 0) return parent;
+  if (child.kind === "perAgent" && Object.keys(child.perAgent).length === 0) return parent;
+  return child;
+}
