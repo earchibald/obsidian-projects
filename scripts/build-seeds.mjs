@@ -211,10 +211,30 @@ function ensureGithubFixtureRepo() {
   if (!user) fail("gh api user returned no login");
   const slug = `${user}/${FIXTURE_REPO_NAME}`;
 
-  const view = spawnSync("gh", ["repo", "view", slug, "--json", "name"], {
+  const view = spawnSync("gh", ["repo", "view", slug, "--json", "nameWithOwner"], {
     encoding: "utf8",
   });
   if (view.status === 0) {
+    let actualSlug;
+    try {
+      actualSlug = JSON.parse(view.stdout).nameWithOwner;
+    } catch {
+      fail(
+        `Could not parse \`gh repo view\` JSON for ${slug}. Raw output:\n${view.stdout}`,
+      );
+    }
+    if (!actualSlug) {
+      fail(`\`gh repo view\` returned no nameWithOwner for ${slug}. Raw output:\n${view.stdout}`);
+    }
+    // GitHub nameWithOwner uses the API-canonical casing for both owner and
+    // repo name; compare directly (no case folding) so a differently-owned
+    // repo with a similar name isn't silently accepted.
+    if (actualSlug !== slug) {
+      fail(
+        `GH repo ${slug} exists but is owned by a different account: ${actualSlug}.\n` +
+          `Ensure \`gh auth status\` is authenticated as ${user} before re-running.`,
+      );
+    }
     console.log(`  GH repo ${slug} already exists — reusing`);
     return;
   }

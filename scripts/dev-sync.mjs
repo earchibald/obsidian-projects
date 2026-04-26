@@ -59,7 +59,12 @@ if (reload.status === 0) {
   process.exit(0);
 }
 
-console.log("plugin:reload returned non-zero — running first-install fallback");
+const reloadDiag = (reload.stderr || reload.stdout || "").trim();
+console.log(
+  `plugin:reload returned non-zero (exit ${reload.status})${reloadDiag ? `:\n  ${reloadDiag}` : ""}\n` +
+    `Running first-install fallback (loadManifests + enablePluginAndSave).` +
+    ` If this is not a first-install, check Obsidian logs for the underlying cause.`,
+);
 const firstInstall = runObsidian([
   "eval",
   'code=(async()=>{await app.plugins.loadManifests(); await app.plugins.enablePluginAndSave("op-obsidian"); return {enabled: app.plugins.enabledPlugins.has("op-obsidian"), version: app.plugins.plugins["op-obsidian"]?.manifest?.version}})()',

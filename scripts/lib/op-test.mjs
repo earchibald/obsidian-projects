@@ -9,7 +9,7 @@
 import { realpathSync, existsSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { join, sep } from "node:path";
 
 export const OP_TEST_VAULT = join(homedir(), "Documents/OP-Test/OP-Test");
 export const OP_TEST_PLUGIN_DEST = join(
@@ -23,14 +23,22 @@ export function fail(msg) {
 }
 
 // Resolve a filesystem path through realpath if it exists; otherwise return
-// the input unchanged. Used so symlinks on either side of the active-vault
-// comparison resolve to the same canonical form.
+// the input unchanged. Also strips any trailing path separator so that
+// "/a/b/" and "/a/b" compare equal (guards against `obsidian vault` emitting
+// a trailing slash on some CLI versions).
 export function resolvePath(p) {
+  let resolved;
   try {
-    return realpathSync(p);
+    resolved = realpathSync(p);
   } catch {
-    return p;
+    resolved = p;
   }
+  // Strip trailing separator(s). realpathSync normalises on most platforms but
+  // raw CLI-returned paths may not have been through it.
+  while (resolved.length > 1 && resolved.endsWith(sep)) {
+    resolved = resolved.slice(0, -1);
+  }
+  return resolved;
 }
 
 // `obsidian vault` prints a tab-separated key/value table:
@@ -83,15 +91,18 @@ export function assertActiveVaultIsOpTest() {
   return { vaultPath: actual, vaultName: active.name };
 }
 
-// Belt-and-suspenders: refuse any path that resolves into Agent-Vault.
-// Active-vault assertion already covers the dev-sync case, but a literal
-// substring guard catches muscle-memory mistakes that bypass the vault check
-// (e.g. a future caller wiring a different target path).
+// Belt-and-suspenders: refuse any path whose resolved form has "Agent-Vault"
+// as a distinct path segment. A substring match would accidentally block
+// legitimately-named paths such as ~/old-Agent-Vault-archive/. Conversely,
+// a renamed Agent-Vault wouldn't be caught here — the active-vault assertion
+// is the primary guard; this one only catches muscle-memory copy-paste errors
+// that wire a different target path.
 export function assertNotAgentVault(targetPath) {
   const resolved = resolvePath(targetPath);
-  if (resolved.includes("Agent-Vault")) {
+  const parts = resolved.split(sep);
+  if (parts.includes("Agent-Vault")) {
     fail(
-      `Refusing to write into a path containing "Agent-Vault": ${resolved}\n` +
+      `Refusing to write into a path containing an "Agent-Vault" path segment: ${resolved}\n` +
         `Agent-Vault is a BRAT customer of op-obsidian. Dev syncs target OP-Test only.`,
     );
   }
