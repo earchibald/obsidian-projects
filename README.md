@@ -17,8 +17,18 @@ Both components read and write the same schema. You can drive the vault entirely
 - **`op-obsidian` plugin** (`plugins/op-obsidian/`) — The Obsidian community plugin.
   - **Sidebar view** — Open, in-flight, and resolved issue tabs.
   - **Command palette** — Native Obsidian commands for every workflow step.
-  - **Agent orchestration** — Launching Claude/Gemini/etc. in tmux windows directly from an issue note.
+  - **Agent orchestration** — Launching Claude (and, on a best-effort basis, Gemini or Copilot — see below) in tmux windows directly from an issue note.
 - **Marketplace** — `.claude-plugin/marketplace.json` at repo root.
+
+### Supported AI runtimes
+
+The agent-orchestration code paths recognize three runtimes — `claude`, `gemini`, and `copilot` — but they are not equally supported:
+
+- **Claude (Claude Code)** — primary supported runtime. The `op` skill, the slash commands, the smoke-test scripts, and the orchestration tests are all developed and exercised against Claude Code.
+- **Gemini CLI** — second-class, untested. Profile entries, hook installers, and dispatch code exist but no part of the dev workflow runs against Gemini, the launch flags and prompt preambles are unverified, and the PreToolUse worktree guard has not been validated end-to-end against a live Gemini install.
+- **Copilot CLI** — second-class, untested. Same caveat as Gemini, plus a known gap: Copilot CLI has no PreToolUse hook surface, so the worktree-enforcement guard does **not** apply to Copilot sessions even when the setting is on. The SessionEnd hook file path (`~/.copilot/hooks.json`) is best-effort from docs and has not been verified against a live Copilot install.
+
+Picking Gemini or Copilot in **Settings → Default agent** is allowed and the plugin will dispatch them, but you are exercising untested code paths. If you hit a problem, switching back to Claude is the supported recovery path. Patches that improve Gemini/Copilot support are welcome — start by adding a smoke-test recipe before changing dispatch code.
 
 ## Getting Started
 

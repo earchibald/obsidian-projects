@@ -178,6 +178,11 @@ export const BASE_PROFILES: Readonly<Record<AgentId, AgentProfile>> = Object.fre
     finalizePromptPreamble: DEFAULT_FINALIZE_PREAMBLE,
     skillTrigger: "/op:issue {{id}}",
   },
+  // Second-class, untested. The dispatch code accepts gemini/copilot but no
+  // part of this repo's dev workflow or test suite exercises them — launch
+  // flags, prompt preambles, hook-install paths, and skill-trigger phrasing
+  // are all best-effort defaults that have not been validated against a live
+  // install. See README "Supported AI runtimes" for user-facing framing.
   gemini: {
     id: "gemini",
     label: "Gemini CLI",
