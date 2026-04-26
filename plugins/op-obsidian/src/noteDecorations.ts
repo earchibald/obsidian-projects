@@ -42,7 +42,7 @@ import {
   formatSegment,
   writeGhCache,
 } from "./noteStatusStrip";
-import { showChipMenu } from "./noteChipMenu";
+import { showChipMenu, prefixedCommandId } from "./noteChipMenu";
 
 /**
  * Effect dispatched when external state (frontmatter, agent liveness, gh
@@ -107,7 +107,7 @@ export function renderChipDom(
       ev.stopPropagation();
       const ok = (deps.app as unknown as {
         commands: { executeCommandById: (id: string) => boolean };
-      }).commands.executeCommandById(state.primaryCommand);
+      }).commands.executeCommandById(prefixedCommandId(state.primaryCommand));
       if (!ok) {
         // Command unavailable (typically: not the active leaf). Surface
         // it instead of failing silently — same UX as the menu items.
@@ -463,7 +463,7 @@ export function makeOpActionCodeBlockProcessor(app: App) {
         ev.stopPropagation();
         const ok = (app as unknown as {
           commands: { executeCommandById: (id: string) => boolean };
-        }).commands.executeCommandById(parsed.action);
+        }).commands.executeCommandById(prefixedCommandId(parsed.action));
         if (!ok) {
           void import("./notificationLog").then(({ notify }) =>
             notify(`op: ${parsed.action} unavailable.`),

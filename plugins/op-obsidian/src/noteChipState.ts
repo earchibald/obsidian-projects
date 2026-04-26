@@ -12,6 +12,23 @@
 
 import type { IssueStatus } from "./types";
 
+/**
+ * Plugin-id prefix for `executeCommandById`. Obsidian keys commands as
+ * `<plugin-id>:<command-id>`, but the chip-state matrix and the
+ * `op-action` codeblock both author bare ids (`op-attach-current`,
+ * `op-open-agent`, …). Dispatch sites apply this prefix at call time —
+ * regression for OP-173, where every chip click silently failed because
+ * `executeCommandById("op-attach-current")` couldn't find a command at
+ * that bare key. Idempotent: a string already containing `:` (already
+ * prefixed, or addressing a foreign plugin) is returned unchanged so a
+ * future caller can pass `workspace:open-file` through this same helper.
+ */
+const PLUGIN_ID = "op-obsidian";
+
+export function prefixedCommandId(id: string): string {
+  return id.includes(":") ? id : `${PLUGIN_ID}:${id}`;
+}
+
 /** Subset of issue frontmatter the chip cares about. Mirrors `IssueEntry` but
  * stays decoupled so the resolver doesn't pull in the whole store type tree. */
 export interface ChipFrontmatter {

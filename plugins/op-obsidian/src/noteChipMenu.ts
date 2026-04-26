@@ -1,5 +1,8 @@
 import { App, Menu } from "obsidian";
+import { prefixedCommandId } from "./noteChipState";
 import type { ChipMenuItem, ChipState } from "./noteChipState";
+
+export { prefixedCommandId };
 
 /**
  * Build and show the overflow menu for a note-level chip (OP-151).
@@ -47,7 +50,7 @@ export function dispatchChipCommand(app: App, item: ChipMenuItem): void {
   // *or* its checkCallback declines (no active issue note, etc).
   const ok = (app as unknown as {
     commands: { executeCommandById: (id: string) => boolean };
-  }).commands.executeCommandById(item.command);
+  }).commands.executeCommandById(prefixedCommandId(item.command));
   if (!ok) {
     // Defer the import: `notify` lives in notificationLog.ts which pulls in
     // the Obsidian app — keep this module dependency-light for tests.
