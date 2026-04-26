@@ -576,6 +576,13 @@ export class OpSettingsTab extends PluginSettingTab {
               if (r.installed.length) parts.push(`${r.installed.length} installed`);
               if (r.skipped.length) parts.push(`${r.skipped.length} skipped (already present)`);
               notify(`Example library: ${parts.join(", ") || "no changes"}.`, 6000);
+              // metadataCache populates each new file's frontmatter
+              // asynchronously after vault.create resolves — rendering
+              // immediately can miss files whose cache hasn't caught up,
+              // showing only the first installed module. Wait for the
+              // batch-resolve event (or a short timeout fallback) before
+              // re-rendering so loadModules sees every installed file.
+              await waitForCacheSettle(this.app, 500);
               this.rerenderSection("workflows");
             } catch (e) {
               notify(`Could not install example library: ${(e as Error).message}`, 8000);
@@ -1935,6 +1942,32 @@ function appendBadge(
   parentEl.createSpan({
     cls: `op-workflow-badge op-workflow-badge--${severity}`,
     text: `${count} ${severity}${count === 1 ? "" : "s"}`,
+  });
+}
+
+/**
+ * Wait for `metadataCache` to fire its batch-`resolved` event (signalling
+ * the cache has caught up with newly-created files), or for a timeout
+ * fallback — whichever comes first. Without this, a render that follows a
+ * `vault.create` can miss files whose frontmatter hasn't been parsed yet
+ * (the file is in `getMarkdownFiles()` but `getFileCache(file).frontmatter`
+ * is still null). The timeout is the floor: if the cache was already
+ * resolved before we registered the listener, we still rerender promptly.
+ */
+async function waitForCacheSettle(app: App, timeoutMs: number): Promise<void> {
+  await new Promise<void>((resolve) => {
+    let done = false;
+    const settle = (): void => {
+      if (done) return;
+      done = true;
+      app.metadataCache.offref(ref);
+      window.clearTimeout(handle);
+      resolve();
+    };
+    // The 'resolved' event fires after the cache has finished indexing the
+    // current batch of changes — exactly the signal we need.
+    const ref = app.metadataCache.on("resolved", settle);
+    const handle = window.setTimeout(settle, timeoutMs);
   });
 }
 
