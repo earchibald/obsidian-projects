@@ -17,6 +17,8 @@ import type { ResolveArgs, ResolveStatus } from "./resolve";
 import type { ApplyLinkResult, LinkCheckResult, MigrateLinksResult } from "./links";
 import type { GetWorkflowResult } from "./workflow";
 import { getSkill } from "./skill";
+import type { ExplainWorkflowPayload } from "./explainWorkflowPure";
+import type { ListVarsPayload } from "./listVarsPure";
 
 export interface UriHandlerDeps {
   store: { issues(): IssueEntry[] };
@@ -52,6 +54,12 @@ export interface UriHandlerDeps {
   linkCheck?: (opts: { repair?: boolean }) => Promise<LinkCheckResult>;
   migrateLinks?: () => Promise<MigrateLinksResult>;
   getWorkflow?: (project: string) => Promise<GetWorkflowResult>;
+  explainWorkflow?: (args: {
+    issueId: string;
+    mode: string;
+    agent?: string;
+  }) => Promise<ExplainWorkflowPayload>;
+  listVars?: (args: { project?: string; issue?: string }) => Promise<ListVarsPayload>;
 }
 
 export function findIssueById(store: { issues(): IssueEntry[] }, id: string): IssueEntry {
@@ -361,5 +369,49 @@ export async function handleOpSetScopeUri(
     path: res.path,
     replaced: res.replaced,
     mode: res.mode,
+  };
+}
+
+export async function handleOpExplainWorkflowUri(
+  deps: UriHandlerDeps,
+  params: Record<string, string>,
+): Promise<UriResponsePayload> {
+  if (!deps.explainWorkflow) throw new Error("op-explain-workflow not wired");
+  const id = params.id ?? params.issue;
+  if (!id) throw new Error("op-explain-workflow URI requires issue");
+  const mode = typeof params.mode === "string" ? params.mode.trim() : "";
+  if (!mode) throw new Error("op-explain-workflow URI requires mode");
+  const agentRaw = typeof params.agent === "string" ? params.agent.trim() : "";
+  if (params.agent !== undefined && !agentRaw) {
+    throw new Error("op-explain-workflow URI: agent must be a non-empty string");
+  }
+  if (agentRaw && /\s/.test(agentRaw)) {
+    throw new Error("op-explain-workflow URI: agent must not contain whitespace");
+  }
+  const args: { issueId: string; mode: string; agent?: string } = { issueId: id, mode };
+  if (agentRaw) args.agent = agentRaw;
+  const payload = await deps.explainWorkflow(args);
+  return {
+    ok: true,
+    command: "op-explain-workflow",
+    ...payload,
+  };
+}
+
+export async function handleOpListVarsUri(
+  deps: UriHandlerDeps,
+  params: Record<string, string>,
+): Promise<UriResponsePayload> {
+  if (!deps.listVars) throw new Error("op-list-vars not wired");
+  const project = trimOrUndef(params.project ?? params.slug);
+  const issue = trimOrUndef(params.issue ?? params.id);
+  const args: { project?: string; issue?: string } = {};
+  if (project) args.project = project;
+  if (issue) args.issue = issue;
+  const payload = await deps.listVars(args);
+  return {
+    ok: true,
+    command: "op-list-vars",
+    ...payload,
   };
 }
