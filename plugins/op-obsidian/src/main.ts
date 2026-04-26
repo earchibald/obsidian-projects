@@ -76,6 +76,8 @@ import {
   handleOpMigrateLinksUri as handleOpMigrateLinksUriPure,
   handleOpGetWorkflowUri as handleOpGetWorkflowUriPure,
   handleOpGetSkillUri as handleOpGetSkillUriPure,
+  handleOpExplainWorkflowUri as handleOpExplainWorkflowUriPure,
+  handleOpListVarsUri as handleOpListVarsUriPure,
   type UriHandlerDeps,
 } from "./uriHandlers";
 import {
@@ -93,7 +95,14 @@ import {
   parseGetWorkflowParams,
   parseEditWorkflowParams,
   parseGetSkillParams,
+  parseExplainWorkflowParams,
+  parseListVarsParams,
 } from "./cliHandlers";
+import { explainWorkflow, listVars } from "./explainWorkflow";
+import {
+  summarizeExplainPayload,
+} from "./explainWorkflowPure";
+import { summarizeListVarsPayload } from "./listVarsPure";
 import type { IssueEntry, LifecycleEvent } from "./types";
 import { DEFAULT_SETTINGS, mergeSettings, OpSettingsTab, type OpSettings } from "./settings";
 import { AgentDetector } from "./agentDetect";
@@ -880,6 +889,18 @@ export default class OpPlugin extends Plugin {
       );
     });
 
+    this.registerObsidianProtocolHandler("op-explain-workflow", (params) => {
+      this.runUri("op-explain-workflow", normalizeUriParams(params), (p) =>
+        handleOpExplainWorkflowUriPure(this.uriDeps(), p),
+      );
+    });
+
+    this.registerObsidianProtocolHandler("op-list-vars", (params) => {
+      this.runUri("op-list-vars", normalizeUriParams(params), (p) =>
+        handleOpListVarsUriPure(this.uriDeps(), p),
+      );
+    });
+
     this.registerObsidianProtocolHandler("op-set-scope", (params) => {
       this.runUri("op-set-scope", normalizeUriParams(params), (p) => this.handleOpSetScopeUri(p));
     });
@@ -1102,6 +1123,36 @@ export default class OpPlugin extends Plugin {
         project: { value: "<slug>", description: "Project slug (folder name under Projects/)" },
       },
       (params) => this.handleOpEditWorkflowCli(params),
+    );
+
+    this.registerCliHandler(
+      "op-explain-workflow",
+      "Print the fully composed prompt the launcher would produce for an issue + a per-var precedence breakdown. Read-only.",
+      {
+        issue: { value: "<id>", description: "Issue id (e.g. OP-34)" },
+        mode: { value: "<step>", description: "Workflow step id to compose (e.g. kickoff)" },
+        agent: {
+          value: "<id>",
+          description: "Override the agent id (defaults to the issue's agent: frontmatter or the global default).",
+        },
+      },
+      (params) => this.handleOpExplainWorkflowCli(params),
+    );
+
+    this.registerCliHandler(
+      "op-list-vars",
+      "Print the always-on plugin variable registry as JSON, with current resolved values when an issue is provided. Read-only.",
+      {
+        project: {
+          value: "<slug>",
+          description: "Optional project slug. Used as a hint when no issue is given.",
+        },
+        issue: {
+          value: "<id>",
+          description: "Optional issue id — when present, every var is resolved against the launch render context.",
+        },
+      },
+      (params) => this.handleOpListVarsCli(params),
     );
 
     this.registerCliHandler(
@@ -1997,6 +2048,18 @@ export default class OpPlugin extends Plugin {
       linkCheck: (opts) => linkCheck(this.app, this.store, opts),
       migrateLinks: () => migrateLinks(this.app, this.store),
       getWorkflow: (project) => getWorkflow(this.app, project),
+      explainWorkflow: (args) =>
+        explainWorkflow(
+          this.app,
+          { settings: this.settings, resolveIssue: (id) => this.resolveByIdOrThrow(id) },
+          args,
+        ),
+      listVars: (args) =>
+        listVars(
+          this.app,
+          { settings: this.settings, resolveIssue: (id) => this.resolveByIdOrThrow(id) },
+          args,
+        ),
     };
   }
 
@@ -2696,6 +2759,52 @@ export default class OpPlugin extends Plugin {
         tmuxWindow: res.tmuxWindow,
       });
       return `${command}: ${res.project} → ${res.agent} (tmux: ${res.tmuxSession}:${res.tmuxWindow})`;
+    } catch (err: any) {
+      const msg = err?.message ?? String(err);
+      console.error("[op-obsidian]", command, err);
+      await writeUriResponse(this.app, { ok: false, command, error: msg });
+      return `${command} failed: ${msg}`;
+    }
+  }
+
+  private async handleOpExplainWorkflowCli(params: Record<string, string>): Promise<string> {
+    const command = "op-explain-workflow";
+    try {
+      const parsed = parseExplainWorkflowParams(params);
+      if (!parsed.ok) return parsed.error;
+      const { id, mode, agent } = parsed.value;
+      const args: { issueId: string; mode: string; agent?: string } = { issueId: id, mode };
+      if (agent !== undefined) args.agent = agent;
+      const payload = await explainWorkflow(
+        this.app,
+        { settings: this.settings, resolveIssue: (i) => this.resolveByIdOrThrow(i) },
+        args,
+      );
+      await writeUriResponse(this.app, { ok: true, command, ...payload });
+      return summarizeExplainPayload(payload);
+    } catch (err: any) {
+      const msg = err?.message ?? String(err);
+      console.error("[op-obsidian]", command, err);
+      await writeUriResponse(this.app, { ok: false, command, error: msg });
+      return `${command} failed: ${msg}`;
+    }
+  }
+
+  private async handleOpListVarsCli(params: Record<string, string>): Promise<string> {
+    const command = "op-list-vars";
+    try {
+      const parsed = parseListVarsParams(params);
+      if (!parsed.ok) return parsed.error;
+      const args: { project?: string; issue?: string } = {};
+      if (parsed.value.project !== undefined) args.project = parsed.value.project;
+      if (parsed.value.issue !== undefined) args.issue = parsed.value.issue;
+      const payload = await listVars(
+        this.app,
+        { settings: this.settings, resolveIssue: (i) => this.resolveByIdOrThrow(i) },
+        args,
+      );
+      await writeUriResponse(this.app, { ok: true, command, ...payload });
+      return summarizeListVarsPayload(payload);
     } catch (err: any) {
       const msg = err?.message ?? String(err);
       console.error("[op-obsidian]", command, err);

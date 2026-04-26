@@ -12,6 +12,8 @@ import {
   parseGetWorkflowParams,
   parseEditWorkflowParams,
   parseGetSkillParams,
+  parseExplainWorkflowParams,
+  parseListVarsParams,
 } from "./cliHandlers";
 
 describe("parseWorkParams", () => {
@@ -253,5 +255,67 @@ describe("parseGetSkillParams", () => {
   it("preserves casing for downstream case-folding in getSkill", () => {
     const r = parseGetSkillParams({ name: "Skill" });
     expect(r.ok && r.value.name).toBe("Skill");
+  });
+});
+
+describe("parseExplainWorkflowParams", () => {
+  it("requires issue and mode", () => {
+    expect(parseExplainWorkflowParams({}).ok).toBe(false);
+    expect(parseExplainWorkflowParams({ issue: "OP-1" }).ok).toBe(false);
+    expect(parseExplainWorkflowParams({ mode: "kickoff" }).ok).toBe(false);
+  });
+  it("issue alias id is accepted", () => {
+    const r = parseExplainWorkflowParams({ id: "OP-1", mode: "kickoff" });
+    expect(r.ok && r.value).toEqual({ id: "OP-1", mode: "kickoff" });
+  });
+  it("issue beats id alias", () => {
+    const r = parseExplainWorkflowParams({ issue: "OP-1", id: "OP-2", mode: "kickoff" });
+    expect(r.ok && r.value.id).toBe("OP-1");
+  });
+  it("trims agent and rejects whitespace-only and embedded whitespace", () => {
+    const ok = parseExplainWorkflowParams({ issue: "OP-1", mode: "kickoff", agent: "  claude  " });
+    expect(ok.ok && ok.value.agent).toBe("claude");
+    const bad1 = parseExplainWorkflowParams({ issue: "OP-1", mode: "kickoff", agent: "   " });
+    expect(bad1.ok).toBe(false);
+    const bad2 = parseExplainWorkflowParams({ issue: "OP-1", mode: "kickoff", agent: "claude code" });
+    expect(bad2.ok).toBe(false);
+  });
+  it("rejects empty mode", () => {
+    const r = parseExplainWorkflowParams({ issue: "OP-1", mode: "  " });
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.error).toMatch(/--mode/);
+  });
+  it("happy path with all fields", () => {
+    const r = parseExplainWorkflowParams({ issue: "OP-1", mode: "kickoff", agent: "claude" });
+    expect(r.ok && r.value).toEqual({ id: "OP-1", mode: "kickoff", agent: "claude" });
+  });
+});
+
+describe("parseListVarsParams", () => {
+  it("accepts no args (registry-only mode)", () => {
+    const r = parseListVarsParams({});
+    expect(r.ok && r.value).toEqual({});
+  });
+  it("project alias slug works", () => {
+    const a = parseListVarsParams({ project: "obsidian-projects" });
+    const b = parseListVarsParams({ slug: "obsidian-projects" });
+    expect(a.ok && a.value.project).toBe("obsidian-projects");
+    expect(b.ok && b.value.project).toBe("obsidian-projects");
+  });
+  it("project beats slug alias", () => {
+    const r = parseListVarsParams({ project: "a", slug: "b" });
+    expect(r.ok && r.value.project).toBe("a");
+  });
+  it("issue alias id works", () => {
+    const a = parseListVarsParams({ issue: "OP-1" });
+    const b = parseListVarsParams({ id: "OP-2" });
+    expect(a.ok && a.value.issue).toBe("OP-1");
+    expect(b.ok && b.value.issue).toBe("OP-2");
+  });
+  it("trims project and issue, drops whitespace-only", () => {
+    const r = parseListVarsParams({ project: "  obsidian-projects  ", issue: "  OP-1  " });
+    expect(r.ok && r.value).toEqual({ project: "obsidian-projects", issue: "OP-1" });
+    const blank = parseListVarsParams({ project: "   ", issue: "   " });
+    expect(blank.ok && blank.value).toEqual({});
   });
 });

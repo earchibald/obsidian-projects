@@ -242,3 +242,35 @@ export function parseGetSkillParams(
   const raw = typeof params.name === "string" ? params.name.trim() : "";
   return { ok: true, value: { name: raw } };
 }
+
+export function parseExplainWorkflowParams(
+  params: Record<string, string>,
+): ParamsResult<{ id: string; mode: string; agent?: string }> {
+  const id = params.issue ?? params.id;
+  if (!id) return { ok: false, error: "op-explain-workflow failed: --issue is required" };
+  const mode = nonEmptyTrim(params.mode);
+  if (mode === undefined) {
+    return { ok: false, error: "op-explain-workflow failed: --mode is required" };
+  }
+  const agent = nonEmptyTrim(params.agent);
+  if (params.agent !== undefined && agent === undefined) {
+    return { ok: false, error: "op-explain-workflow failed: --agent must be a non-empty string" };
+  }
+  if (agent !== undefined && /\s/.test(agent)) {
+    return { ok: false, error: "op-explain-workflow failed: --agent must not contain whitespace" };
+  }
+  const out: { id: string; mode: string; agent?: string } = { id, mode };
+  if (agent !== undefined) out.agent = agent;
+  return { ok: true, value: out };
+}
+
+export function parseListVarsParams(
+  params: Record<string, string>,
+): ParamsResult<{ project?: string; issue?: string }> {
+  const project = nonEmptyTrim(params.project ?? params.slug);
+  const issue = nonEmptyTrim(params.issue ?? params.id);
+  const out: { project?: string; issue?: string } = {};
+  if (project !== undefined) out.project = project;
+  if (issue !== undefined) out.issue = issue;
+  return { ok: true, value: out };
+}
