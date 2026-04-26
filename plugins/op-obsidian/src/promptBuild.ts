@@ -42,6 +42,13 @@ export interface BuildPromptArgs {
    *  `{{parent}}` as `PARENT_NONE_SENTINEL` ("(none — this is a top-level
    *  issue)"). A string is rendered verbatim. */
   parentId?: string | null;
+  /** OP-200 (2c): canonical (versioned) model id chosen by `stepResolver`.
+   *  Surfaces as `{{model}}` in modules. `undefined` when the workflow file
+   *  declared no per-step / per-default model override (or when there is no
+   *  workflow file) — matches the pre-2c behavior of leaving the slot empty
+   *  so modules referencing `{{model}}` keep emitting `missing-var` until an
+   *  author opts in. */
+  resolvedModel?: string;
 }
 
 export async function buildPrompt(
@@ -272,8 +279,9 @@ function buildLaunchRenderContext(
     branch: args.branch,
     today: today(),
     agent: profile.id,
-    // OP-200 (2c) plumbs the per-step resolver here.
-    model: undefined,
+    // OP-200 (2c): canonical model id from `stepResolver`, or `undefined`
+    // when no workflow-file override applied.
+    model: args.resolvedModel,
     mode,
   };
 }
