@@ -324,20 +324,22 @@ describe("synthesizeLegacyWorkflow", () => {
     expect(wf.extendsPath).toBeNull();
   });
 
-  it("works for shapes 1, 2, 3, 5", () => {
-    for (const shape of ["legacy-1", "legacy-2", "legacy-3", "legacy-5"] as const) {
+  it("works for shapes 1, 2, 3, 4, 5", () => {
+    for (const shape of ["legacy-1", "legacy-2", "legacy-3", "legacy-4", "legacy-5"] as const) {
       const wf = synthesizeLegacyWorkflow({ path: PATH, project: PROJECT, body: "x", shape });
       expect(wf.steps[0].legacyKickoffBody).toBe("x");
     }
   });
 
-  it("throws for non-synthesisable shapes (defensive)", () => {
+  it("throws only for 'modern' (defensive)", () => {
     expect(() =>
       synthesizeLegacyWorkflow({ path: PATH, project: PROJECT, body: "x", shape: "modern" }),
     ).toThrow();
+    // legacy-4 no longer throws: OP-208 shape-4 cutover fix — body is
+    // synthesised so pre-cutover users don't silently lose workflow content.
     expect(() =>
       synthesizeLegacyWorkflow({ path: PATH, project: PROJECT, body: "x", shape: "legacy-4" }),
-    ).toThrow();
+    ).not.toThrow();
   });
 });
 

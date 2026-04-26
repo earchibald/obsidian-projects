@@ -136,8 +136,13 @@ export interface OpSettings {
   // command, when wired) to re-trigger.
   firstRunCompleted: boolean;
   /** OP-198 (2a): switch between the legacy `WORKFLOW.md` inline-blob path
-   *  and the OP-197 modular composer at kickoff. Defaults to `'legacy'` so
-   *  upgrading users see byte-identical prompts until they opt in. */
+   *  and the OP-197 modular composer at kickoff. OP-208 (8a, cutover) flipped
+   *  the default to `'modules'`; the legacy code path in `promptBuild.ts`
+   *  was removed at the same time, so this field now only gates UI affordances
+   *  in `launchAgentModal` (panels that prompt the user for module-only inputs
+   *  show a "modules disabled" notice when this is `'legacy'`). The composer's
+   *  own legacy-fallback ladder (`workflowFile.ts`, shapes 1/2/3/5) handles
+   *  vanilla `WORKFLOW.md` transparently regardless of this flag. */
   workflowMode: WorkflowMode;
   /** OP-198 (2a): vault-wide user vars threaded into the composer's
    *  Global precedence layer (OP-197 §"Precedence"). Per-project values live
@@ -212,7 +217,7 @@ export const DEFAULT_SETTINGS: OpSettings = {
   projectOrder: [],
   recent: [],
   firstRunCompleted: false,
-  workflowMode: "legacy",
+  workflowMode: "modules",
   workflowVars: {},
   previewAutoExpandDismissed: false,
 };

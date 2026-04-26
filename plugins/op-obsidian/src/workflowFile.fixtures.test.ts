@@ -66,20 +66,21 @@ describe("legacy fallback fixtures", () => {
     expect(c.body).toBe(stripWorkflowFrontmatter(raw));
   });
 
-  it("(4) 4-wrong-type.md classifies as legacy-4 — caller drops with schema-mismatch", () => {
+  it("(4) 4-wrong-type.md classifies as legacy-4 — synthesises body with warning (OP-208 cutover fix)", () => {
     const raw = readFixture("4-wrong-type.md");
     const c = classifyLegacy(raw, { type: "project", project: "demo-project" });
     expect(c.shape).toBe("legacy-4");
-    // synthesizeLegacyWorkflow refuses to handle this shape — caller must
-    // emit a schema-mismatch and return null instead. We assert the refusal.
-    expect(() =>
-      synthesizeLegacyWorkflow({
-        path: "Projects/demo/WORKFLOW.md",
-        project: "demo",
-        body: c.body,
-        shape: c.shape,
-      }),
-    ).toThrow(/not synthesisable/);
+    // OP-208 cutover fix: synthesizeLegacyWorkflow now accepts legacy-4 so that
+    // pre-cutover WORKFLOW.md files with wrong `type:` don't silently lose their
+    // body content. The IO layer emits a warning diagnostic instead of dropping.
+    const wf = synthesizeLegacyWorkflow({
+      path: "Projects/demo/WORKFLOW.md",
+      project: "demo",
+      body: c.body,
+      shape: c.shape,
+    });
+    expect(wf.source.isLegacy).toBe(true);
+    expect(wf.steps[0].legacyKickoffBody).toBe(c.body);
   });
 
   it("(5) 5-null-frontmatter.md classifies as legacy-5", () => {

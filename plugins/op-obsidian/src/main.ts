@@ -1899,53 +1899,52 @@ export default class OpPlugin extends Plugin {
         statusLine: (line) => notify(`op-evaluate ${entry.id}: ${line}`),
         paneStream: (chunk) => console.log(`[op-evaluate ${entry.id}] ${chunk}`),
       });
-      // OP-199 (2b): in modules-mode, compose the workflow's `evaluate` step
-      // and prepend it to the evaluator's prompt. Launch context is best-
-      // effort here (no `wd` resolution because the evaluator runs in-
-      // process, not in a terminal) — `repoPath` from `resolveRepoPath`,
-      // `branch` via `git rev-parse` at that path. Evaluator-step modules
-      // that reference `{{branch}}` etc. resolve to either the real value
-      // or a `missing-var` diagnostic, never break the launch.
-      const composeWorkflowSectionFn =
-        this.settings.workflowMode === "modules"
-          ? async () => {
-              const profile = resolveProfile(this.settings, this.settings.defaultAgent);
-              const repoPath = resolveRepoPath(this.app, this.settings, entry.project);
-              const branch = repoPath ? await gitBranchAt(repoPath) : undefined;
-              const parentRaw = (this.app.metadataCache.getFileCache(
-                this.app.vault.getAbstractFileByPath(entry.path) as TFile,
-              )?.frontmatter as Record<string, unknown> | undefined)?.parent;
-              // Mirrors `readParentId` in openAgent.ts: null on cache miss,
-              // no-cache, or non-string (including YAML arrays for multi-parent).
-              const parentId =
-                typeof parentRaw === "string" && parentRaw.trim().length > 0
-                  ? parentRaw
-                  : null;
-              return composeWorkflowSection(this.app, {
-                entry,
-                profile,
-                // OP-199 (2b): clamp maxWorkflowChars for the evaluator — it's
-                // a quick triage agent that doesn't need the full budget. A long
-                // workflow section would slow the evaluator and could confuse the
-                // COMPLEXITY: trailer parser.
-                injection: {
-                  ...this.settings.injection,
-                  maxWorkflowChars: Math.min(
-                    this.settings.injection.maxWorkflowChars,
-                    EVALUATOR_MAX_WORKFLOW_CHARS,
-                  ),
-                },
-                vaultBasePath: (this.app.vault.adapter as unknown as { basePath?: string }).basePath,
-                mode: "evaluate",
-                workflowMode: this.settings.workflowMode,
-                workflowVars: this.settings.workflowVars,
-                workflowStep: modeToWorkflowStep("evaluate"),
-                repoPath,
-                branch,
-                parentId,
-              });
-            }
-          : undefined;
+      // OP-199 (2b): compose the workflow's `evaluate` step and prepend it
+      // to the evaluator's prompt. Launch context is best-effort here (no `wd`
+      // resolution because the evaluator runs in-process, not in a terminal)
+      // — `repoPath` from `resolveRepoPath`, `branch` via `git rev-parse` at
+      // that path. Evaluator-step modules that reference `{{branch}}` etc.
+      // resolve to either the real value or a `missing-var` diagnostic, never
+      // break the launch. OP-208 (8a, cutover) dropped the `workflowMode ===
+      // "modules"` gate — modules is now the only path; vanilla WORKFLOW.md
+      // routes through the composer's legacy-fallback ladder.
+      const composeWorkflowSectionFn = async () => {
+        const profile = resolveProfile(this.settings, this.settings.defaultAgent);
+        const repoPath = resolveRepoPath(this.app, this.settings, entry.project);
+        const branch = repoPath ? await gitBranchAt(repoPath) : undefined;
+        const parentRaw = (this.app.metadataCache.getFileCache(
+          this.app.vault.getAbstractFileByPath(entry.path) as TFile,
+        )?.frontmatter as Record<string, unknown> | undefined)?.parent;
+        // Mirrors `readParentId` in openAgent.ts: null on cache miss,
+        // no-cache, or non-string (including YAML arrays for multi-parent).
+        const parentId =
+          typeof parentRaw === "string" && parentRaw.trim().length > 0
+            ? parentRaw
+            : null;
+        return composeWorkflowSection(this.app, {
+          entry,
+          profile,
+          // OP-199 (2b): clamp maxWorkflowChars for the evaluator — it's
+          // a quick triage agent that doesn't need the full budget. A long
+          // workflow section would slow the evaluator and could confuse the
+          // COMPLEXITY: trailer parser.
+          injection: {
+            ...this.settings.injection,
+            maxWorkflowChars: Math.min(
+              this.settings.injection.maxWorkflowChars,
+              EVALUATOR_MAX_WORKFLOW_CHARS,
+            ),
+          },
+          vaultBasePath: (this.app.vault.adapter as unknown as { basePath?: string }).basePath,
+          mode: "evaluate",
+          workflowMode: this.settings.workflowMode,
+          workflowVars: this.settings.workflowVars,
+          workflowStep: modeToWorkflowStep("evaluate"),
+          repoPath,
+          branch,
+          parentId,
+        });
+      };
       const result = await runEvaluatorFlow(
         {
           launch: launchHeadlessSubtask,

@@ -172,7 +172,12 @@ describe("loadWorkflowFile — legacy fallback shapes", () => {
     expect(r.workflow!.steps[0].legacyKickoffBody).toBe("# Body\ntext\n");
   });
 
-  it("(4) type: <other> → legacy-4 drop with schema-mismatch diagnostic", async () => {
+  it("(4) type: <other> → legacy-4 synthesises body with warning diagnostic (OP-208 cutover fix)", async () => {
+    // Pre-OP-208 the legacy inline blob in buildPrompt read WORKFLOW.md
+    // verbatim regardless of frontmatter. The new shape-4 handler synthesises
+    // from the body (like shapes 1/2/3/5) so users whose WORKFLOW.md carries
+    // `type: <other>` from a metadata plugin don't silently lose their
+    // workflow content after the cutover.
     const raw = "---\ntype: project\n---\nbody\n";
     const app = fakeApp([
       {
@@ -182,8 +187,11 @@ describe("loadWorkflowFile — legacy fallback shapes", () => {
       },
     ]);
     const r = await loadWorkflowFile(app, "demo");
-    expect(r.workflow).toBeNull();
+    expect(r.workflow).not.toBeNull();
+    expect(r.workflow!.source.isLegacy).toBe(true);
+    expect(r.workflow!.steps[0].legacyKickoffBody).toBe("body\n");
     expect(r.diagnostics[0].code).toBe("schema-mismatch");
+    expect(r.diagnostics[0].severity).toBe("warning");
     expect((r.diagnostics[0].extra as Record<string, unknown>).actual).toBe("project");
   });
 

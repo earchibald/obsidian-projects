@@ -251,26 +251,41 @@ describe("mergeSettings", () => {
     expect(mergeSettings({ projectOrder: ["  baz  "] }).projectOrder).toEqual(["baz"]);
   });
 
-  it("OP-198: workflowMode defaults to 'legacy' on fresh install", () => {
-    expect(DEFAULT_SETTINGS.workflowMode).toBe("legacy");
-    expect(mergeSettings({}).workflowMode).toBe("legacy");
-    expect(mergeSettings(null).workflowMode).toBe("legacy");
+  it("OP-208 (8a, cutover): workflowMode default flipped to 'modules' on fresh install", () => {
+    expect(DEFAULT_SETTINGS.workflowMode).toBe("modules");
+    expect(mergeSettings({}).workflowMode).toBe("modules");
+    expect(mergeSettings(null).workflowMode).toBe("modules");
   });
 
-  it("OP-198: workflowMode accepts 'legacy' / 'modules'; rejects unknown literals and non-strings", () => {
-    expect(mergeSettings({ workflowMode: "modules" }).workflowMode).toBe("modules");
+  it("OP-208 (8a, cutover): existing data.json with workflowMode === 'legacy' is preserved (no auto-flip)", () => {
+    // Migration semantics from OP-208 scope: users who explicitly opted into
+    // 'legacy' (or installed before the field existed and later wrote 'legacy')
+    // KEEP that value. The default flip only affects blobs with no
+    // workflowMode field at all.
     expect(mergeSettings({ workflowMode: "legacy" }).workflowMode).toBe("legacy");
-    // Unknown literal — falls back to default.
+    expect(mergeSettings({ workflowMode: "modules" }).workflowMode).toBe("modules");
+    // Unknown literal — falls back to (post-cutover) default.
     expect(
       mergeSettings({ workflowMode: "experimental" as unknown as "legacy" }).workflowMode,
-    ).toBe("legacy");
+    ).toBe("modules");
+    // Empty string — typeof check passes, but WORKFLOW_MODES.has("") is false → default.
+    expect(
+      mergeSettings({ workflowMode: "" as unknown as "legacy" }).workflowMode,
+    ).toBe("modules");
     // Non-string — falls back to default.
     expect(
       mergeSettings({ workflowMode: 1 as unknown as "legacy" }).workflowMode,
-    ).toBe("legacy");
+    ).toBe("modules");
     expect(
       mergeSettings({ workflowMode: null as unknown as "legacy" }).workflowMode,
-    ).toBe("legacy");
+    ).toBe("modules");
+    // Arrays / objects fail the typeof guard before WORKFLOW_MODES.has — no coercion possible.
+    expect(
+      mergeSettings({ workflowMode: ["legacy"] as unknown as "legacy" }).workflowMode,
+    ).toBe("modules");
+    expect(
+      mergeSettings({ workflowMode: { valueOf: () => "legacy" } as unknown as "legacy" }).workflowMode,
+    ).toBe("modules");
   });
 
   it("OP-198: workflowVars defaults to {} on fresh install; not shared with DEFAULT_SETTINGS", () => {
@@ -324,15 +339,18 @@ describe("mergeSettings", () => {
     ).toEqual({ "a.b": "v1", "x/y": "v2" });
   });
 
-  it("OP-198: existing user upgrading from a version pre-workflowMode loads cleanly with defaults", () => {
+  it("OP-198: existing user upgrading from a version pre-workflowMode picks up the post-cutover default", () => {
     // Simulates a real data.json blob captured before OP-198 — no
-    // workflowMode / workflowVars keys at all. Both must default cleanly.
+    // workflowMode / workflowVars keys at all. After the OP-208 cutover the
+    // default is 'modules', so absent-field blobs flip to modules on next
+    // load (the composer's legacy-fallback ladder still handles vanilla
+    // WORKFLOW.md transparently).
     const out = mergeSettings({
       defaultAgent: "claude",
       injection: { maxBodyChars: 8000 },
       workingDirs: { foo: "/code/foo" },
     });
-    expect(out.workflowMode).toBe("legacy");
+    expect(out.workflowMode).toBe("modules");
     expect(out.workflowVars).toEqual({});
   });
 

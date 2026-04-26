@@ -150,18 +150,33 @@ async function loadAtPath(app: App, args: LoadAtPathArgs): Promise<LoadWorkflowR
     return { workflow, diagnostics: [legacyShapeDiagnostic(args.path, classification.shape)] };
   }
 
-  // Legacy 4 — wrong type. Drop the file with a schema-mismatch diagnostic.
+  // Legacy 4 — type field is set but isn't "workflow". Pre-OP-198 users may
+  // have `type: <other>` (e.g. `type: note`) in their WORKFLOW.md from another
+  // Obsidian plugin's metadata system. Post-OP-208 there is no legacy inline
+  // blob to fall back to, so dropping the file silently would cause these users
+  // to lose all workflow content after the cutover. Synthesise from the body
+  // (same as shapes 1/2/3/5) and emit a warning so they know to fix the type
+  // field, without breaking their kickoff prompt in the meantime.
   if (classification.shape === "legacy-4") {
     const actualType = (fmInput && typeof fmInput === "object" && !Array.isArray(fmInput))
       ? (fmInput as Record<string, unknown>).type
       : undefined;
+    const workflow = synthesizeLegacyWorkflow({
+      path: args.path,
+      project: args.project,
+      body: classification.body,
+      shape: classification.shape,
+    });
     return {
-      workflow: null,
+      workflow,
       diagnostics: [
         {
           code: "schema-mismatch",
-          severity: "error",
-          message: `${args.path}: type must be "workflow", got "${String(actualType)}".`,
+          severity: "warning",
+          message:
+            `${args.path}: type must be "workflow", got "${String(actualType)}". ` +
+            `Body wrapped into a synthetic kickoff step (legacy compatibility — OP-208 cutover). ` +
+            `Set \`type: workflow\` (and add \`steps:\`) to silence this warning.`,
           extra: { path: args.path, field: "type", expected: "workflow", actual: String(actualType) },
         },
       ],
