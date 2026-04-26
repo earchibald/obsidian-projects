@@ -150,6 +150,7 @@ import {
   noteChipExtension,
 } from "./noteDecorations";
 import type { GhStateCache } from "./noteStatusStrip";
+import { workflowValidatorExtension } from "./editorWorkflowValidatorExtension";
 import {
   DEMO_PROJECT_FOLDER,
   liveReadmeWriter,
@@ -415,6 +416,17 @@ export default class OpPlugin extends Plugin {
     this.registerMarkdownCodeBlockProcessor(
       "op-action",
       makeOpActionCodeBlockProcessor(this.app),
+    );
+
+    // OP-207 (3g): editor-save validator paints squiggles + a status footer
+    // for module / workflow files. Same registration shape as the chip — one
+    // editor extension array, deps captured by closure.
+    this.registerEditorExtension(
+      workflowValidatorExtension({
+        app: this.app,
+        getSettings: () => this.settings,
+        detector: this.detector,
+      }),
     );
 
     // Re-render the chip when frontmatter changes so the label flips

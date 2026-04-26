@@ -1343,3 +1343,59 @@ a.op-sidebar__agent:hover {
   color: var(--text-muted);
   font-style: italic;
 }
+
+/* OP-207 — editor-save workflow validator: red/yellow squiggles + footer */
+
+.op-validator-mark {
+  /* Wavy underline approximates the IDE squiggle. `text-decoration-skip-ink: none`
+     keeps the squiggle continuous through descenders so the user sees a clean
+     uninterrupted underline. */
+  text-decoration-line: underline;
+  text-decoration-style: wavy;
+  text-decoration-skip-ink: none;
+  text-underline-offset: 2px;
+}
+
+.op-validator-mark--error {
+  text-decoration-color: var(--text-error, #e54);
+}
+
+.op-validator-mark--warning {
+  text-decoration-color: var(--text-warning, #d90);
+}
+
+.op-validator-mark--info {
+  text-decoration-color: var(--text-accent, #79f);
+}
+
+.op-validator-footer {
+  font-family: var(--font-ui, inherit);
+  font-size: var(--font-ui-smaller, 0.75rem);
+  padding: 4px 12px;
+  border-top: 1px solid var(--background-modifier-border);
+  background: var(--background-secondary);
+  color: var(--text-muted);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.op-validator-footer--error {
+  color: var(--text-error, #e54);
+  border-top-color: var(--text-error, #e54);
+}
+
+.op-validator-footer--warning {
+  color: var(--text-warning, #d90);
+  border-top-color: var(--text-warning, #d90);
+}
+
+.op-validator-footer--clean {
+  color: var(--text-muted);
+}
+
+.op-validator-footer__line {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
