@@ -12,8 +12,8 @@ import {
 describe("defaultPreset", () => {
   const preset = defaultPreset();
 
-  it("returns exactly 10 entries", () => {
-    expect(preset).toHaveLength(10);
+  it("returns exactly 12 entries", () => {
+    expect(preset).toHaveLength(12);
   });
 
   it("returns the expected commands in spec-defined order", () => {
@@ -26,6 +26,8 @@ describe("defaultPreset", () => {
       "op-obsidian:op-open-agent",
       "op-obsidian:op-resolve",
       "op-obsidian:op-new",
+      "op-obsidian:op-new-from-selection",
+      "op-obsidian:op-new-from-clipboard",
       "op-obsidian:op-append-commit",
       "op-obsidian:op-next-issue",
       "op-obsidian:op-previous-issue",
@@ -153,14 +155,14 @@ function makeApp(overrides?: {
 }
 
 describe("applyPreset — clean apply", () => {
-  it("applies all 10 bindings when no conflicts exist", () => {
+  it("applies all 12 bindings when no conflicts exist", () => {
     const app = makeApp();
     const result = applyPreset(app, defaultPreset(), { isMacOS: true });
     expect(result.ok).toBe(true);
     if (!result.ok) return;
-    expect(result.applied).toHaveLength(10);
+    expect(result.applied).toHaveLength(12);
     expect(result.skipped).toHaveLength(0);
-    expect(Object.keys(app.__internal)).toHaveLength(10);
+    expect(Object.keys(app.__internal)).toHaveLength(12);
     expect(app.__saved).toHaveBeenCalled();
   });
 
@@ -211,14 +213,14 @@ describe("applyPreset — collision skipping", () => {
     const app = makeApp();
     // First apply
     const first = applyPreset(app, preset, { isMacOS: true });
-    expect(first.ok && first.applied).toHaveLength(10);
+    expect(first.ok && first.applied).toHaveLength(12);
     // Re-apply — every binding still maps to its op-* command, so no conflict
     // is reported.
     const second = applyPreset(app, preset, { isMacOS: true });
     expect(second.ok).toBe(true);
     if (!second.ok) return;
     expect(second.skipped).toHaveLength(0);
-    expect(second.applied).toHaveLength(10);
+    expect(second.applied).toHaveLength(12);
   });
 
   it("falls back to commandId when commands registry has no display name", () => {
@@ -263,7 +265,7 @@ describe("applyPreset — fallback path", () => {
     if (result.ok) return;
     expect(result.reason).toMatch(/unavailable|drift/i);
     const parsed = JSON.parse(result.snippet);
-    expect(Object.keys(parsed)).toHaveLength(10);
+    expect(Object.keys(parsed)).toHaveLength(12);
     expect(parsed["op-obsidian:op-pick-and-act"]).toEqual([
       { modifiers: ["Mod", "Shift"], key: "I" },
     ]);
@@ -281,7 +283,7 @@ describe("applyPreset — fallback path", () => {
     // Snapshot was empty before the mutation began.
     expect(result.previousCustomKeys).toEqual({});
     const parsed = JSON.parse(result.snippet);
-    expect(Object.keys(parsed)).toHaveLength(10);
+    expect(Object.keys(parsed)).toHaveLength(12);
   });
 
   it("returns a JSON snippet when setHotkeys() throws mid-stream", () => {
@@ -326,7 +328,7 @@ describe("revertPreset", () => {
   it("clears bindings that didn't exist in the snapshot", () => {
     const app = makeApp();
     applyPreset(app, defaultPreset(), { isMacOS: true });
-    expect(Object.keys(app.__internal).length).toBe(10);
+    expect(Object.keys(app.__internal).length).toBe(12);
     revertPreset(app, {});
     expect(app.__internal).toEqual({});
   });

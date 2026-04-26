@@ -2,7 +2,7 @@
  * Default hotkey preset for the op-obsidian plugin (OP-152).
  *
  * Two responsibilities:
- *  - {@link defaultPreset} — the pure list of 10 keybindings the preset binds.
+ *  - {@link defaultPreset} — the pure list of 12 keybindings the preset binds.
  *  - {@link applyPreset} — best-effort write into Obsidian's
  *    `app.hotkeyManager.customKeys`, with collision-skipping and a JSON-snippet
  *    fallback when the internal API has drifted.
@@ -85,6 +85,10 @@ const PRESET: readonly HotkeyEntry[] = [
   { command: "op-obsidian:op-open-agent", hotkey: { modifiers: ["Mod", "Shift"], key: "L" } },
   { command: "op-obsidian:op-resolve", hotkey: { modifiers: ["Mod", "Shift"], key: "R" } },
   { command: "op-obsidian:op-new", hotkey: { modifiers: ["Mod", "Alt"], key: "N" } },
+  // OP-159 / spec §8: quick-capture shares the `Mod+Alt+` family with op-new.
+  // S = Selection, V = clipboard (paste mnemonic).
+  { command: "op-obsidian:op-new-from-selection", hotkey: { modifiers: ["Mod", "Alt"], key: "S" } },
+  { command: "op-obsidian:op-new-from-clipboard", hotkey: { modifiers: ["Mod", "Alt"], key: "V" } },
   { command: "op-obsidian:op-append-commit", hotkey: { modifiers: ["Mod", "Shift"], key: "." } },
   { command: "op-obsidian:op-next-issue", hotkey: { modifiers: ["Mod", "Shift"], key: "J" } },
   { command: "op-obsidian:op-previous-issue", hotkey: { modifiers: ["Mod", "Shift"], key: "K" } },
