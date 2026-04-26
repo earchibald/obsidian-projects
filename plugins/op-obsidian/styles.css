@@ -1145,3 +1145,91 @@ a.op-sidebar__agent:hover {
   font-family: var(--font-monospace, monospace);
   width: 100%;
 }
+
+/* OP-205 (3e) — bad-model recovery dialog. */
+
+.op-recovery-modal__lede {
+  margin-bottom: 0.75rem;
+  color: var(--text-muted);
+}
+
+.op-recovery-modal__columns {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1rem;
+  margin: 0.75rem 0;
+}
+
+.op-recovery-modal__column h3 {
+  font-size: var(--font-ui-small);
+  margin: 0 0 0.25rem 0;
+  color: var(--text-muted);
+}
+
+.op-recovery-modal__column ul {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem;
+}
+
+.op-recovery-modal__chip {
+  font-family: var(--font-monospace);
+  font-size: var(--font-ui-smaller, 0.75rem);
+  padding: 0.1rem 0.4rem;
+  background: var(--background-secondary);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.op-recovery-modal__chip:hover {
+  background: var(--background-modifier-hover);
+}
+
+.op-recovery-modal__patch-status {
+  font-size: var(--font-ui-small);
+  margin: 0.5rem 0;
+  min-height: 1.2em;
+}
+
+.op-recovery-modal__patch-status--ok {
+  color: var(--text-success, var(--color-green));
+}
+
+.op-recovery-modal__patch-status--error {
+  color: var(--text-error, var(--color-red));
+}
+
+.op-recovery-modal__diff-confirm pre.op-recovery-modal__diff,
+.op-recovery-modal pre.op-recovery-modal__diff {
+  font-family: var(--font-monospace);
+  font-size: var(--font-ui-smaller, 0.75rem);
+  background: var(--background-secondary);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 4px;
+  padding: 0.5rem 0.75rem;
+  max-height: 320px;
+  overflow: auto;
+  white-space: pre;
+}
+
+.op-recovery-modal__bak-row {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin-top: 1rem;
+  padding-top: 0.5rem;
+  border-top: 1px solid var(--background-modifier-border);
+  font-size: var(--font-ui-small);
+}
+
+.op-recovery-modal__bak-label {
+  color: var(--text-muted);
+}
+
+.op-recovery-modal__no-agent-hint {
+  margin: 0.5rem 0;
+}

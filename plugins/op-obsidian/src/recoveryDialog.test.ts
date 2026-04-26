@@ -11,29 +11,38 @@ vi.mock("obsidian", () => ({
     }
     hide() {}
   },
+  Modal: class {
+    contentEl: any = { empty() {}, createEl() {}, createDiv() {}, addClass() {} };
+    constructor(_app: any) {}
+    open() {}
+    close() {}
+    onOpen() {}
+    onClose() {}
+  },
+  Setting: class {
+    constructor(_el: any) {}
+    setName() { return this; }
+    setDesc() { return this; }
+    addText() { return this; }
+    addButton() { return this; }
+  },
+  TFile: class {
+    constructor(public path: string) {}
+  },
 }));
 
-import { openRecoveryDialog } from "./recoveryDialog";
+import {
+  describeFailure,
+  openRecoveryDialog,
+  synthesizeBadModelErrorFromDiagnostic,
+} from "./recoveryDialog";
 import { BadModelSpecError, NoInstalledAgentError } from "./stepResolver";
 import type { BadModelSpec } from "./modelRegistry";
+import type { WorkflowDiagnostic } from "./workflowDiagnostic";
 
 beforeEach(() => {
   noticeCalls.length = 0;
 });
-
-const opened: string[] = [];
-const opens: string[] = [];
-
-function fakeApp() {
-  opened.length = 0;
-  opens.length = 0;
-  return {
-    setting: {
-      open: () => opens.push("open"),
-      openTabById: (id: string) => opened.push(id),
-    },
-  } as any;
-}
 
 function badSpec(name: string): BadModelSpec {
   return {
@@ -45,9 +54,8 @@ function badSpec(name: string): BadModelSpec {
   };
 }
 
-describe("openRecoveryDialog", () => {
-  it("opens the op-obsidian Settings tab", () => {
-    const app = fakeApp();
+describe("describeFailure", () => {
+  it("renders cross-agent-overflow phrasing for an all-overflow BadModelSpecError", () => {
     const err = new BadModelSpecError(
       "implement",
       "claude",
@@ -55,32 +63,14 @@ describe("openRecoveryDialog", () => {
       "all-overflow",
       badSpec("pro"),
     );
-    openRecoveryDialog({ app, issueId: "OP-200", error: err });
-    expect(opens).toEqual(["open"]);
-    expect(opened).toEqual(["op-obsidian"]);
-  });
-
-  it("surfaces a sticky Notice describing a cross-agent-overflow failure", () => {
-    const app = fakeApp();
-    const err = new BadModelSpecError(
-      "implement",
-      "claude",
-      [{ name: "pro", classification: { kind: "cross-agent-overflow", otherAgent: "gemini" } }],
-      "all-overflow",
-      badSpec("pro"),
-    );
-    openRecoveryDialog({ app, issueId: "OP-200", error: err });
-    expect(noticeCalls).toHaveLength(1);
-    expect(noticeCalls[0].duration).toBe(0); // sticky
-    const text = String(noticeCalls[0].msg);
+    const text = describeFailure(err);
     expect(text).toContain('Step "implement"');
-    expect(text).toContain("agent \"claude\"");
+    expect(text).toContain('agent "claude"');
     expect(text).toContain('"pro" belongs to a different agent');
     expect(text).toContain("Allowed aliases:");
   });
 
-  it("surfaces a typo failure with the typo-specific phrasing", () => {
-    const app = fakeApp();
+  it("renders typo phrasing for a typo BadModelSpecError", () => {
     const err = new BadModelSpecError(
       "review",
       "claude",
@@ -88,30 +78,82 @@ describe("openRecoveryDialog", () => {
       "typo",
       badSpec("opuss"),
     );
-    openRecoveryDialog({ app, issueId: "OP-200", error: err });
-    const text = String(noticeCalls[0].msg);
+    const text = describeFailure(err);
     expect(text).toContain("typo");
-    expect(text).toContain("\"opuss\" is unknown to every registered agent");
+    expect(text).toContain('"opuss" is unknown to every registered agent');
   });
 
-  it("surfaces NoInstalledAgentError with the attempted-agent list", () => {
-    const app = fakeApp();
+  it("renders attempted-agent list for NoInstalledAgentError", () => {
     const err = new NoInstalledAgentError("plan", ["gemini", "copilot"]);
-    openRecoveryDialog({ app, issueId: "OP-200", error: err });
-    const text = String(noticeCalls[0].msg);
+    const text = describeFailure(err);
     expect(text).toContain('Step "plan" has no installed agent');
     expect(text).toContain("gemini, copilot");
   });
+});
 
-  it("does not throw when app.setting is unavailable (defensive)", () => {
-    expect(() =>
-      openRecoveryDialog({
-        app: {} as any,
-        issueId: "OP-200",
-        error: new NoInstalledAgentError("plan", ["claude"]),
-      }),
-    ).not.toThrow();
-    // Notice still fires.
+describe("openRecoveryDialog", () => {
+  it("falls back to a sticky Notice when app has no workspace (defensive)", () => {
+    openRecoveryDialog({
+      app: {} as any, // no workspace -> Notice fallback path
+      issueId: "OP-200",
+      project: "demo",
+      mode: "launch",
+      error: new NoInstalledAgentError("plan", ["claude"]),
+      onResolved: () => {},
+    });
     expect(noticeCalls).toHaveLength(1);
+    expect(noticeCalls[0].duration).toBe(0);
+    expect(String(noticeCalls[0].msg)).toContain('Step "plan" has no installed agent');
+  });
+});
+
+describe("synthesizeBadModelErrorFromDiagnostic", () => {
+  it("rebuilds a BadModelSpecError from a structured bad-model diagnostic (typo branch)", () => {
+    const d: WorkflowDiagnostic = {
+      code: "bad-model",
+      severity: "error",
+      message: "x",
+      stepId: "implement",
+      extra: badSpec("opuss"),
+    };
+    const err = synthesizeBadModelErrorFromDiagnostic(d);
+    expect(err).not.toBeNull();
+    expect(err!.reason).toBe("typo");
+    expect(err!.bad.badName).toBe("opuss");
+    expect(err!.chosenAgent).toBe("claude");
+    expect(err!.attempts).toHaveLength(1);
+    expect(err!.attempts[0].classification.kind).toBe("typo");
+  });
+
+  it("classifies overflow when the bad name is a known model for another agent", () => {
+    const d: WorkflowDiagnostic = {
+      code: "bad-model",
+      severity: "error",
+      message: "x",
+      stepId: "implement",
+      extra: { ...badSpec("pro") },
+    };
+    const err = synthesizeBadModelErrorFromDiagnostic(d);
+    expect(err).not.toBeNull();
+    expect(err!.reason).toBe("all-overflow");
+    expect(err!.attempts[0].classification.kind).toBe("cross-agent-overflow");
+  });
+
+  it("returns null for diagnostics that aren't bad-model", () => {
+    const d: WorkflowDiagnostic = {
+      code: "schema-mismatch",
+      severity: "error",
+      message: "x",
+    };
+    expect(synthesizeBadModelErrorFromDiagnostic(d)).toBeNull();
+  });
+
+  it("returns null for malformed bad-model diagnostics (missing extra)", () => {
+    const d: WorkflowDiagnostic = {
+      code: "bad-model",
+      severity: "error",
+      message: "x",
+    };
+    expect(synthesizeBadModelErrorFromDiagnostic(d)).toBeNull();
   });
 });
