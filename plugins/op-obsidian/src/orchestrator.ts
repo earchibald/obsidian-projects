@@ -311,18 +311,37 @@ export function buildViewScript({
   issueTitle,
 }: BuildViewArgs): string {
   const tmux = shSingleQuote(tmuxBinary);
+  const groupSessName = `view-${issueId}`;
   const sess = shSingleQuote(tmuxSession);
-  const groupSess = shSingleQuote(`view-${issueId}`);
+  const groupSess = shSingleQuote(groupSessName);
+  const groupSessTarget = shSingleQuote(`=${groupSessName}`);
   const win = shSingleQuote(tmuxWindow);
   const tabName = shSingleQuote(oscSafe(issueId));
   const windowTitle = shSingleQuote(
     oscSafe(issueTitle && issueTitle.length > 0 ? issueTitle : issueId),
   );
+  // OP-178: the per-pane grouped session shares its window list with the
+  // parent op-agents-N session. When the agent's window is unlinked (e.g. on
+  // /quit) tmux silently switches the attached client to the next window —
+  // typically a sibling agent — so the iTerm pane lingers as a duplicate
+  // viewer. The hook below kills the view session when the unlinked window
+  // is *this* pane's agent window; tmux then detaches the client, the bash
+  // `exec tmux attach` returns, and the iTerm pane closes.
+  const hookCmd = `if-shell -F '#{==:#{hook_window_name},${tmuxWindow}}' 'kill-session -t =${groupSessName}'`;
   const lines = [
     "#!/bin/bash",
     "set -e",
     `export PATH="/opt/homebrew/bin:/usr/local/bin:$HOME/.local/bin:$HOME/bin:$PATH"`,
     `${tmux} new-session -d -s ${groupSess} -t ${sess} 2>/dev/null || true`,
+    // OP-178: make set-hook non-fatal so a session-already-gone race (agent
+    // crashed before this script reached set-hook) doesn't show an error
+    // before the subsequent exec-attach also fails and the pane closes.
+    `${tmux} set-hook -t ${groupSessTarget} window-unlinked ${shSingleQuote(hookCmd)} 2>/dev/null || true`,
+    // OP-178 race guard: if the agent window died between new-session and
+    // set-hook while sibling windows kept the session alive, the hook is now
+    // installed but will never fire (window already gone). Kill the session
+    // immediately so exec-attach never runs and the pane closes cleanly.
+    `${tmux} select-window -t ${groupSessTarget}:${win} 2>/dev/null || { ${tmux} kill-session -t ${groupSessTarget} 2>/dev/null || true; }`,
     `printf '\\033]1;%s\\007' ${tabName}`,
     `printf '\\033]2;%s\\007' ${windowTitle}`,
     `exec ${tmux} attach -t ${groupSess} \\; select-window -t ${groupSess}:${win}`,

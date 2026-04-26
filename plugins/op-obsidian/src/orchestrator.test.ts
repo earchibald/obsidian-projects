@@ -163,4 +163,47 @@ describe("buildViewScript", () => {
       `exec '/opt/homebrew/bin/tmux' attach -t 'view-OP-172' \\; select-window -t 'view-OP-172':'OP-172'`,
     );
   });
+
+  // OP-178: the per-pane view session inherits the parent op-agents-N
+  // session's window list, so the agent's `/quit` would otherwise leave the
+  // iTerm pane attached and silently switched to a sibling agent's window.
+  // The hook kills the view session when the agent's specific window is
+  // unlinked, so the iTerm pane closes cleanly.
+  it("installs a window-unlinked hook on the view session that kills it when the agent's window dies", () => {
+    const out = buildViewScript(baseArgs);
+    expect(out).toContain(
+      `'/opt/homebrew/bin/tmux' set-hook -t '=view-OP-172' window-unlinked 'if-shell -F '\\''#{==:#{hook_window_name},OP-172}'\\'' '\\''kill-session -t =view-OP-172'\\'''`,
+    );
+  });
+
+  it("installs the hook after new-session and before exec attach, with race guard in between", () => {
+    const out = buildViewScript(baseArgs);
+    const newSessionIdx = out.indexOf("new-session -d -s 'view-OP-172'");
+    const hookIdx = out.indexOf("set-hook -t '=view-OP-172'");
+    const raceGuardIdx = out.indexOf("select-window -t '=view-OP-172':'OP-172'");
+    const execIdx = out.indexOf("exec '/opt/homebrew/bin/tmux' attach");
+    expect(newSessionIdx).toBeGreaterThan(-1);
+    expect(hookIdx).toBeGreaterThan(newSessionIdx);
+    expect(raceGuardIdx).toBeGreaterThan(hookIdx);
+    expect(execIdx).toBeGreaterThan(raceGuardIdx);
+  });
+
+  // OP-178 race guard: agent window dies between new-session and set-hook
+  // while sibling windows keep the session alive. The hook is installed but
+  // will never fire (window already gone), so we kill the session immediately.
+  it("emits a race guard that kills the view session when the agent window is already gone", () => {
+    const out = buildViewScript(baseArgs);
+    expect(out).toContain(
+      `'/opt/homebrew/bin/tmux' select-window -t '=view-OP-172':'OP-172' 2>/dev/null || { '/opt/homebrew/bin/tmux' kill-session -t '=view-OP-172' 2>/dev/null || true; }`,
+    );
+  });
+
+  it("scopes the hook to the agent's specific window name so sibling deaths leave this view alone", () => {
+    const out = buildViewScript({ ...baseArgs, issueId: "OP-178", tmuxWindow: "OP-178" });
+    // The format predicate compares the unlinked window's name to *this*
+    // pane's agent window — siblings unlinking on the shared window list
+    // won't match and the if-shell branch won't fire.
+    expect(out).toContain(`#{==:#{hook_window_name},OP-178}`);
+    expect(out).toContain(`kill-session -t =view-OP-178`);
+  });
 });
