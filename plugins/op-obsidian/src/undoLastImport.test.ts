@@ -163,7 +163,7 @@ describe("undoLastImport — empty / no history", () => {
 
 describe("undoLastImport — fresh import (no overwrite)", () => {
   it("trashes the imported module and removes the var; trashes the tx record", async () => {
-    const txPath = `${TRANSACTION_HISTORY_DIR}/20260426-120000.json`;
+    const txPath = `${TRANSACTION_HISTORY_DIR}/20260426-120000-000.json`;
     const tx = txRecord({
       modulesLanded: [
         {
@@ -199,8 +199,8 @@ describe("undoLastImport — fresh import (no overwrite)", () => {
 
 describe("undoLastImport — overwrite + backup restore", () => {
   it("restores the backed-up original to the target path", async () => {
-    const txPath = `${TRANSACTION_HISTORY_DIR}/20260426-120000.json`;
-    const backupPath = `${TRANSACTION_HISTORY_DIR}/20260426-120000.bak/Projects/_op-modules/orient.md`;
+    const txPath = `${TRANSACTION_HISTORY_DIR}/20260426-120000-000.json`;
+    const backupPath = `${TRANSACTION_HISTORY_DIR}/20260426-120000-000.bak/Projects/_op-modules/orient.md`;
     const tx = txRecord({
       modulesLanded: [
         {
@@ -222,9 +222,9 @@ describe("undoLastImport — overwrite + backup restore", () => {
       ],
       [
         TRANSACTION_HISTORY_DIR,
-        `${TRANSACTION_HISTORY_DIR}/20260426-120000.bak`,
-        `${TRANSACTION_HISTORY_DIR}/20260426-120000.bak/Projects`,
-        `${TRANSACTION_HISTORY_DIR}/20260426-120000.bak/Projects/_op-modules`,
+        `${TRANSACTION_HISTORY_DIR}/20260426-120000-000.bak`,
+        `${TRANSACTION_HISTORY_DIR}/20260426-120000-000.bak/Projects`,
+        `${TRANSACTION_HISTORY_DIR}/20260426-120000-000.bak/Projects/_op-modules`,
         "Projects",
         "Projects/_op-modules",
       ],
@@ -234,13 +234,13 @@ describe("undoLastImport — overwrite + backup restore", () => {
     expect(state.files.get("Projects/_op-modules/orient.md")?.raw).toBe(
       "old (backed-up) content",
     );
-    expect(state.trashed).toContain(`${TRANSACTION_HISTORY_DIR}/20260426-120000.bak`);
+    expect(state.trashed).toContain(`${TRANSACTION_HISTORY_DIR}/20260426-120000-000.bak`);
   });
 });
 
 describe("undoLastImport — preexisting vars", () => {
   it("preserves preexisting=true vars and removes only the import-added ones", async () => {
-    const txPath = `${TRANSACTION_HISTORY_DIR}/20260426-120000.json`;
+    const txPath = `${TRANSACTION_HISTORY_DIR}/20260426-120000-000.json`;
     const tx = txRecord({
       modulesLanded: [
         {
@@ -277,7 +277,7 @@ describe("undoLastImport — preexisting vars", () => {
 
 describe("undoLastImport — project-scope vars", () => {
   it("removes a project-scope var from STATUS.md vars: map", async () => {
-    const txPath = `${TRANSACTION_HISTORY_DIR}/20260426-120000.json`;
+    const txPath = `${TRANSACTION_HISTORY_DIR}/20260426-120000-000.json`;
     const tx = txRecord({
       modulesLanded: [
         {
@@ -321,7 +321,7 @@ describe("undoLastImport — project-scope vars", () => {
 describe("undoLastImport — picks the latest record", () => {
   it("reverses the alphabetically-latest filename when multiple records exist", async () => {
     const older = `${TRANSACTION_HISTORY_DIR}/20260101-000000.json`;
-    const newer = `${TRANSACTION_HISTORY_DIR}/20260426-120000.json`;
+    const newer = `${TRANSACTION_HISTORY_DIR}/20260426-120000-000.json`;
     const olderTx = txRecord({
       timestamp: "2026-01-01T00:00:00.000Z",
       modulesLanded: [

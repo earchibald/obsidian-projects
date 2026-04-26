@@ -390,6 +390,38 @@ describe("planImport", () => {
     expect(plan.overwrite).toBe(true);
     expect(plan.backupRelPath).toBe("Projects/_op-modules/orient.md");
   });
+
+  it("exposes targetScope on the plan — global import keeps targetScope=global even when module has a project: field", () => {
+    // Bug guard: a per-project module imported globally must carry
+    // targetScope="global" on the plan so commitImport routes prompted vars
+    // to workflowVars, not to a project STATUS.md.
+    const perProjectModule = mod({ project: "some-project" });
+    const plan = planImport({
+      module: perProjectModule,
+      body: "Use {{vars.tone}}.",
+      targetScope: "global",
+      globalVars: {},
+      projectVars: {},
+    });
+    expect(plan.targetScope).toBe("global");
+    // rewrittenProject preserves the source project: field for the module
+    // frontmatter — this is NOT the scope indicator.
+    expect(plan.rewrittenProject).toBe("some-project");
+    // The target path is still the global modules directory.
+    expect(plan.targetPath).toBe("Projects/_op-modules/orient.md");
+  });
+
+  it("exposes targetScope=project on a project-scope plan", () => {
+    const plan = planImport({
+      module: mod(),
+      body: "x",
+      targetScope: "project",
+      targetProjectSlug: "demo",
+      globalVars: {},
+      projectVars: {},
+    });
+    expect(plan.targetScope).toBe("project");
+  });
 });
 
 describe("transaction record round-trip", () => {
@@ -406,7 +438,7 @@ describe("transaction record round-trip", () => {
         originalProject: "bar",
         rewrittenProject: "foo",
         overwrote: true,
-        backupPath: "Projects/_op-import-history/20260426-120000.bak/Projects/foo/MODULES/x.md",
+        backupPath: "Projects/_op-import-history/20260426-120000-000.bak/Projects/foo/MODULES/x.md",
       },
     ],
     varsWritten: [
@@ -442,10 +474,12 @@ describe("transaction record round-trip", () => {
 });
 
 describe("transactionFilename", () => {
-  it("formats local timestamp with second resolution", () => {
+  it("formats local timestamp with millisecond resolution", () => {
     // Construct a fixed local-time date — verify the components without
     // depending on the test runner's TZ.
-    const d = new Date(2026, 3, 26, 9, 5, 7); // April 26 2026 09:05:07 local
-    expect(transactionFilename(d)).toBe("20260426-090507");
+    const d = new Date(2026, 3, 26, 9, 5, 7); // April 26 2026 09:05:07 local, 0ms
+    expect(transactionFilename(d)).toBe("20260426-090507-000");
+    const d2 = new Date(2026, 3, 26, 9, 5, 7, 42);
+    expect(transactionFilename(d2)).toBe("20260426-090507-042");
   });
 });

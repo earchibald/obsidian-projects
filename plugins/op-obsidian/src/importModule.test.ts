@@ -195,7 +195,7 @@ describe("commitImport", () => {
     });
     expect(result.targetPath).toBe("Projects/_op-modules/orient.md");
     expect(result.transactionPath).toBe(
-      "Projects/_op-import-history/20260426-120000.json",
+      "Projects/_op-import-history/20260426-120000-000.json",
     );
     expect(state.files.has("Projects/_op-modules/orient.md")).toBe(true);
     expect(state.files.has(result.transactionPath)).toBe(true);
@@ -225,7 +225,7 @@ describe("commitImport", () => {
     });
     expect(result.overwrote).toBe(true);
     expect(result.backupPath).toBe(
-      "Projects/_op-import-history/20260426-120000.bak/Projects/_op-modules/orient.md",
+      "Projects/_op-import-history/20260426-120000-000.bak/Projects/_op-modules/orient.md",
     );
     expect(state.files.get(result.backupPath!)?.raw).toBe("previous version");
   });
@@ -286,5 +286,38 @@ describe("commitImport", () => {
     await expect(
       commitImport(app, settings, async () => {}, { prepared }),
     ).rejects.toThrow(/missing answer for var\(s\): tone/);
+  });
+
+  it("lands prompted vars at global scope even when the module has a project: field (scope bug guard)", async () => {
+    // A per-project module imported globally: rewrittenProject is set (it
+    // mirrors the module's project: field for the landing frontmatter), but
+    // prompted vars MUST still land in workflowVars, not in a STATUS.md.
+    const importPath = "Projects/_op-export/orient.md";
+    const bundleWithProject = moduleBundle({ project: "some-project" });
+    const { app, state } = fakeApp([{ path: importPath, raw: bundleWithProject }]);
+    const settings = baseSettings();
+    const prepared = await prepareImport(app, settings, {
+      sourcePath: importPath,
+      targetScope: "global", // ← importing globally despite module.project being set
+    });
+    // Sanity: the plan preserves the module's project: in rewrittenProject but
+    // still targets the global path.
+    expect(prepared.plan.rewrittenProject).toBe("some-project");
+    expect(prepared.plan.targetPath).toBe("Projects/_op-modules/orient.md");
+    expect(prepared.plan.targetScope).toBe("global");
+
+    const result = await commitImport(app, settings, async () => {}, {
+      prepared,
+      varAnswers: { tone: "loud" },
+      now: () => new Date(2026, 3, 26, 12, 0, 0),
+    });
+    // Var must land in global workflowVars, NOT in a project STATUS.md.
+    expect(settings.workflowVars).toEqual({ tone: "loud" });
+    expect(state.varsByStatus.size).toBe(0);
+    // Transaction record must reflect global scope for the var.
+    const tx = JSON.parse(state.files.get(result.transactionPath)!.raw);
+    expect(tx.varsWritten).toEqual([
+      { name: "tone", value: "loud", scopeKind: "global", preexisting: false },
+    ]);
   });
 });

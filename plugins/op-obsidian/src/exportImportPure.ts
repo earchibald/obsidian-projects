@@ -345,6 +345,13 @@ export interface PlannedVarWrite {
 export interface ImportPlan {
   /** Vault-relative path the module file lands at. */
   targetPath: string;
+  /**
+   * The scope this import targets. Authoritative for var-write routing — do
+   * NOT use `rewrittenProject` as a proxy, because a global import of a
+   * per-project module has `rewrittenProject !== null` even though vars must
+   * land at global scope.
+   */
+  targetScope: ImportScopeKind;
   /** Slug rewritten into the module's `project:` field (or `null` to clear). */
   rewrittenProject: string | null;
   /** Original `project:` from the import (or `null` if absent). */
@@ -469,6 +476,7 @@ export function planImport(args: PlanImportArgs): ImportPlan {
 
   const plan: ImportPlan = {
     targetPath,
+    targetScope,
     rewrittenProject,
     originalProject,
     overwrite: !!existingTargetPath,
@@ -633,15 +641,19 @@ export function parseTransaction(raw: string): ParseTransactionResult {
 
 /**
  * Compose a timestamp filename for `Projects/_op-import-history/<ts>.json`.
- * Uses local time, dash-separated, second resolution. Caller picks the date.
+ * Uses local time, dash-separated, millisecond resolution. Milliseconds
+ * prevent the `vault.create` collision that two back-to-back imports in the
+ * same wall-clock second would otherwise cause. Caller picks the date.
  */
 export function transactionFilename(date: Date): string {
   const pad = (n: number) => n.toString().padStart(2, "0");
+  const pad3 = (n: number) => n.toString().padStart(3, "0");
   const y = date.getFullYear();
   const mo = pad(date.getMonth() + 1);
   const d = pad(date.getDate());
   const h = pad(date.getHours());
   const mi = pad(date.getMinutes());
   const s = pad(date.getSeconds());
-  return `${y}${mo}${d}-${h}${mi}${s}`;
+  const ms = pad3(date.getMilliseconds());
+  return `${y}${mo}${d}-${h}${mi}${s}-${ms}`;
 }

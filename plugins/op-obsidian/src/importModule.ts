@@ -270,7 +270,7 @@ export async function commitImport(
     const w: PlannedVarWrite = pickPromptScope({
       name: p.name,
       value,
-      targetScope: prepared.plan.rewrittenProject ? "project" : "global",
+      targetScope: prepared.plan.targetScope,
       slug: prepared.plan.rewrittenProject ?? undefined,
     });
     await applyVarWrite(app, settings, w);
