@@ -65,7 +65,7 @@ export function assertOpTestVaultOpen() {
         `\nOpen the OP-Test vault in Obsidian (any window — focus is no longer required) and re-run.`,
     );
   }
-  if (!stdout.includes(OP_TEST_VAULT_NAME)) {
+  if (!stdout.startsWith(`=> ${OP_TEST_VAULT_NAME}`)) {
     fail(
       `OP-Test probe returned an unexpected payload — refusing to proceed.\n` +
         `  out: ${stdout || "(empty)"}\n`,
