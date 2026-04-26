@@ -774,18 +774,21 @@ export class OpSettingsTab extends PluginSettingTab {
 
     // OP-206 (3f): toggle to re-enable the preview auto-expand affordance
     // if the user previously dismissed it via the LaunchAgentModal link.
+    // The persisted flag is `previewAutoExpandDismissed` (dismissed = toggle OFF),
+    // so the toggle value is the logical inverse.
     const s = this.plugin.settings;
     new Setting(parentEl)
       .setName("Auto-expand launch preview")
       .setDesc(
         "When enabled, the \"Composed prompt preview\" disclosure in the Launch modal expands automatically on the first three launches per Obsidian session. Clicking \"Don't auto-expand by default\" in the modal disables this.",
       )
-      .addToggle((t) =>
-        t.setValue(!s.previewAutoExpandDismissed).onChange(async (v) => {
-          s.previewAutoExpandDismissed = !v;
+      .addToggle((t) => {
+        const autoExpandEnabled = !s.previewAutoExpandDismissed;
+        t.setValue(autoExpandEnabled).onChange(async (enabled) => {
+          s.previewAutoExpandDismissed = !enabled;
           await this.plugin.saveSettings();
-        }),
-      );
+        });
+      });
   }
 
   private renderAvailableVariables(parentEl: HTMLElement): void {

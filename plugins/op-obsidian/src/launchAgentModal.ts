@@ -450,6 +450,10 @@ class LaunchAgentModal extends Modal {
     const text = this.composed?.text ?? "";
     const sizeChars = this.composed?.sizeChars ?? 0;
     const diagnosticCount = this.composed?.diagnostics.length ?? 0;
+    // `text` is always a string (the `?? ""` above guarantees it), so `!text`
+    // is true both when `composed` is null (no WORKFLOW.md) and when the file
+    // loaded but the kickoff step produced zero output. `this.workflowFile`
+    // distinguishes the two cases for the user-facing hint below.
 
     // Disclosure header.
     const summary = root.createEl("button", {
