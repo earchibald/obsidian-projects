@@ -53,6 +53,7 @@ export type {
   DeveloperSettings,
   FlowSettings,
   OpSettings,
+  WorkflowMode,
 } from "./settingsPure";
 
 /**

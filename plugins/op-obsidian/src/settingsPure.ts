@@ -7,6 +7,15 @@ import { type RecencyEntry, sanitizeRecency } from "./recencyLog";
 
 export const EXTRA_PREAMBLE_MAX = 4000;
 
+/** OP-198 (2a): selector for the workflow-injection engine.
+ *  - `'legacy'` (default): `buildPrompt` inlines `Projects/<slug>/WORKFLOW.md`
+ *    verbatim (capped at `injection.maxWorkflowChars`).
+ *  - `'modules'`: `buildPrompt` calls `loadAndComposeWorkflow` (OP-197) for
+ *    the kickoff step and splices the composed text in. Per-mode and
+ *    per-step injection arrive in OP-199 (2b) and OP-200 (2c). */
+export type WorkflowMode = "legacy" | "modules";
+export const WORKFLOW_MODES: ReadonlySet<WorkflowMode> = new Set(["legacy", "modules"]);
+
 export interface InjectionSettings {
   injectBody: boolean;
   maxBodyChars: number;
@@ -126,6 +135,15 @@ export interface OpSettings {
   // gesture. Set explicitly to `false` (or run the `op: reset onboarding`
   // command, when wired) to re-trigger.
   firstRunCompleted: boolean;
+  /** OP-198 (2a): switch between the legacy `WORKFLOW.md` inline-blob path
+   *  and the OP-197 modular composer at kickoff. Defaults to `'legacy'` so
+   *  upgrading users see byte-identical prompts until they opt in. */
+  workflowMode: WorkflowMode;
+  /** OP-198 (2a): vault-wide user vars threaded into the composer's
+   *  Global precedence layer (OP-197 §"Precedence"). Per-project values live
+   *  in the project's `STATUS.md` `vars:` map (resolved by OP-197 already);
+   *  per-launch overrides arrive via OP-199/OP-200. Defaults to `{}`. */
+  workflowVars: Record<string, string>;
 }
 
 export const DEFAULT_SETTINGS: OpSettings = {
@@ -189,6 +207,8 @@ export const DEFAULT_SETTINGS: OpSettings = {
   projectOrder: [],
   recent: [],
   firstRunCompleted: false,
+  workflowMode: "legacy",
+  workflowVars: {},
 };
 
 const SIDEBAR_TABS: ReadonlySet<SidebarTab> = new Set(["issues", "in-flight", "resolved"]);
@@ -314,6 +334,18 @@ export function mergeSettings(loaded: unknown): OpSettings {
     if (typeof f.headlessTimeoutMs === "number" && f.headlessTimeoutMs > 0) {
       base.flow.headlessTimeoutMs = Math.floor(f.headlessTimeoutMs);
     }
+  }
+  if (typeof l.workflowMode === "string" && WORKFLOW_MODES.has(l.workflowMode as WorkflowMode)) {
+    base.workflowMode = l.workflowMode as WorkflowMode;
+  }
+  if (l.workflowVars && typeof l.workflowVars === "object" && !Array.isArray(l.workflowVars)) {
+    const out: Record<string, string> = {};
+    for (const [k, v] of Object.entries(l.workflowVars as Record<string, unknown>)) {
+      if (typeof k !== "string") continue;
+      if (typeof v !== "string") continue;
+      out[k] = v;
+    }
+    base.workflowVars = out;
   }
   return base;
 }
