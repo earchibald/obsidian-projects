@@ -104,18 +104,22 @@ class LaunchAgentModal extends Modal {
       : args.installed[0] ?? AGENT_IDS[0];
     this.launchVars = { ...(args.initialLaunchVars ?? {}) };
     this.expanded = args.startExpanded ?? Object.keys(this.launchVars).length > 0;
-    // OP-206 (3f): bump the session counter at construction time and consult
-    // the dismissed flag. The modal opens immediately after construction, so
-    // there's no observable difference between bumping here vs. in onOpen.
-    const sessionLaunchCount = bumpSessionLaunchCount();
-    this.previewExpanded = shouldAutoExpand({
-      sessionLaunchCount,
-      dismissed: args.settings.previewAutoExpandDismissed,
-    });
+    // OP-206 (3f): preview starts collapsed; the auto-expand decision is made
+    // in `onOpen` so the counter only bumps for modals that actually open
+    // (construction without `open()` — e.g. an error thrown between
+    // `new LaunchAgentModal(...)` and `modal.open()` — won't burn a slot).
+    this.previewExpanded = false;
   }
 
   async onOpen(): Promise<void> {
     const { contentEl, titleEl } = this;
+    // OP-206 (3f): bump the session counter now that we know the modal
+    // is actually opening, then decide whether the preview should auto-expand.
+    const sessionLaunchCount = bumpSessionLaunchCount();
+    this.previewExpanded = shouldAutoExpand({
+      sessionLaunchCount,
+      dismissed: this.args.settings.previewAutoExpandDismissed,
+    });
     titleEl.setText("Launch agent");
     contentEl.addClass("op-launch-modal");
 
@@ -472,10 +476,14 @@ class LaunchAgentModal extends Modal {
 
     if (!this.previewExpanded) return;
 
-    if (!this.workflowFile) {
+    // Show a contextual hint when the preview is empty so the user knows
+    // whether to look for a missing WORKFLOW.md or an empty/misconfigured one.
+    if (!text) {
       root.createDiv({
         cls: "op-launch-modal__preview-hint",
-        text: "(no composed prompt — workflow file or modules missing for this project)",
+        text: this.workflowFile
+          ? "(no composed prompt — WORKFLOW.md loaded but the kickoff step produced empty output; check module bodies and variable bindings)"
+          : "(no composed prompt — no WORKFLOW.md found for this project; create one under Projects/<project>/ to enable prompt composition)",
       });
     }
 

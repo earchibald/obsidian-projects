@@ -146,6 +146,12 @@ function resolveProfileById(settings: OpSettings, raw: string): AgentProfile {
   return resolveProfile(settings, id);
 }
 
+// OP-206 (3f): `buildIssueRenderContext` and `readProjectVars` are exported
+// for reuse by `previewWorkflowModal.ts` so the Settings preview and the
+// launcher both build the same RenderContext. If you add a new field to either
+// function's output, check `previewWorkflowModal.ts` (`recompose()`) and
+// `explainWorkflow.ts` (`explainWorkflow()`) in lockstep — they share the
+// same interface contract and divergence produces a preview-vs-reality gap.
 export function buildIssueRenderContext(
   app: App,
   settings: OpSettings,
