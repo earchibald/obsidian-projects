@@ -154,9 +154,13 @@ export async function openAgent(
   });
 
   // OP-155 §4 Step 4: first iTerm launch — surface the one-time prefs Notice
-  // and persist the bit. Fire-and-forget; failures (defaults read errors,
-  // settings-save errors) must not block the agent launch.
+  // and persist the bit. Flip the bit synchronously *before* yielding to the
+  // event loop so a second concurrent op-open-agent invocation (near-
+  // simultaneous user actions) sees the gate closed and doesn't double-fire
+  // the Notice. maybeShowITermPrefsNotice rolls it back to false if iTerm is
+  // absent (so the Notice can fire on the next launch) or if saving fails.
   if (settings.terminal === "iTerm" && !settings.iTermPrefsNoticeShown) {
+    settings.iTermPrefsNoticeShown = true; // optimistic — rolled back on failure
     void maybeShowITermPrefsNotice(settings, saveSettings);
   }
 
@@ -176,11 +180,16 @@ async function maybeShowITermPrefsNotice(
   saveSettings: () => Promise<void>,
 ): Promise<void> {
   try {
-    if (!(await iTermDefaultsDomainPresent())) return;
+    if (!(await iTermDefaultsDomainPresent())) {
+      // iTerm absent — roll back optimistic bit so the Notice can fire again
+      // when iTerm is eventually installed.
+      settings.iTermPrefsNoticeShown = false;
+      return;
+    }
     showITermTmuxPrefsNotice();
-    settings.iTermPrefsNoticeShown = true;
     await saveSettings();
   } catch (err) {
+    settings.iTermPrefsNoticeShown = false; // roll back so retry is possible
     console.warn("[op-obsidian] iTerm prefs Notice failed:", err);
   }
 }
