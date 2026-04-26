@@ -114,7 +114,7 @@ const ADVANCED_SECTIONS: ReadonlyArray<{
     id: "worktreeEnforcement",
     title: "Agent worktree enforcement",
     blurb:
-      "Opt-in PreToolUse hook (Claude Code + Gemini) that blocks Edit/Write on the main checkout for op-launched sessions.",
+      "Opt-in PreToolUse hook that blocks Edit/Write on the main checkout for op-launched sessions. Verified on Claude Code; the Gemini install path is best-effort and untested. Copilot CLI has no PreToolUse surface, so this guard does not apply to Copilot sessions.",
   },
   {
     id: "flowChaining",
@@ -392,7 +392,7 @@ export class OpSettingsTab extends PluginSettingTab {
     new Setting(containerEl)
       .setName("Default agent")
       .setDesc(
-        "Agent launched by “op: open agent for issue” when no override is given — e.g. claude, gemini, codex. The picker only appears when this agent isn't detected on PATH, or “Always prompt for agent” is on.",
+        "Agent launched by “op: open agent for issue” when no override is given. Only claude is supported and exercised end-to-end; gemini and copilot are second-class, untested scaffolding — see the project README's “Supported AI runtimes” section. The picker only appears when this agent isn't detected on PATH, or “Always prompt for agent” is on.",
       )
       .addDropdown((d) => {
         for (const id of AGENT_IDS) d.addOption(id, id);
@@ -1209,7 +1209,7 @@ export class OpSettingsTab extends PluginSettingTab {
     new Setting(containerEl)
       .setName("Enforce worktree for delegated agents")
       .setDesc(
-        "Block edits on the main checkout for op-launched sessions. PreToolUse hook (Claude Code + Gemini); Copilot CLI is skipped (no pre-tool gate). Changes take effect on the next agent session. Override per-session with OP_ALLOW_MAIN_EDIT=1.",
+        "Block edits on the main checkout for op-launched sessions. PreToolUse hook — verified on Claude Code; the Gemini install path is best-effort and untested. Copilot CLI is skipped (no pre-tool gate). Changes take effect on the next agent session. Override per-session with OP_ALLOW_MAIN_EDIT=1.",
       )
       .addToggle((t) =>
         t.setValue(s.agents.enforceWorktree).onChange(async (v) => {
@@ -1348,7 +1348,7 @@ export class OpSettingsTab extends PluginSettingTab {
     );
     addTerm(
       "Worktree enforcement",
-      "An opt-in PreToolUse hook (Claude Code + Gemini only) that blocks Edit/Write on the main checkout for op-launched agents. Agents must `git worktree add` or export `OP_ALLOW_MAIN_EDIT=1` to override.",
+      "An opt-in PreToolUse hook that blocks Edit/Write on the main checkout for op-launched agents. Verified on Claude Code; the Gemini install path is best-effort and untested. Copilot CLI has no PreToolUse surface and is not gated. Agents must `git worktree add` or export `OP_ALLOW_MAIN_EDIT=1` to override.",
     );
   }
 

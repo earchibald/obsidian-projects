@@ -113,7 +113,7 @@ Accepts `slug N`, `slug PREFIX-N`, `PREFIX N`, `PREFIX-N`, or just `slug`/`PREFI
 
 ### Start
 
-1. `obsidian op-work issue=<PREFIX>-<N> agent=<your-agent-id> [agent_session=<session-id>]`. The `agent` value is your runtime's identity (`claude`, `codex`, `gemini`, `copilot`, …) — pass the literal id, not the model name. The `agent_session` value should be a stable per-session identifier from your runtime; for Claude Code use `$CLAUDE_SESSION_ID` (exported in hook environments and via `--env`), and for other runtimes use whatever equivalent your harness exposes. Omit `agent_session=` if no stable id is available.
+1. `obsidian op-work issue=<PREFIX>-<N> agent=<your-agent-id> [agent_session=<session-id>]`. The `agent` value is your runtime's identity (`claude`, `codex`, `gemini`, `copilot`, …) — pass the literal id, not the model name. Only `claude` is exercised in this repo's dev workflow and tests; `gemini` and `copilot` are second-class scaffolding (the dispatch code accepts them but no part of the workflow has been validated against a live install — see the README's "Supported AI runtimes" section). The `agent_session` value should be a stable per-session identifier from your runtime; for Claude Code use `$CLAUDE_SESSION_ID` (exported in hook environments and via `--env`), and for other runtimes use whatever equivalent your harness exposes. Omit `agent_session=` if no stable id is available.
 
    Read the JSON payload at `Projects/_scratch/op-last-response.md` after the call:
    - `registered: true` and no `conflict` → you own the issue, proceed.
