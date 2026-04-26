@@ -105,6 +105,90 @@ describe("client.findSessionId", () => {
 });
 
 describe("client write ops (fake transport)", () => {
+  it("createTab sends CreateTabRequest with windowId + Command and returns ids", async () => {
+    await withTransport(
+      {
+        createTabResponse: {
+          status: iterm2.CreateTabResponse.Status.OK,
+          windowId: "w-existing",
+          sessionId: "s-new",
+        },
+      },
+      async (last) => {
+        const { createTab } = await import("./client");
+        const res = await createTab("bash /tmp/y.sh", "w-existing");
+        expect(res).toEqual({ windowId: "w-existing", sessionId: "s-new" });
+        const req = last.msg?.createTabRequest;
+        expect(req?.windowId).toBe("w-existing");
+        const props = req?.customProfileProperties ?? [];
+        const byKey = Object.fromEntries(props.map((p) => [p.key, p.jsonValue]));
+        expect(byKey["Custom Command"]).toBe(JSON.stringify("Yes"));
+        expect(byKey["Command"]).toBe(JSON.stringify("bash /tmp/y.sh"));
+      },
+    );
+  });
+
+  it("createTab throws on non-OK status", async () => {
+    await withTransport(
+      {
+        createTabResponse: {
+          status: iterm2.CreateTabResponse.Status.INVALID_WINDOW_ID,
+        },
+      },
+      async () => {
+        const { createTab } = await import("./client");
+        await expect(createTab("cmd", "w-bad")).rejects.toThrow(
+          /createTab\(window=w-bad\) failed/,
+        );
+      },
+    );
+  });
+
+  it("activeWindowId returns the windowId of the BECAME_KEY entry", async () => {
+    await withTransport(
+      {
+        focusResponse: {
+          notifications: [
+            { applicationActive: true },
+            {
+              window: {
+                windowStatus:
+                  iterm2.FocusChangedNotification.Window.WindowStatus.TERMINAL_WINDOW_BECAME_KEY,
+                windowId: "w-key",
+              },
+            },
+          ],
+        },
+      },
+      async () => {
+        const { activeWindowId } = await import("./client");
+        expect(await activeWindowId()).toBe("w-key");
+      },
+    );
+  });
+
+  it("activeWindowId returns undefined when no window is key", async () => {
+    await withTransport(
+      {
+        focusResponse: {
+          notifications: [
+            {
+              window: {
+                windowStatus:
+                  iterm2.FocusChangedNotification.Window.WindowStatus.TERMINAL_WINDOW_RESIGNED_KEY,
+                windowId: "w-not-key",
+              },
+            },
+          ],
+        },
+      },
+      async () => {
+        const { activeWindowId } = await import("./client");
+        expect(await activeWindowId()).toBeUndefined();
+      },
+    );
+  });
+
   it("createWindow sends CreateTabRequest with Command custom property and returns ids", async () => {
     await withTransport(
       {

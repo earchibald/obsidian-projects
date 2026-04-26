@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   SHARED_TMUX_SESSION,
-  buildITermOsascript,
+  buildITermAttachCommand,
   buildPrepScript,
   tmuxWindowName,
 } from "./terminalLaunch";
@@ -68,29 +68,19 @@ describe("tmuxWindowName for entry-less launches", () => {
   });
 });
 
-describe("buildITermOsascript", () => {
-  it("new-window variant always creates a new window and attaches via -CC", () => {
-    const out = buildITermOsascript("new-window", "op-agents");
-    expect(out).toContain("create window with default profile command");
-    expect(out).not.toContain("if (count of windows)");
-    expect(out).toContain("-CC attach -t 'op-agents'");
-    expect(out).toContain("'tmux'");
+describe("buildITermAttachCommand", () => {
+  it("uses the supplied tmux binary and shell-quotes both args", () => {
+    const out = buildITermAttachCommand("/opt/homebrew/bin/tmux", "op-agents");
+    expect(out).toBe("'/opt/homebrew/bin/tmux' -CC attach -t 'op-agents'");
   });
 
-  it("honors a custom tmux binary path", () => {
-    const out = buildITermOsascript("new-window", "op-agents", "/opt/homebrew/bin/tmux");
-    expect(out).toContain("'/opt/homebrew/bin/tmux' -CC attach -t 'op-agents'");
+  it("preserves shell metacharacters in the session name via single-quoting", () => {
+    const out = buildITermAttachCommand("tmux", "op-agents$1");
+    expect(out).toBe("'tmux' -CC attach -t 'op-agents$1'");
   });
 
-  it("new-tab variant falls back to new window if none open", () => {
-    const out = buildITermOsascript("new-tab", "op-agents");
-    expect(out).toContain("if (count of windows) = 0 then");
-    expect(out).toContain("create tab with default profile command");
-    expect(out).toContain("activate");
-  });
-
-  it("escapes embedded double quotes in the command string", () => {
-    const out = buildITermOsascript("new-window", 'op-"danger"');
-    expect(out).toContain('\\"danger\\"');
+  it("escapes embedded single quotes in the binary path", () => {
+    const out = buildITermAttachCommand("/path/with'quote/tmux", "op-agents");
+    expect(out).toBe(`'/path/with'\\''quote/tmux' -CC attach -t 'op-agents'`);
   });
 });
