@@ -24,6 +24,11 @@ import {
   type WorkflowDiagnosticCode,
   type WorkflowDiagnosticSeverity,
 } from "./workflowDiagnostic";
+import {
+  diagnosticDocAnchor,
+  docUrl,
+  type DocLinkDiagnosticCode,
+} from "./docLinks";
 
 /**
  * Variable-resolution precedence stack. Higher level wins. Source of truth
@@ -139,6 +144,14 @@ export interface FormattedDiagnostic {
    * Surface it as a secondary line in modals; omit in compact contexts.
    */
   hint?: string;
+  /**
+   * OP-215: deep link to the troubleshooting doc anchor for this code.
+   * Populated for every code that has a registered (file, anchor) target
+   * in `docLinks.ts` (every WorkflowDiagnosticCode does today). UI
+   * surfaces stamp it as a footer on the multi-line block; one-line CLI
+   * output skips it for compactness.
+   */
+  helpUrl?: string;
 }
 
 const CODE_LABELS: Readonly<Record<WorkflowDiagnosticCode, string>> = Object.freeze({
@@ -213,6 +226,7 @@ function buildFormatted(d: WorkflowDiagnostic): FormattedDiagnostic {
     message: d.message,
     location: buildLocation(d),
     hint: HINTS[d.code],
+    helpUrl: docUrl(diagnosticDocAnchor(d.code as DocLinkDiagnosticCode)),
   };
   if (d.moduleId) out.moduleId = d.moduleId;
   if (d.varName) out.varName = d.varName;
@@ -265,6 +279,7 @@ export function diagnosticToLine(d: WorkflowDiagnostic): string {
  *   <scope label>          ← omitted when no scope
  *   <message>
  *   Hint: <hint>           ← omitted when no hint
+ *   More: <helpUrl>        ← omitted when no helpUrl (OP-215)
  */
 export function diagnosticToBlock(d: WorkflowDiagnostic): string {
   const f = formatDiagnostic(d);
@@ -274,5 +289,6 @@ export function diagnosticToBlock(d: WorkflowDiagnostic): string {
   if (f.scopeLabel) lines.push(f.scopeLabel);
   lines.push(f.message);
   if (f.hint) lines.push(`Hint: ${f.hint}`);
+  if (f.helpUrl) lines.push(`More: ${f.helpUrl}`);
   return lines.join("\n");
 }
