@@ -28,6 +28,17 @@ describe("buildReadmeBody", () => {
   it("starts with an H1", () => {
     expect(buildReadmeBody().startsWith("# ")).toBe(true);
   });
+
+  it("links to the workflow-modules docs (OP-211)", () => {
+    const body = buildReadmeBody();
+    expect(body).toContain("## Workflow modules");
+    expect(body).toContain(
+      "https://github.com/earchibald/obsidian-projects/blob/main/docs/workflow-modules/01-overview.md",
+    );
+    expect(body).toContain(
+      "https://github.com/earchibald/obsidian-projects/blob/main/docs/workflow-modules/02-quickstart.md",
+    );
+  });
 });
 
 describe("DEMO_ISSUES", () => {
