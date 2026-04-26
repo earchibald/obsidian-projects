@@ -43,7 +43,7 @@ import {
   type VaultLike,
   type VaultFileLike,
 } from "./recoveryPatchApply";
-import { findLatestBackup, planBadModelPatch } from "./recoveryPatch";
+import { findLatestBackup, formatUnifiedDiff, planBadModelPatch } from "./recoveryPatch";
 import type { WorkflowDiagnostic } from "./workflowDiagnostic";
 
 export type RecoveryDialogMode = "launch" | "advisory";
@@ -502,6 +502,44 @@ class RecoveryDialogModal extends Modal {
     const wf = await this.loadWorkflowFile();
     if (!wf) return;
     try {
+      // Look up the latest backup before committing to anything, so we can
+      // show the user a diff between their current (possibly hand-edited)
+      // content and the backup they're about to restore.
+      const folder = parentFolder(wf.path);
+      const siblings = this.vaultLike.listSiblingPaths(folder);
+      const latestBak = findLatestBackup(siblings, wf.path);
+      if (!latestBak) {
+        new Notice("No backup found for this workflow file.", 5000);
+        return;
+      }
+      const bakFile = this.vaultLike.getFileByPath(latestBak);
+      if (!bakFile) {
+        new Notice("No backup found for this workflow file.", 5000);
+        return;
+      }
+      const currentContent = await this.vaultLike.read(wf);
+      const backupContent = await this.vaultLike.read(bakFile);
+      // Show a diff of what will be LOST (current → backup). The user must
+      // explicitly confirm before we clobber any hand-edits they made after
+      // the last patch.
+      const diff = formatUnifiedDiff(currentContent, backupContent, wf.path);
+      new RevertConfirmModal(this.app, {
+        diff,
+        backupTimestamp: latestBak.match(/\.bak-([\d-]+(?:-\d{3})?)$/)?.[1] ?? "<unknown>",
+        onConfirm: () => void this.commitRevert(wf, row, label),
+      }).open();
+    } catch (err) {
+      console.error("[op-obsidian] recoveryDialog.handleRevert failed", err);
+      new Notice(`Revert failed: ${(err as Error).message ?? String(err)}`, 8000);
+    }
+  }
+
+  private async commitRevert(
+    wf: VaultFileLike,
+    row: HTMLElement,
+    label: HTMLElement,
+  ): Promise<void> {
+    try {
       const r = await revertLastWorkflowPatch({ vault: this.vaultLike, workflowFile: wf });
       if (r.status === "no-backup") {
         new Notice("No backup found for this workflow file.", 5000);
@@ -519,7 +557,7 @@ class RecoveryDialogModal extends Modal {
       // dialog reflecting the now-restored state.
       this.close();
     } catch (err) {
-      console.error("[op-obsidian] recoveryDialog.handleRevert failed", err);
+      console.error("[op-obsidian] recoveryDialog.commitRevert failed", err);
       new Notice(`Revert failed: ${(err as Error).message ?? String(err)}`, 8000);
     }
   }
@@ -545,6 +583,49 @@ class DiffConfirmModal extends Modal {
       .addButton((b) =>
         b
           .setButtonText("Apply patch")
+          .setCta()
+          .onClick(() => {
+            this.close();
+            this.opts.onConfirm();
+          }),
+      )
+      .addButton((b) => b.setButtonText("Cancel").onClick(() => this.close()));
+  }
+  onClose(): void {
+    this.contentEl.empty();
+  }
+}
+
+/**
+ * Confirmation modal shown before a revert overwrites the live workflow file.
+ * Displays a diff of current → backup so the user can see any hand-edits they
+ * are about to lose. Mirrors `DiffConfirmModal` but with revert-specific
+ * labelling and a warning that the current state will be replaced.
+ */
+class RevertConfirmModal extends Modal {
+  constructor(
+    app: App,
+    private opts: { diff: string; backupTimestamp: string; onConfirm: () => void },
+  ) {
+    super(app);
+  }
+  onOpen(): void {
+    const { contentEl } = this;
+    contentEl.empty();
+    contentEl.addClass("op-recovery-modal__diff-confirm");
+    contentEl.createEl("h2", { text: "Confirm revert" });
+    contentEl.createEl("p", {
+      text:
+        `Restoring from backup ${this.opts.backupTimestamp}. ` +
+        "Any edits you made to the workflow file after the last patch will be lost. " +
+        "The diff below shows what will change (− lines disappear, + lines are restored).",
+    });
+    const pre = contentEl.createEl("pre", { cls: "op-recovery-modal__diff" });
+    pre.textContent = this.opts.diff || "(no changes detected between current file and backup)";
+    new Setting(contentEl)
+      .addButton((b) =>
+        b
+          .setButtonText("Restore from backup")
           .setCta()
           .onClick(() => {
             this.close();

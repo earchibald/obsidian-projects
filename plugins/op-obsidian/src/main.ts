@@ -3808,7 +3808,11 @@ export default class OpPlugin extends Plugin {
       this.settings,
       this.detector,
       () => this.saveSettings(),
-      { entry, agentOverride, forcePick, mode, launchVars },
+      // OP-205 (3e): URI launches are automation — do NOT yank the user into
+      // the recovery modal on a bad-model error; surface via actionable Notice
+      // instead. The URI caller expressed intent in the URI shape and cannot
+      // participate in a modal dialog callback loop.
+      { entry, agentOverride, forcePick, mode, launchVars, interactive: false },
     );
     if (!res) throw new Error("op-open-agent was cancelled or no agent available");
     await this.recordRecency(res.issueId);

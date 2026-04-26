@@ -57,6 +57,9 @@ export type ApplyPatchResult =
  *   2. Write the `.bak-<ts>` backup via `vault.create` BEFORE the modify so
  *      a partial failure leaves the original on disk + a backup exists.
  *      Order is critical for the "always have a path back" guarantee.
+ *      If the timestamp-named path already exists (two patches within the
+ *      same second), the helper retries with a `-001` / `-002` … counter
+ *      suffix rather than throwing EEXIST at the caller.
  *   3. `vault.modify` the workflow file with the new text.
  *
  * Returns the backup path on success so the dialog can display "backup at
@@ -73,10 +76,39 @@ export async function applyBadModelPatch(input: ApplyPatchInput): Promise<ApplyP
   if (plan.status !== "ok") return { status: "skipped", reason: plan };
 
   const ts = formatBackupTimestamp(input.now ?? new Date());
-  const backupPath = backupPathFor(input.workflowFile.path, ts);
-  await input.vault.create(backupPath, input.raw);
+  const backupPath = await createBackupUnique(input.vault, input.workflowFile.path, input.raw, ts);
   await input.vault.modify(input.workflowFile, plan.newText);
   return { status: "ok", backupPath, newText: plan.newText };
+}
+
+/**
+ * Write the backup file, retrying with a `-001` … `-005` counter suffix when
+ * the plain timestamp path already exists (race: two patches within the same
+ * second, or a leftover from a test).  Throws only on the final attempt or on
+ * errors that aren't EEXIST-flavoured.
+ */
+async function createBackupUnique(
+  vault: VaultLike,
+  workflowPath: string,
+  raw: string,
+  baseTimestamp: string,
+  maxAttempts = 6,
+): Promise<string> {
+  for (let i = 0; i < maxAttempts; i++) {
+    const suffix = i === 0 ? "" : `-${String(i).padStart(3, "0")}`;
+    const path = backupPathFor(workflowPath, `${baseTimestamp}${suffix}`);
+    try {
+      await vault.create(path, raw);
+      return path;
+    } catch (err) {
+      const msg = (err as Error)?.message ?? String(err);
+      const isExist = msg.includes("EEXIST") || msg.includes("already exists");
+      if (isExist && i < maxAttempts - 1) continue;
+      throw err;
+    }
+  }
+  /* istanbul ignore next — unreachable: loop always throws or returns */
+  throw new Error("createBackupUnique: all attempts exhausted");
 }
 
 export interface RevertLastPatchInput {

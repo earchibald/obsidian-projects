@@ -121,6 +121,53 @@ describe("planBadModelPatch", () => {
     expect(r.matches).toBe(2);
   });
 
+  // Issue 1: the bad name in a YAML inline comment on the same line as the
+  // value counts as a second occurrence and triggers "ambiguous". This is
+  // intentionally conservative — patching the wrong token silently is worse
+  // than asking the user to edit manually. The dialog disables the patch
+  // button and shows "multiple occurrences" so the user knows why.
+  it("treats a bad name in an inline YAML comment as a second occurrence (ambiguous, conservative)", () => {
+    const raw = fm([
+      "default_model: opuss  # was opuss in a prior commit",
+    ].join("\n"));
+    const r = planBadModelPatch({
+      raw,
+      path: PATH,
+      badName: "opuss",
+      replacement: "claude-opus-4-7",
+    });
+    // Two token-matches in the frontmatter (value + comment) → ambiguous.
+    expect(r.status).toBe("ambiguous");
+    if (r.status !== "ambiguous") return;
+    expect(r.matches).toBe(2);
+  });
+
+  // Issue 2 (reviewed): the regex \r?\n---(?:\r?\n|$) requires "---" to appear
+  // immediately after a newline with no leading whitespace, so an indented
+  // "---" inside a YAML literal-block scalar body does NOT trip the closing-
+  // fence detector. The extractor finds the real closing "---" correctly.
+  it("correctly ignores indented '---' in a YAML literal-block scalar (extractor is safe)", () => {
+    const raw =
+      "---\n" +
+      "description: |\n" +
+      "  line one\n" +
+      "  ---\n" +     // indented — does NOT match \n---
+      "  line two\n" +
+      "default_model: opuss\n" +
+      "---\n" +
+      "# body\n";
+    const r = planBadModelPatch({
+      raw,
+      path: PATH,
+      badName: "opuss",
+      replacement: "claude-opus-4-7",
+    });
+    // Extractor correctly finds the real closing fence; default_model is visible.
+    expect(r.status).toBe("ok");
+    if (r.status !== "ok") return;
+    expect(r.newText).toContain("default_model: claude-opus-4-7");
+  });
+
   it("returns not-found when the bad name is absent from frontmatter", () => {
     const raw = fm(["default_model: opus"].join("\n"));
     const r = planBadModelPatch({

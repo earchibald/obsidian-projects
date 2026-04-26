@@ -70,6 +70,54 @@ describe("applyBadModelPatch", () => {
     expect(vault.files.get(W)).not.toContain("opuss");
   });
 
+  it("retries with a counter suffix when the timestamp backup path already exists (EEXIST race)", async () => {
+    const vault = new FakeVault();
+    vault.setFile(W, FM);
+    // Pre-seed the plain timestamp path so the first create attempt hits EEXIST.
+    const ts = "20260426-123456";
+    vault.setFile(`${W}.bak-${ts}`, "earlier backup\n");
+
+    const r = await applyBadModelPatch({
+      vault,
+      workflowFile: { path: W },
+      raw: FM,
+      badName: "opuss",
+      replacement: "claude-opus-4-7",
+      now: new Date(Date.UTC(2026, 3, 26, 12, 34, 56)),
+    });
+    expect(r.status).toBe("ok");
+    if (r.status !== "ok") return;
+    // Should have used the -001 suffix instead of the already-taken plain path.
+    expect(r.backupPath).toBe(`${W}.bak-${ts}-001`);
+    expect(vault.files.get(r.backupPath)).toBe(FM);
+    // The original earlier backup must be untouched.
+    expect(vault.files.get(`${W}.bak-${ts}`)).toBe("earlier backup\n");
+    expect(vault.files.get(W)).toContain("default_model: claude-opus-4-7");
+  });
+
+  it("retries multiple counter steps when several suffixes are already taken", async () => {
+    const vault = new FakeVault();
+    vault.setFile(W, FM);
+    const ts = "20260426-123456";
+    // Pre-seed the plain + -001 + -002 paths.
+    vault.setFile(`${W}.bak-${ts}`, "b0\n");
+    vault.setFile(`${W}.bak-${ts}-001`, "b1\n");
+    vault.setFile(`${W}.bak-${ts}-002`, "b2\n");
+
+    const r = await applyBadModelPatch({
+      vault,
+      workflowFile: { path: W },
+      raw: FM,
+      badName: "opuss",
+      replacement: "claude-opus-4-7",
+      now: new Date(Date.UTC(2026, 3, 26, 12, 34, 56)),
+    });
+    expect(r.status).toBe("ok");
+    if (r.status !== "ok") return;
+    expect(r.backupPath).toBe(`${W}.bak-${ts}-003`);
+    expect(vault.files.get(r.backupPath)).toBe(FM);
+  });
+
   it("returns skipped when the bad name is ambiguous (no .bak created)", async () => {
     const fm = `---\ndefault_model: opuss\nsteps:\n  - step: kickoff\n    model: opuss\n---\n`;
     const vault = new FakeVault();
