@@ -37,8 +37,8 @@ export function deriveTitle(text: string): string {
     // HYPHEN, U+FEFF BOM). Without this step a line containing only a ZWS
     // would produce a title that looks blank in the modal but passes the
     // "title is required" validation, silently creating an invisible-titled
-    // issue.
-    const stripped = stripMarkdownNoise(raw).trim().replace(/[\u00AD\u200B-\u200D\uFEFF]/g, "");
+    // issue. Using explicit code points rather than a range to be precise.
+    const stripped = stripMarkdownNoise(raw).trim().replace(/[\u00AD\u200B\u200C\u200D\uFEFF]/g, "");
     if (stripped.length === 0) continue;
     const collapsed = stripped.replace(/\s+/g, " ");
     return collapsed.length > TITLE_MAX ? collapsed.slice(0, TITLE_MAX).trimEnd() : collapsed;
