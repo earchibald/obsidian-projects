@@ -16,19 +16,22 @@ export interface BuildPromptArgs {
   injection: InjectionSettings;
   vaultBasePath?: string;
   mode?: AgentLaunchMode;
-  /** OP-198 (2a): selects the workflow-injection engine. `'modules'` calls
-   *  `loadAndComposeWorkflow`; `'legacy'` (default) inlines
-   *  `Projects/<slug>/WORKFLOW.md` verbatim. */
+  /** OP-198 (2a): selects the workflow-injection engine. OP-208 (8a, cutover)
+   *  removed the legacy code path from `buildPrompt`, so this field is no
+   *  longer consulted here — both modes route through `composeWorkflowSection`
+   *  (whose own legacy-fallback ladder handles vanilla `WORKFLOW.md`). The
+   *  field is kept on `BuildPromptArgs` because callers (notably
+   *  `launchAgentModal`) still gate UI panel affordances on it. */
   workflowMode?: WorkflowMode;
   /** OP-198 (2a): vault-wide user vars threaded into the composer's Global
-   *  precedence layer. Unused when `workflowMode === 'legacy'`. */
+   *  precedence layer. Always consulted post-OP-208 cutover. */
   workflowVars?: Record<string, string>;
   /** OP-204 (3d): per-launch user-var overrides threaded into the composer's
    *  Launch precedence layer (level 4 — wins over Module / Global / Project).
    *  Sourced from the launch modal's "Workflow variables" panel, the URI
    *  parser's `var.<name>=<value>` keys, and the auto-advance carry-through
-   *  (`fm.launch_vars`). Empty/absent maps cleanly omit the layer. Unused
-   *  when `workflowMode === 'legacy'`. */
+   *  (`fm.launch_vars`). Empty/absent maps cleanly omit the layer. Always
+   *  consulted post-OP-208 cutover. */
   launchVars?: Record<string, string>;
   /** OP-198 (2a) — extended in OP-199 (2b): name of the workflow step to
    *  compose for this launch. Defaults to `'kickoff'`. OP-199 wires
@@ -74,45 +77,18 @@ export async function buildPrompt(
   parts.push(renderSkillTrigger(profile, entry.id));
 
   if (injection.includeWorkflow && entry.project) {
-    const workflowMode: WorkflowMode = args.workflowMode ?? "legacy";
-    let composedSection: string | null = null;
-
-    if (workflowMode === "modules") {
-      // OP-198 (2a) / OP-199 (2b): swap the legacy inline blob for OP-197's
-      // composer. `composeWorkflowSection` returns:
-      //   - null  → no WORKFLOW.md, fall through to legacy below
-      //   - ""    → WORKFLOW.md exists but step was empty, suppress
-      //   - text  → splice the composed section
-      composedSection = await composeWorkflowSection(app, args);
-    }
-
-    if (composedSection !== null) {
-      // Composer ran: '' means WORKFLOW.md exists but the step had no output
-      // (e.g. `modules: []`). Don't push anything — the user opted into
-      // modules mode so silently injecting the legacy inline blob would be
-      // wrong. Non-empty: splice into the prompt as-is.
-      if (composedSection) parts.push(composedSection);
-    } else {
-      // Legacy path — kept byte-identical (OP-198 acceptance criterion).
-      const workflowPath = `Projects/${entry.project}/WORKFLOW.md`;
-      const wf = app.vault.getAbstractFileByPath(workflowPath);
-      if (wf instanceof TFile) {
-        const raw = await app.vault.read(wf);
-        const body = stripFrontmatter(raw).trim();
-        if (body) {
-          const cap = Math.max(0, injection.maxWorkflowChars | 0);
-          if (cap === 0 || body.length > cap) {
-            // Over the inline cap (or inlining disabled): point at the file
-            // rather than burn kickoff context.
-            parts.push(
-              `## Project workflow\n\nSee ${workflowPath} for this project's SDLC policy. Read it before touching the repo.`,
-            );
-          } else {
-            parts.push(`## Project workflow\n\nFrom ${workflowPath}:\n\n${body}`);
-          }
-        }
-      }
-    }
+    // OP-208 (8a, cutover): the modular composer is now the only path. Its
+    // legacy-fallback ladder (`workflowFile.ts` shapes 1/2/3/5) wraps vanilla
+    // WORKFLOW.md into a synthetic kickoff step, so projects without a
+    // schema-conformant workflow file still get their body inlined.
+    // `composeWorkflowSection` returns:
+    //   - null   → no WORKFLOW.md on disk; emit nothing
+    //   - ""     → WORKFLOW.md exists but the step composed to empty
+    //              (`modules: []` or every module rendered to whitespace);
+    //              explicit-suppress contract from OP-198 — emit nothing
+    //   - text   → splice into the prompt as-is
+    const composedSection = await composeWorkflowSection(app, args);
+    if (composedSection) parts.push(composedSection);
   }
 
   const header: string[] = [];

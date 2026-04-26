@@ -320,8 +320,16 @@ function legacyWorkflowFiles(): FakeFile[] {
   ];
 }
 
-describe("buildPrompt — OP-198 (2a)", () => {
-  it("legacy default (workflowMode unset): inlines WORKFLOW.md verbatim — byte-identical reference", async () => {
+describe("buildPrompt — OP-198 (2a) / OP-208 (8a, cutover)", () => {
+  it("OP-208 cutover: vanilla WORKFLOW.md (no workflow-schema frontmatter) routes through the composer's legacy-fallback ladder and inlines the body", async () => {
+    // Pre-OP-208 the buildPrompt legacy `else` branch read WORKFLOW.md
+    // verbatim under a `From <path>:` preamble. Post-cutover that branch is
+    // gone — vanilla WORKFLOW.md is classified as a legacy shape by
+    // `workflowFile.ts` and synthesised into a kickoff step whose
+    // `legacyKickoffBody` is the entire body. The composer splices it
+    // verbatim, so the user-visible workflow content survives the cutover.
+    // The exact byte format differs from the pre-cutover reference (no
+    // `From <path>:` preamble) — that drift is expected and intentional.
     const app = fakeApp(legacyWorkflowFiles());
     const out = await buildPrompt(app, fakeStore(), {
       entry: entry(),
@@ -329,21 +337,20 @@ describe("buildPrompt — OP-198 (2a)", () => {
       injection: injection(),
       vaultBasePath: "/Users/me/vault",
       mode: "work",
-      // workflowMode unset — default 'legacy'.
     });
-    // Reference snapshot for the legacy code path. Drift in this assertion
-    // means the legacy block changed shape, which OP-198 forbids.
-    const REFERENCE_LEGACY =
-      "/op:issue OP-1\n\n" +
-      "## Project workflow\n\n" +
-      "From Projects/demo/WORKFLOW.md:\n\n" +
-      WORKFLOW_BODY +
-      "\n\n" +
-      "Issue: OP-1 — Demo issue\nProject: demo\nStatus: in-progress\nNote: /Users/me/vault/Projects/demo/ISSUES/OP-1.md";
-    expect(out).toBe(REFERENCE_LEGACY);
+    expect(out).toContain("## Project workflow");
+    expect(out).toContain(WORKFLOW_BODY);
+    // Header still emitted.
+    expect(out).toContain("Issue: OP-1 — Demo issue");
+    expect(out).toContain("Note: /Users/me/vault/Projects/demo/ISSUES/OP-1.md");
   });
 
-  it("legacy explicit (workflowMode='legacy'): byte-identical to the implicit default", async () => {
+  it("OP-208 cutover: explicit workflowMode='legacy' is now byte-identical to the implicit default (gate is dead in buildPrompt)", async () => {
+    // The `workflowMode` arg no longer gates buildPrompt's behaviour; it's
+    // kept on `BuildPromptArgs` only because `launchAgentModal` still uses it
+    // for UI panel affordances. Confirming the implicit and 'legacy'-explicit
+    // outputs are byte-identical guards against accidentally re-introducing
+    // the gate.
     const app = fakeApp(legacyWorkflowFiles());
     const implicit = await buildPrompt(app, fakeStore(), {
       entry: entry(),
@@ -439,10 +446,12 @@ describe("buildPrompt — OP-198 (2a)", () => {
     expect(out).toContain("Ask @you for review.");
   });
 
-  it("modules mode falls back to legacy block when WORKFLOW.md is missing", async () => {
-    // No WORKFLOW.md on disk — composer returns null. Caller falls through
-    // to the legacy `## Project workflow` block, which itself emits nothing
-    // because there's no file to inline. Net: no workflow section at all.
+  it("no WORKFLOW.md on disk → composer returns null → no workflow section emitted", async () => {
+    // Pre-OP-208 this test described "modules mode falls back to legacy block
+    // when WORKFLOW.md is missing" — the legacy fallback also emitted nothing
+    // because there was no file to inline. Post-cutover the fallback is gone;
+    // the composer's null return means "no WORKFLOW.md", and the section is
+    // simply suppressed. Net behaviour is unchanged: no workflow section.
     const app = fakeApp([]);
     const out = await buildPrompt(app, fakeStore(), {
       entry: entry(),
