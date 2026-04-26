@@ -31,6 +31,7 @@ const context = await esbuild.context({
   outfile: "main.js",
   platform: "node",
   minify: prod,
+  loader: { ".md": "text" },
 });
 
 if (prod) {

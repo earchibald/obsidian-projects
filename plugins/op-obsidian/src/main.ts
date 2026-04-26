@@ -23,6 +23,7 @@ import { scaffoldProject, type ScaffoldProjectResult } from "./scaffoldProject";
 import { workIssue, type WorkIssueResult } from "./workIssue";
 import { appendCommit, setPr } from "./commits";
 import { getWorkflow } from "./workflow";
+import { getSkill } from "./skill";
 import { setScope } from "./setScope";
 import { parseNewScopePayload, type NewScopeMode } from "./setScopePure";
 import { setEvaluation } from "./setEvaluation";
@@ -70,6 +71,7 @@ import {
   handleOpLinkCheckUri as handleOpLinkCheckUriPure,
   handleOpMigrateLinksUri as handleOpMigrateLinksUriPure,
   handleOpGetWorkflowUri as handleOpGetWorkflowUriPure,
+  handleOpGetSkillUri as handleOpGetSkillUriPure,
   type UriHandlerDeps,
 } from "./uriHandlers";
 import {
@@ -86,6 +88,7 @@ import {
   parseLinkCheckParams,
   parseGetWorkflowParams,
   parseEditWorkflowParams,
+  parseGetSkillParams,
 } from "./cliHandlers";
 import type { IssueEntry, LifecycleEvent } from "./types";
 import { DEFAULT_SETTINGS, mergeSettings, OpSettingsTab, type OpSettings } from "./settings";
@@ -861,6 +864,12 @@ export default class OpPlugin extends Plugin {
       );
     });
 
+    this.registerObsidianProtocolHandler("op-get-skill", (params) => {
+      this.runUri("op-get-skill", normalizeUriParams(params), (p) =>
+        handleOpGetSkillUriPure(this.uriDeps(), p),
+      );
+    });
+
     this.registerObsidianProtocolHandler("op-edit-workflow", (params) => {
       this.runUri("op-edit-workflow", normalizeUriParams(params), (p) =>
         this.handleOpEditWorkflowUri(p),
@@ -1068,6 +1077,18 @@ export default class OpPlugin extends Plugin {
         project: { value: "<slug>", description: "Project slug (folder name under Projects/)" },
       },
       (params) => this.handleOpGetWorkflowCli(params),
+    );
+
+    this.registerCliHandler(
+      "op-get-skill",
+      "Return the canonical op skill body (operating manual) bundled with the plugin. Read-only.",
+      {
+        name: {
+          value: "<name>",
+          description: "Skill body to return (default: skill). Currently only \"skill\" is recognized.",
+        },
+      },
+      (params) => this.handleOpGetSkillCli(params),
     );
 
     this.registerCliHandler(
@@ -2552,6 +2573,28 @@ export default class OpPlugin extends Plugin {
       return res.exists
         ? `${command}: ${res.project} → ${res.path} (${res.size} chars)`
         : `${command}: ${res.project} → no WORKFLOW.md (would live at ${res.path})`;
+    } catch (err: any) {
+      const msg = err?.message ?? String(err);
+      console.error("[op-obsidian]", command, err);
+      await writeUriResponse(this.app, { ok: false, command, error: msg });
+      return `${command} failed: ${msg}`;
+    }
+  }
+
+  private async handleOpGetSkillCli(params: Record<string, string>): Promise<string> {
+    const command = "op-get-skill";
+    try {
+      const parsed = parseGetSkillParams(params);
+      if (!parsed.ok) return parsed.error;
+      const res = getSkill(parsed.value.name);
+      await writeUriResponse(this.app, {
+        ok: true,
+        command,
+        name: res.name,
+        content: res.content,
+        size: res.size,
+      });
+      return `${command}: ${res.name} (${res.size} chars)`;
     } catch (err: any) {
       const msg = err?.message ?? String(err);
       console.error("[op-obsidian]", command, err);

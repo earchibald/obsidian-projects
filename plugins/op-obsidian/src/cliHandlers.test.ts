@@ -11,6 +11,7 @@ import {
   parseScaffoldParams,
   parseGetWorkflowParams,
   parseEditWorkflowParams,
+  parseGetSkillParams,
 } from "./cliHandlers";
 
 describe("parseWorkParams", () => {
@@ -228,5 +229,29 @@ describe("parseEditWorkflowParams", () => {
   it("project beats slug when both present", () => {
     const r = parseEditWorkflowParams({ project: "a", slug: "b" });
     expect(r.ok && r.value.project).toBe("a");
+  });
+});
+
+describe("parseGetSkillParams", () => {
+  it("always succeeds — name= is optional", () => {
+    expect(parseGetSkillParams({}).ok).toBe(true);
+    expect(parseGetSkillParams({ name: "" }).ok).toBe(true);
+    expect(parseGetSkillParams({ name: "skill" }).ok).toBe(true);
+  });
+  it("trims whitespace from name", () => {
+    const r = parseGetSkillParams({ name: "  skill  " });
+    expect(r.ok && r.value.name).toBe("skill");
+  });
+  it("returns empty string when name is absent", () => {
+    const r = parseGetSkillParams({});
+    expect(r.ok && r.value.name).toBe("");
+  });
+  it("returns empty string when name is blank (URI: ?name=%20%20)", () => {
+    const r = parseGetSkillParams({ name: "  " });
+    expect(r.ok && r.value.name).toBe("");
+  });
+  it("preserves casing for downstream case-folding in getSkill", () => {
+    const r = parseGetSkillParams({ name: "Skill" });
+    expect(r.ok && r.value.name).toBe("Skill");
   });
 });

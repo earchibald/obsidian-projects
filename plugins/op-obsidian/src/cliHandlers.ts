@@ -235,3 +235,10 @@ export function parseEditWorkflowParams(
   if (!project) return { ok: false, error: "op-edit-workflow failed: --project is required" };
   return { ok: true, value: { project } };
 }
+
+export function parseGetSkillParams(
+  params: Record<string, string>,
+): ParamsResult<{ name: string }> {
+  const raw = typeof params.name === "string" ? params.name.trim() : "";
+  return { ok: true, value: { name: raw } };
+}

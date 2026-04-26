@@ -13,6 +13,6 @@
     "strictNullChecks": true,
     "lib": ["DOM", "ES2022"]
   },
-  "include": ["src/**/*.ts"],
+  "include": ["src/**/*.ts", "src/**/*.d.ts"],
   "exclude": ["src/**/*.test.ts"]
 }
