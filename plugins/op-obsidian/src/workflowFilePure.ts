@@ -686,14 +686,17 @@ export function classifyLegacy(
 }
 
 /**
- * Synthesise a `WorkflowFile` for legacy shapes 1, 2, 3, 5. The synthesised
+ * Synthesise a `WorkflowFile` for legacy shapes 1, 2, 3, 4, 5. The synthesised
  * workflow has one step (`step: "kickoff", modules: []`) carrying the
  * entire body verbatim in `legacyKickoffBody`. Defaults are empty arrays /
  * `kind: "all"` with no values — the launch overrides will fill them.
  *
  * Caller (IO layer) must guarantee `shape` is one of `legacy-1`, `legacy-2`,
- * `legacy-3`, `legacy-5` — `legacy-4` (wrong type) should produce a
- * `schema-mismatch` diagnostic and `null` workflow instead.
+ * `legacy-3`, `legacy-4`, `legacy-5`. Shape `legacy-4` (wrong `type:` field)
+ * synthesises from the body with a `warning`-severity diagnostic so that
+ * pre-OP-208 WORKFLOW.md files that incidentally carry `type: <other>` (e.g.
+ * from a metadata-management plugin) do not lose their workflow content after
+ * the OP-208 cutover.
  */
 export function synthesizeLegacyWorkflow(args: {
   path: string;
@@ -702,13 +705,13 @@ export function synthesizeLegacyWorkflow(args: {
   shape: LegacyShape;
 }): WorkflowFile {
   const { path, project, body, shape } = args;
-  if (shape === "modern" || shape === "legacy-4") {
-    // Defensive: callers should never reach this path with a non-synthesisable
-    // shape. Surface the misuse loudly rather than silently producing a
-    // workflow that hides the underlying schema problem.
+  if (shape === "modern") {
+    // Defensive: callers should never reach this path with a modern shape.
+    // Surface the misuse loudly rather than silently producing a workflow that
+    // hides the underlying schema problem.
     throw new Error(
-      `synthesizeLegacyWorkflow: shape ${shape} is not synthesisable — ` +
-        `callers must route modern through parseWorkflowFile and legacy-4 through schema-mismatch.`,
+      `synthesizeLegacyWorkflow: shape "modern" is not synthesisable — ` +
+        `callers must route modern files through parseWorkflowFile.`,
     );
   }
   const step: WorkflowStep = {

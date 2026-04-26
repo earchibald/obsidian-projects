@@ -206,8 +206,8 @@ export async function composeWorkflowSection(
     ctx,
   });
 
-  // `null` means WORKFLOW.md was not found — signal the caller to fall
-  // back to the legacy inline blob.
+  // `null` means WORKFLOW.md was not found on disk — the workflow section
+  // is omitted entirely (there is no legacy inline blob post-OP-208 cutover).
   if (!composed) return null;
 
   // OP-199 (2b) lenient fallback: requested step missing entirely → retry

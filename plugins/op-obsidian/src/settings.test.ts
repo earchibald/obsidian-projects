@@ -268,12 +268,23 @@ describe("mergeSettings", () => {
     expect(
       mergeSettings({ workflowMode: "experimental" as unknown as "legacy" }).workflowMode,
     ).toBe("modules");
+    // Empty string — typeof check passes, but WORKFLOW_MODES.has("") is false → default.
+    expect(
+      mergeSettings({ workflowMode: "" as unknown as "legacy" }).workflowMode,
+    ).toBe("modules");
     // Non-string — falls back to default.
     expect(
       mergeSettings({ workflowMode: 1 as unknown as "legacy" }).workflowMode,
     ).toBe("modules");
     expect(
       mergeSettings({ workflowMode: null as unknown as "legacy" }).workflowMode,
+    ).toBe("modules");
+    // Arrays / objects fail the typeof guard before WORKFLOW_MODES.has — no coercion possible.
+    expect(
+      mergeSettings({ workflowMode: ["legacy"] as unknown as "legacy" }).workflowMode,
+    ).toBe("modules");
+    expect(
+      mergeSettings({ workflowMode: { valueOf: () => "legacy" } as unknown as "legacy" }).workflowMode,
     ).toBe("modules");
   });
 

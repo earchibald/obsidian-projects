@@ -368,6 +368,34 @@ describe("buildPrompt — OP-198 (2a) / OP-208 (8a, cutover)", () => {
     expect(explicit).toBe(implicit);
   });
 
+  it("OP-208 cutover: shape-4 WORKFLOW.md (type: <other>) synthesises body instead of being dropped", async () => {
+    // Pre-OP-208, the legacy inline blob read WORKFLOW.md verbatim via
+    // stripFrontmatter — `type: project` (shape 4) would have been read and
+    // its body inlined. Post-cutover the legacy blob is gone, so a shape-4
+    // file that previously got content inlined would silently lose it.
+    // Fix: workflowFile.ts now synthesises shape 4 like shapes 1/2/3/5 so
+    // the body is preserved (with a warning diagnostic to signal the author
+    // should fix the type field).
+    const shape4Body = "# Workflow\n\nDo the thing.";
+    const app = fakeApp([
+      {
+        path: "Projects/demo/WORKFLOW.md",
+        raw: `---\ntype: note\n---\n${shape4Body}\n`,
+        frontmatter: { type: "note" },
+      },
+    ]);
+    const out = await buildPrompt(app, fakeStore(), {
+      entry: entry(),
+      profile: profile(),
+      injection: injection(),
+      vaultBasePath: "/Users/me/vault",
+      mode: "work",
+    });
+    expect(out).toContain("## Project workflow");
+    expect(out).toContain(shape4Body);
+    expect(out).toContain("Issue: OP-1 — Demo issue");
+  });
+
   it("modules mode: composer output replaces the legacy 'From Projects/.../WORKFLOW.md' blob", async () => {
     const app = fakeApp([
       // Modern WORKFLOW.md frontmatter (OP-196 schema).
