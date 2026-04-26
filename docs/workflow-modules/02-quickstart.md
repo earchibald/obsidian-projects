@@ -18,17 +18,33 @@ re-explanation.
 
 ## 1. Switch to modules mode (30 seconds)
 
-Open the op-obsidian Settings tab in Obsidian:
+`workflowMode` is a per-vault setting. There's no UI toggle yet (one is
+tracked under the OP-186 settings work) — until then, flip it by hand
+in the plugin's `data.json`:
 
-1. **⌘,** to open Obsidian settings.
-2. Navigate to **Community plugins → Obsidian Projects (op)**.
-3. In the **Advanced** group, expand **Workflow chaining** (or search for
-   "workflow mode" in the in-tab search box at the top — it auto-expands
-   matching sections).
-4. Set **Workflow mode** to **modules**.
+1. Quit Obsidian (or fully disable the op-obsidian plugin) before
+   editing — the running plugin holds a copy of the settings in memory
+   and will overwrite manual edits on the next save.
+2. Open `<your-vault>/.obsidian/plugins/op-obsidian/data.json` in any
+   text editor.
+3. Find the top-level `"workflowMode"` key (it defaults to `"legacy"`).
+   Change its value to `"modules"`. Save.
+4. Re-open the vault (or re-enable the plugin).
+
+If `workflowMode` is missing entirely, your install pre-dates OP-198 —
+add `"workflowMode": "modules"` as a new top-level entry in the JSON
+object.
+
+Verify with the developer console (Cmd-Option-I in Obsidian, Console
+tab):
+
+```js
+app.plugins.plugins["op-obsidian"].settings.workflowMode
+// → "modules"
+```
 
 Until this flip, the launch modal uses the legacy injection blob and
-ignores any module files you create. The setting is per-vault.
+ignores any module files you create.
 
 ## 2. Author a global workflow file (90 seconds)
 
@@ -107,7 +123,7 @@ preview** disclosure. Click it to expand.
 You should see the body of `branching.md` rendered as the kickoff prompt:
 
 ```
-▼ Composed prompt preview        1 module · 187 chars
+▼ Composed prompt preview        187 chars · 1 module · 0 diagnostics
 
 Always create a feature branch off `main` before making changes. Branch
 names use `<issue-id>-<slug>`. Push commits to that branch only —
@@ -115,11 +131,11 @@ never directly to `main`.
 ```
 
 The header line on the right of the disclosure tells you how many
-modules were composed (`1 module`), how many characters of prompt that
-produced (`187 chars`), and how many diagnostics fired (none, in the
-happy path). If the count is `0 modules`, scroll back through this
-walkthrough — most likely your workflow file's `steps:` list doesn't
-mention `branching` in any kickoff step.
+characters of prompt the composer produced (`187 chars`), how many
+modules contributed (`1 module`), and how many diagnostics fired
+(`0 diagnostics` in the happy path). If the module count is `0 modules`,
+scroll back through this walkthrough — most likely your workflow file's
+`steps:` list doesn't mention `branching` in any kickoff step.
 
 **Click Cancel.** You don't need to launch the agent to verify the
 plumbing.
