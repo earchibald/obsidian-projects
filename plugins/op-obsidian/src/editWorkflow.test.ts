@@ -9,6 +9,17 @@ describe("buildEditWorkflowPrompt", () => {
     vaultBasePath: "/Users/me/work/Vault",
   };
 
+  it("includes the modern schema reference (type: workflow, schema: 1, list-or-keyed-map model)", () => {
+    const out = buildEditWorkflowPrompt({ ...base, existingContent: null });
+    expect(out).toContain("## Workflow schema reference");
+    expect(out).toContain("type: workflow");
+    expect(out).toContain("schema: 1");
+    expect(out).toContain("default_agent");
+    expect(out).toContain("default_model");
+    expect(out).toContain("per-agent keyed map");
+    expect(out).toContain("op: switch workflow model: to per-agent map");
+  });
+
   it("includes the project slug, workflow path, and working dir in the header", () => {
     const out = buildEditWorkflowPrompt({ ...base, existingContent: null });
     expect(out).toContain("Project: my-project");
