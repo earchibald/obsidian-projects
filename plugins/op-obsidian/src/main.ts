@@ -100,6 +100,8 @@ import {
   parseGetSkillParams,
   parseExplainWorkflowParams,
   parseListVarsParams,
+  parseExportModuleParams,
+  parseImportModuleParams,
 } from "./cliHandlers";
 import { explainWorkflow, listVars } from "./explainWorkflow";
 import {
@@ -115,6 +117,9 @@ import { readLaunchVarsFromFrontmatter } from "./varOverridePanelPure";
 import { openLaunchAgentModal } from "./launchAgentModal";
 import { editWorkflow } from "./editWorkflow";
 import { editModule } from "./editModule";
+import { exportModules } from "./exportModule";
+import { commitImport, prepareImport } from "./importModule";
+import { undoLastImport } from "./undoLastImport";
 import { loadModules } from "./workflowModule";
 import { loadWorkflowFile } from "./workflowFile";
 import {
@@ -742,6 +747,25 @@ export default class OpPlugin extends Plugin {
       callback: () => this.runEditModuleCommand(),
     });
 
+    // OP-187: export / import / undo last import.
+    this.addCommand({
+      id: "op-export-module",
+      name: "op: export workflow module(s)",
+      callback: () => void this.runExportModuleCommand(),
+    });
+
+    this.addCommand({
+      id: "op-import-module",
+      name: "op: import workflow module",
+      callback: () => void this.runImportModuleCommand(),
+    });
+
+    this.addCommand({
+      id: "op-undo-last-import",
+      name: "op: undo last workflow-module import",
+      callback: () => void this.runUndoLastImportCommand(),
+    });
+
     // OP-205 (3e): proactive recovery surface — open the dialog without an
     // in-flight launch. Resolves a project, reads its WORKFLOW.md, finds the
     // first bad-model diagnostic, and renders the same modal in advisory
@@ -974,6 +998,24 @@ export default class OpPlugin extends Plugin {
     this.registerObsidianProtocolHandler("op-edit-module", (params) => {
       this.runUri("op-edit-module", normalizeUriParams(params), (p) =>
         this.handleOpEditModuleUri(p),
+      );
+    });
+
+    this.registerObsidianProtocolHandler("op-export-module", (params) => {
+      this.runUri("op-export-module", normalizeUriParams(params), (p) =>
+        this.handleOpExportModuleUri(p),
+      );
+    });
+
+    this.registerObsidianProtocolHandler("op-import-module", (params) => {
+      this.runUri("op-import-module", normalizeUriParams(params), (p) =>
+        this.handleOpImportModuleUri(p),
+      );
+    });
+
+    this.registerObsidianProtocolHandler("op-undo-last-import", (params) => {
+      this.runUri("op-undo-last-import", normalizeUriParams(params), () =>
+        this.handleOpUndoLastImportUri(),
       );
     });
 
@@ -1248,6 +1290,60 @@ export default class OpPlugin extends Plugin {
         },
       },
       (params) => this.handleOpEditModuleCli(params),
+    );
+
+    this.registerCliHandler(
+      "op-export-module",
+      "Export workflow module(s) to Projects/_op-export/. Pass --id <id> for a single module or --project <slug> to bundle all modules visible to that project.",
+      {
+        id: { value: "<id>", description: "Module id (filename basename, no .md). Single-module mode." },
+        project: {
+          value: "<slug>",
+          description:
+            "Project slug. Bundle mode — exports per-project modules + globals carrying that project: tag.",
+        },
+      },
+      (params) => this.handleOpExportModuleCli(params),
+    );
+
+    this.registerCliHandler(
+      "op-import-module",
+      "Import a workflow module from a vault path or absolute filesystem path. Bootstraps missing vars at the chosen scope; backs up any existing target file; writes a transaction record under Projects/_op-import-history/.",
+      {
+        path: {
+          value: "<path>",
+          description:
+            "Vault-relative or absolute path to the bundle file (the .md emitted by op-export-module).",
+        },
+        scope: {
+          value: "<global|project>",
+          description:
+            "Where the module lands. Default: derive from the bundle's project: field (present → project, absent → global).",
+        },
+        project: {
+          value: "<slug>",
+          description:
+            "Project slug. Required when --scope=project; rewrites the bundle's project: field to this value.",
+        },
+        vars: {
+          value: "<name=value\\nname=value>",
+          description:
+            "Packed var answers (newline- or comma-separated). One answer per missing var; empty string is a valid answer.",
+        },
+        "var.<name>": {
+          value: "<value>",
+          description:
+            "Per-var answer (alternative to packed --vars). Use one --var.<name>=<value> per missing var.",
+        },
+      },
+      (params) => this.handleOpImportModuleCli(params),
+    );
+
+    this.registerCliHandler(
+      "op-undo-last-import",
+      "Reverse the most recent op-import-module transaction (one-step undo only).",
+      {},
+      () => this.handleOpUndoLastImportCli(),
     );
 
     this.registerCliHandler(
@@ -3584,6 +3680,298 @@ export default class OpPlugin extends Plugin {
     } catch (err: any) {
       console.error("[op-obsidian] op-edit-module failed", err);
       notify(`op-edit-module failed: ${err?.message ?? err}`);
+    }
+  }
+
+  // -------------------------------------------------------------------------
+  // OP-187 export / import / undo
+  // -------------------------------------------------------------------------
+
+  /**
+   * Palette entry point for op-export-module. Wraps the active project's
+   * working dir as a hint when one is active, otherwise prompts the user via
+   * a tiny modal for `id=<id>` or `project=<slug>`.
+   */
+  private async runExportModuleCommand(): Promise<void> {
+    const { ExportModulePromptModal } = await import("./modals");
+    new ExportModulePromptModal(this.app, async (args) => {
+      try {
+        const result = await exportModules(this.app, args);
+        const summary = result.files.map((f) => f.exportPath).join(", ");
+        notify(
+          `op-export-module: wrote ${result.files.length} file${result.files.length === 1 ? "" : "s"} → ${summary}`,
+        );
+        await writeUriResponse(this.app, {
+          ok: true,
+          command: "op-export-module",
+          mode: args.kind,
+          files: result.files,
+        });
+      } catch (err: any) {
+        console.error("[op-obsidian] op-export-module failed", err);
+        notify(`op-export-module failed: ${err?.message ?? err}`);
+      }
+    }).open();
+  }
+
+  /**
+   * Palette entry point for op-import-module. Prompts for the path + scope,
+   * then for each missing var (one inline prompt with the module-default
+   * pre-filled), then commits.
+   */
+  private async runImportModuleCommand(): Promise<void> {
+    const { ImportModulePromptModal, ImportVarPromptModal } = await import("./modals");
+    new ImportModulePromptModal(this.app, async (input) => {
+      try {
+        const prepared = await prepareImport(this.app, this.settings, {
+          sourcePath: input.sourcePath,
+          targetScope: input.scope,
+          ...(input.projectSlug ? { targetProjectSlug: input.projectSlug } : {}),
+        });
+        const answers: Record<string, string> = {};
+        for (const prompt of prepared.plan.promptsNeeded) {
+          const answer = await new Promise<string | undefined>((resolve) => {
+            new ImportVarPromptModal(this.app, prompt, resolve).open();
+          });
+          if (answer === undefined) {
+            notify("op-import-module: cancelled — no module landed.");
+            return;
+          }
+          answers[prompt.name] = answer;
+        }
+        const result = await commitImport(
+          this.app,
+          this.settings,
+          () => this.saveSettings(),
+          { prepared, varAnswers: answers },
+        );
+        notify(
+          `op-import-module: ${result.targetPath} (${result.varsWritten.length} var${result.varsWritten.length === 1 ? "" : "s"}; tx ${result.transactionPath})`,
+        );
+        await writeUriResponse(this.app, {
+          ok: true,
+          command: "op-import-module",
+          ...result,
+        });
+      } catch (err: any) {
+        console.error("[op-obsidian] op-import-module failed", err);
+        notify(`op-import-module failed: ${err?.message ?? err}`);
+      }
+    }).open();
+  }
+
+  /**
+   * Palette entry point for op-undo-last-import. No prompts — runs immediately
+   * and surfaces a Notice with the result. Idempotent on no-history.
+   */
+  private async runUndoLastImportCommand(): Promise<void> {
+    try {
+      const result = await undoLastImport(
+        this.app,
+        this.settings,
+        () => this.saveSettings(),
+      );
+      if (result.status === "no-history") {
+        notify("op-undo-last-import: no transaction history to undo.");
+      } else {
+        notify(
+          `op-undo-last-import: reverted ${result.modulesReverted.length} module(s), removed ${result.varsRemoved.length} var(s) (${result.varsPreserved.length} preserved as preexisting).`,
+        );
+      }
+      await writeUriResponse(this.app, {
+        ok: true,
+        command: "op-undo-last-import",
+        ...result,
+      });
+    } catch (err: any) {
+      console.error("[op-obsidian] op-undo-last-import failed", err);
+      notify(`op-undo-last-import failed: ${err?.message ?? err}`);
+    }
+  }
+
+  // ---- URI handlers ----
+
+  private async handleOpExportModuleUri(
+    params: Record<string, string>,
+  ): Promise<UriResponsePayload> {
+    const parsed = parseExportModuleParams(params);
+    if (!parsed.ok) throw new Error(parsed.error);
+    const args =
+      parsed.value.mode === "id"
+        ? { kind: "id" as const, moduleId: parsed.value.moduleId }
+        : { kind: "project" as const, projectSlug: parsed.value.projectSlug };
+    const result = await exportModules(this.app, args);
+    return {
+      ok: true,
+      command: "op-export-module",
+      mode: parsed.value.mode,
+      files: result.files,
+    };
+  }
+
+  private async handleOpImportModuleUri(
+    params: Record<string, string>,
+  ): Promise<UriResponsePayload> {
+    const parsed = parseImportModuleParams(params);
+    if (!parsed.ok) throw new Error(parsed.error);
+    // Default scope when unset: derive from the bundle's project: field at
+    // prepare time. For URI/CLI we default to `global` so the call is fully
+    // self-contained — callers that want per-project landing pass
+    // `scope=project&project=<slug>`.
+    const scope = parsed.value.scope ?? "global";
+    if (scope === "project" && !parsed.value.project) {
+      throw new Error("op-import-module: --project is required when scope=project");
+    }
+    const prepared = await prepareImport(this.app, this.settings, {
+      sourcePath: parsed.value.sourcePath,
+      targetScope: scope,
+      ...(parsed.value.project ? { targetProjectSlug: parsed.value.project } : {}),
+      varAnswers: parsed.value.varAnswers,
+    });
+    const missing = prepared.plan.promptsNeeded.filter(
+      (p) => !Object.prototype.hasOwnProperty.call(parsed.value.varAnswers, p.name),
+    );
+    if (missing.length > 0) {
+      // Headless callers can't drive the modal — surface a structured
+      // needs-input payload with each missing var's pre-fill so the caller
+      // can re-dispatch with `var.<name>=<value>` filled in.
+      return {
+        ok: false,
+        command: "op-import-module",
+        status: "needs-input",
+        plan: prepared.plan,
+        needsInput: {
+          vars: missing.map((m) => ({
+            name: m.name,
+            prefill: m.prefill,
+            hasModuleDefault: m.hasModuleDefault,
+            ...(m.description ? { description: m.description } : {}),
+          })),
+        },
+        error: `Missing var answer(s): ${missing.map((m) => m.name).join(", ")}. Re-dispatch with --var.<name>=<value> for each.`,
+      };
+    }
+    const result = await commitImport(
+      this.app,
+      this.settings,
+      () => this.saveSettings(),
+      { prepared, varAnswers: parsed.value.varAnswers },
+    );
+    return {
+      ok: true,
+      command: "op-import-module",
+      ...result,
+    };
+  }
+
+  private async handleOpUndoLastImportUri(): Promise<UriResponsePayload> {
+    const result = await undoLastImport(
+      this.app,
+      this.settings,
+      () => this.saveSettings(),
+    );
+    return {
+      ok: true,
+      command: "op-undo-last-import",
+      ...result,
+    };
+  }
+
+  // ---- CLI handlers (return one-line summary, also write JSON to scratch) ----
+
+  private async handleOpExportModuleCli(params: Record<string, string>): Promise<string> {
+    const command = "op-export-module";
+    try {
+      const parsed = parseExportModuleParams(params);
+      if (!parsed.ok) return parsed.error;
+      const args =
+        parsed.value.mode === "id"
+          ? { kind: "id" as const, moduleId: parsed.value.moduleId }
+          : { kind: "project" as const, projectSlug: parsed.value.projectSlug };
+      const result = await exportModules(this.app, args);
+      await writeUriResponse(this.app, {
+        ok: true,
+        command,
+        mode: parsed.value.mode,
+        files: result.files,
+      });
+      return `${command}: wrote ${result.files.length} file${result.files.length === 1 ? "" : "s"} (${result.files.map((f) => f.exportPath).join(", ")})`;
+    } catch (err: any) {
+      const msg = err?.message ?? String(err);
+      console.error("[op-obsidian]", command, err);
+      await writeUriResponse(this.app, { ok: false, command, error: msg });
+      return `${command} failed: ${msg}`;
+    }
+  }
+
+  private async handleOpImportModuleCli(params: Record<string, string>): Promise<string> {
+    const command = "op-import-module";
+    try {
+      const parsed = parseImportModuleParams(params);
+      if (!parsed.ok) return parsed.error;
+      const scope = parsed.value.scope ?? "global";
+      if (scope === "project" && !parsed.value.project) {
+        return `${command} failed: --project is required when --scope=project`;
+      }
+      const prepared = await prepareImport(this.app, this.settings, {
+        sourcePath: parsed.value.sourcePath,
+        targetScope: scope,
+        ...(parsed.value.project ? { targetProjectSlug: parsed.value.project } : {}),
+        varAnswers: parsed.value.varAnswers,
+      });
+      const missing = prepared.plan.promptsNeeded.filter(
+        (p) => !Object.prototype.hasOwnProperty.call(parsed.value.varAnswers, p.name),
+      );
+      if (missing.length > 0) {
+        const payload = {
+          ok: false,
+          command,
+          status: "needs-input",
+          needsInput: {
+            vars: missing.map((m) => ({
+              name: m.name,
+              prefill: m.prefill,
+              hasModuleDefault: m.hasModuleDefault,
+              ...(m.description ? { description: m.description } : {}),
+            })),
+          },
+          plan: prepared.plan,
+        };
+        await writeUriResponse(this.app, payload);
+        return `${command}: needs-input — supply --var.<name>=<value> for: ${missing.map((m) => m.name).join(", ")}`;
+      }
+      const result = await commitImport(
+        this.app,
+        this.settings,
+        () => this.saveSettings(),
+        { prepared, varAnswers: parsed.value.varAnswers },
+      );
+      await writeUriResponse(this.app, { ok: true, command, ...result });
+      return `${command}: ${result.targetPath} (${result.varsWritten.length} var${result.varsWritten.length === 1 ? "" : "s"}; tx ${result.transactionPath})`;
+    } catch (err: any) {
+      const msg = err?.message ?? String(err);
+      console.error("[op-obsidian]", command, err);
+      await writeUriResponse(this.app, { ok: false, command, error: msg });
+      return `${command} failed: ${msg}`;
+    }
+  }
+
+  private async handleOpUndoLastImportCli(): Promise<string> {
+    const command = "op-undo-last-import";
+    try {
+      const result = await undoLastImport(
+        this.app,
+        this.settings,
+        () => this.saveSettings(),
+      );
+      await writeUriResponse(this.app, { ok: true, command, ...result });
+      if (result.status === "no-history") return `${command}: no transaction history to undo.`;
+      return `${command}: reverted ${result.modulesReverted.length} module(s), removed ${result.varsRemoved.length} var(s).`;
+    } catch (err: any) {
+      const msg = err?.message ?? String(err);
+      console.error("[op-obsidian]", command, err);
+      await writeUriResponse(this.app, { ok: false, command, error: msg });
+      return `${command} failed: ${msg}`;
     }
   }
 

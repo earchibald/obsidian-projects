@@ -629,3 +629,220 @@ export class FindIssueModal extends Modal {
     this.contentEl.empty();
   }
 }
+
+// ---------------------------------------------------------------------------
+// OP-187: export / import flow modals
+// ---------------------------------------------------------------------------
+
+/**
+ * Pick `id=<id>` (single module) or `project=<slug>` (bundle) and run
+ * `op-export-module`. Lightweight palette-driven entry point — keeps the URI
+ * + CLI surfaces as the durable contract; the modal is just for one-shot use.
+ */
+export class ExportModulePromptModal extends Modal {
+  private mode: "id" | "project" = "id";
+  private value = "";
+  constructor(
+    app: App,
+    private onSubmit: (
+      args: { kind: "id"; moduleId: string } | { kind: "project"; projectSlug: string },
+    ) => void | Promise<void>,
+  ) {
+    super(app);
+  }
+  onOpen(): void {
+    const { contentEl } = this;
+    contentEl.empty();
+    contentEl.createEl("h2", { text: "Export workflow module(s)" });
+    contentEl.createEl("p", {
+      text: "Writes to Projects/_op-export/. Pick id (single module) or project (bundle).",
+    });
+    new Setting(contentEl)
+      .setName("Mode")
+      .addDropdown((d) =>
+        d
+          .addOption("id", "Single module (id=<id>)")
+          .addOption("project", "Project bundle (project=<slug>)")
+          .setValue("id")
+          .onChange((v) => {
+            this.mode = v as "id" | "project";
+          }),
+      );
+    new Setting(contentEl)
+      .setName("Identifier")
+      .setDesc("Module id (no .md) for single-module mode, or project slug for bundle mode.")
+      .addText((t) =>
+        t.setPlaceholder("orient | obsidian-projects").onChange((v) => {
+          this.value = v;
+        }),
+      );
+    new Setting(contentEl).addButton((b) =>
+      b
+        .setButtonText("Export")
+        .setCta()
+        .onClick(() => {
+          const v = this.value.trim();
+          if (!v) {
+            notify("op-export-module: identifier is required");
+            return;
+          }
+          this.close();
+          if (this.mode === "id") {
+            void this.onSubmit({ kind: "id", moduleId: v });
+          } else {
+            void this.onSubmit({ kind: "project", projectSlug: v });
+          }
+        }),
+    );
+  }
+  onClose(): void {
+    this.contentEl.empty();
+  }
+}
+
+/**
+ * Collect path + scope + (optional) project slug for op-import-module.
+ * Var prompts are driven separately by `ImportVarPromptModal` so the UX
+ * is one prompt per missing var rather than a wall of inputs.
+ */
+export class ImportModulePromptModal extends Modal {
+  private sourcePath = "";
+  private targetScope: "global" | "project" = "global";
+  private projectSlug = "";
+  constructor(
+    app: App,
+    private onSubmit: (input: {
+      sourcePath: string;
+      scope: "global" | "project";
+      projectSlug?: string;
+    }) => void | Promise<void>,
+  ) {
+    super(app);
+  }
+  onOpen(): void {
+    const { contentEl } = this;
+    contentEl.empty();
+    contentEl.createEl("h2", { text: "Import workflow module" });
+    contentEl.createEl("p", {
+      text: "Reads from a vault path or absolute filesystem path. Backs up any existing target file and writes a transaction record under Projects/_op-import-history/.",
+    });
+    new Setting(contentEl)
+      .setName("Source path")
+      .setDesc("Vault-relative or absolute path to the bundle .md file.")
+      .addText((t) =>
+        t.setPlaceholder("Projects/_op-export/orient.md").onChange((v) => {
+          this.sourcePath = v;
+        }),
+      );
+    new Setting(contentEl)
+      .setName("Land as")
+      .addDropdown((d) =>
+        d
+          .addOption("global", "Global (Projects/_op-modules/)")
+          .addOption("project", "Per-project (Projects/<slug>/MODULES/)")
+          .setValue("global")
+          .onChange((v) => {
+            this.targetScope = v as "global" | "project";
+          }),
+      );
+    new Setting(contentEl)
+      .setName("Project slug (when per-project)")
+      .setDesc(
+        "Required if Land as = Per-project. Rewrites the bundle's project: field to this slug.",
+      )
+      .addText((t) =>
+        t.setPlaceholder("obsidian-projects").onChange((v) => {
+          this.projectSlug = v;
+        }),
+      );
+    new Setting(contentEl).addButton((b) =>
+      b
+        .setButtonText("Continue")
+        .setCta()
+        .onClick(() => {
+          const source = this.sourcePath.trim();
+          if (!source) {
+            notify("op-import-module: source path is required");
+            return;
+          }
+          if (this.targetScope === "project" && !this.projectSlug.trim()) {
+            notify("op-import-module: project slug is required when landing per-project");
+            return;
+          }
+          this.close();
+          const submission: {
+            sourcePath: string;
+            scope: "global" | "project";
+            projectSlug?: string;
+          } = { sourcePath: source, scope: this.targetScope };
+          if (this.targetScope === "project") submission.projectSlug = this.projectSlug.trim();
+          void this.onSubmit(submission);
+        }),
+    );
+  }
+  onClose(): void {
+    this.contentEl.empty();
+  }
+}
+
+/**
+ * Per-var prompt during the import flow. Pre-fills the input with the
+ * module's inline default (when present) so the user can accept by Enter.
+ */
+export class ImportVarPromptModal extends Modal {
+  private value: string;
+  private submitted = false;
+  constructor(
+    app: App,
+    private prompt: {
+      name: string;
+      prefill: string;
+      hasModuleDefault: boolean;
+      description?: string;
+    },
+    private onSubmit: (value: string | undefined) => void,
+  ) {
+    super(app);
+    this.value = prompt.prefill;
+  }
+  onOpen(): void {
+    const { contentEl } = this;
+    contentEl.empty();
+    contentEl.createEl("h2", { text: `Set value for {{vars.${this.prompt.name}}}` });
+    if (this.prompt.description) {
+      contentEl.createEl("p", { text: this.prompt.description });
+    }
+    contentEl.createEl("p", {
+      text: this.prompt.hasModuleDefault
+        ? "Pre-filled from the module's inline default. Edit and confirm, or accept as-is."
+        : "No module default — supply a value (empty string is allowed).",
+    });
+    new Setting(contentEl).setName(`vars.${this.prompt.name}`).addText((t) =>
+      t.setValue(this.value).onChange((v) => {
+        this.value = v;
+      }),
+    );
+    new Setting(contentEl)
+      .addButton((b) =>
+        b
+          .setButtonText("Skip (cancel import)")
+          .onClick(() => {
+            this.close();
+          }),
+      )
+      .addButton((b) =>
+        b
+          .setButtonText("Use value")
+          .setCta()
+          .onClick(() => {
+            this.submitted = true;
+            this.close();
+            this.onSubmit(this.value);
+          }),
+      );
+  }
+  onClose(): void {
+    this.contentEl.empty();
+    if (!this.submitted) this.onSubmit(undefined);
+  }
+}
