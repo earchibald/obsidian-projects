@@ -69,10 +69,20 @@ The OP-Test vault is a git repo with named seed tags capturing known states. Bef
 
 ```bash
 node scripts/reset-test-vault.mjs <seed>
-# valid seeds: empty | scaffolded | mid-flow | github-linked | multi-project
+# valid seeds: empty | scaffolded | mid-flow | github-linked | multi-project | workflow-modules
 ```
 
 The script asserts the OP-Test vault is open in Obsidian (focus not required since OP-175), runs `git reset --hard seed/<name> && git clean -fd` inside OP-Test, then reloads op-obsidian so Obsidian re-reads the vault state. The seed ladder itself is built (and rebuilt) by `node scripts/build-seeds.mjs` — re-runnable so seeds stay in sync as the plugin's scaffolding behavior evolves.
+
+### `seed/workflow-modules` + smoke harness
+
+`seed/workflow-modules` is the launchable checkpoint for the OP-181 workflow-module pipeline (one global module, one per-project module, a per-project workflow file referencing them, project-level `vars:`, plus issue `TST-5`). After resetting to it, run:
+
+```bash
+node scripts/smoke-workflow-modules.mjs
+```
+
+The harness invokes `op-explain-workflow id=TST-5 mode=kickoff` and `mode=plan`, plus `op-list-vars project=testing issue=TST-5`, then asserts the composed prompt contains the expected module bodies, that variables resolve through the precedence chain (project-default overrides the module's `name=VALUE` default), and that no `error`-severity diagnostics are emitted. Other workers landing changes in the OP-181 child series should run this against `seed/workflow-modules` after their dev-sync as part of the per-PR smoke step.
 
 ## Agent-Vault is BRAT-only
 

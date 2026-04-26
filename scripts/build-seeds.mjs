@@ -16,12 +16,19 @@
 //   - `gh` CLI is authenticated for the github-linked seed.
 //
 // The seed ladder:
-//   seed/empty          — vault config + op-obsidian enabled, no projects
-//   seed/scaffolded     — one project (TST / testing)
-//   seed/mid-flow       — TST-1 resolved, TST-2 in-progress (with TASKS),
-//                         TST-3 open + related to TST-1, TST-4 open
-//   seed/github-linked  — adds GHB / github-bound, repo: op-test-fixture
-//   seed/multi-project  — adds TWO / second-project, TWO-1 related to TST-3
+//   seed/empty             — vault config + op-obsidian enabled, no projects
+//   seed/scaffolded        — one project (TST / testing)
+//   seed/mid-flow          — TST-1 resolved, TST-2 in-progress (with TASKS),
+//                            TST-3 open + related to TST-1, TST-4 open
+//   seed/github-linked     — adds GHB / github-bound, repo: op-test-fixture
+//   seed/multi-project     — adds TWO / second-project, TWO-1 related to TST-3
+//   seed/workflow-modules  — OP-181 workflow-module artifacts (global module,
+//                            per-project module, per-project workflow file
+//                            referencing them, project-level user vars, plus
+//                            launchable issue TST-5). Smoke probe target for
+//                            `op-explain-workflow` / `op-list-vars`. Run
+//                            `node scripts/smoke-workflow-modules.mjs` after
+//                            resetting to this seed.
 
 import { existsSync } from "node:fs";
 import { spawnSync } from "node:child_process";
@@ -119,6 +126,132 @@ build("seed/multi-project", () => {
   }
 });
 
+build("seed/workflow-modules", () => {
+  // OP-190 (Child 7 of OP-181): introduce one global module, one per-project
+  // module, a per-project workflow file referencing them, a project-level
+  // `vars:` map (project-default precedence layer), and a launchable issue
+  // (TST-5) the smoke probe targets. The artifacts exercise the full
+  // OP-184/185/186 module-injection pipeline end-to-end. The downstream smoke
+  // harness lives at `scripts/smoke-workflow-modules.mjs`.
+
+  // Global module — kickoff scope, exercises always-on plugin vars + a user
+  // var with `name=VALUE` default at the Module-default precedence layer.
+  writeVaultFile(
+    "Projects/_op-modules/branching.md",
+    [
+      "---",
+      "id: branching",
+      "title: Always work in a git worktree",
+      "type: workflow-module",
+      "scope: kickoff",
+      "order: 10",
+      "vars:",
+      '  - "reviewer_handle=@module-default"',
+      "---",
+      "",
+      "You are working on **{{id}}** ({{title}}) in project `{{project}}` on branch `{{branch}}`.",
+      "Always create an isolated worktree before making changes — no exceptions, including",
+      "one-line tweaks. Today is {{today}}; ping {{vars.reviewer_handle}} when the PR is up.",
+      "",
+    ].join("\n"),
+  );
+
+  // Per-project module — plan-mode scope, references the global user var so
+  // both Module-default → Project-default precedence layers participate.
+  writeVaultFile(
+    "Projects/testing/MODULES/plan-rules.md",
+    [
+      "---",
+      "id: plan-rules",
+      "title: Plan-mode rules for the testing project",
+      "type: workflow-module",
+      "scope: plan",
+      "project: testing",
+      "order: 10",
+      "vars:",
+      '  - "max_files=10"',
+      "  - reviewer_handle",
+      "---",
+      "",
+      "Before implementing on **{{id}}**, read no more than {{vars.max_files}} files and",
+      "send the plan to {{vars.reviewer_handle}} for sign-off.",
+      "",
+    ].join("\n"),
+  );
+
+  // Per-project workflow file — references both modules across kickoff + plan
+  // steps. Uses the canonical schema=1 frontmatter shape (OP-196).
+  writeVaultFile(
+    "Projects/testing/WORKFLOW.md",
+    [
+      "---",
+      "type: workflow",
+      "schema: 1",
+      "project: testing",
+      "default_agent: claude",
+      "default_model: sonnet",
+      "steps:",
+      "  - step: kickoff",
+      "    modules: [branching]",
+      "  - step: plan",
+      "    modules: [plan-rules]",
+      "---",
+      "",
+      "Workflow file for the testing project. Composes the global `branching` module at",
+      "kickoff and the per-project `plan-rules` module during plan mode.",
+      "",
+    ].join("\n"),
+  );
+
+  // Project-level vars on STATUS.md so the Project-default precedence layer
+  // overrides the global module's `name=VALUE` default for `reviewer_handle`.
+  setProjectVars("testing", { reviewer_handle: "@op-test-project" });
+
+  // Launchable test issue. The plugin numbers issues by walking the
+  // ISSUES/RESOLVED ISSUES folders, so this lands as TST-5 deterministically
+  // (TST-1..4 came from seed/mid-flow). agent: claude makes the smoke probe's
+  // `op-explain-workflow` call use the claude profile by default. The created
+  // path is read back from `op-new`'s JSON response so a future title tweak
+  // doesn't desync this script from the on-disk filename.
+  //
+  // EXPECTED_SMOKE_ISSUE is the single place to update if a new seed inserted
+  // between seed/mid-flow and seed/workflow-modules changes the issue counter.
+  // The guard below and the smoke-config.json write both reference this constant,
+  // so a numbering change requires only one edit here.
+  const EXPECTED_SMOKE_ISSUE = "TST-5";
+  const tst5 = dispatch("op-new", {
+    project: "testing",
+    title: "Workflow modules smoke target",
+    priority: "med",
+    scope: "Smoke probe target for op-explain-workflow + op-list-vars.",
+  });
+  if (!tst5?.path || !tst5?.issueId) {
+    fail(
+      "seed/workflow-modules: op-new for the testing-project smoke target did not return path+issueId; " +
+        "cannot stamp agent: claude on the issue.",
+    );
+  }
+  if (tst5.issueId !== EXPECTED_SMOKE_ISSUE) {
+    fail(
+      `seed/workflow-modules: expected op-new to return ${EXPECTED_SMOKE_ISSUE} (cumulative ladder includes TST-1..4 from seed/mid-flow), got ${tst5.issueId}. ` +
+        "If a new seed has been inserted between seed/mid-flow and seed/workflow-modules that adds testing-project issues, " +
+        `update EXPECTED_SMOKE_ISSUE (currently "${EXPECTED_SMOKE_ISSUE}") to match and re-run.`,
+    );
+  }
+  setIssueAgent(tst5.path, "claude");
+
+  // Write a machine-readable config so the smoke harness doesn't hardcode the
+  // issue ID. The file is committed into the seed, so `reset-test-vault
+  // workflow-modules` always lands this exact JSON on disk before the harness
+  // reads it. If a future seed reshuffles issue numbering the build guard above
+  // catches it at seed-build time, and only EXPECTED_SMOKE_ISSUE needs updating
+  // — the harness itself stays free of hardcoded IDs.
+  writeVaultFile(
+    "Projects/_scratch/smoke-config.json",
+    JSON.stringify({ issue: tst5.issueId, project: "testing" }, null, 2) + "\n",
+  );
+});
+
 console.log("\nseed ladder built and tagged. Verify with `git -C <op-test> tag -l seed/*`.");
 
 // ---------------------------------------------------------------------------
@@ -200,6 +333,59 @@ function setRelated(vaultRelativePath, ids) {
     `if(!f){return {error:"not found:"+${JSON.stringify(vaultRelativePath)}}}` +
     `await app.fileManager.processFrontMatter(f, fm=>{fm.related=${JSON.stringify(ids)}});` +
     `return {ok:true,path:f.path,related:${JSON.stringify(ids)}}})()`;
+  runObsidian(["eval", `code=${code}`]);
+}
+
+// Create a vault file (or overwrite if it already exists). Goes through
+// `app.vault.create` / `app.vault.modify` so the metadataCache picks up new
+// frontmatter immediately — important for workflow-module files the loader
+// reads via `app.vault.getMarkdownFiles()` + `metadataCache.getFileCache()`.
+// Parent folders are created on demand via `adapter.mkdir`.
+function writeVaultFile(vaultRelativePath, content) {
+  const code =
+    `(async()=>{` +
+    `const path=${JSON.stringify(vaultRelativePath)};` +
+    `const content=${JSON.stringify(content)};` +
+    `const adapter=app.vault.adapter;` +
+    `const lastSlash=path.lastIndexOf("/");` +
+    `if(lastSlash>0){` +
+    `const dir=path.slice(0,lastSlash);` +
+    `if(!(await adapter.exists(dir))){await adapter.mkdir(dir);}` +
+    `}` +
+    `const existing=app.vault.getAbstractFileByPath(path);` +
+    `if(existing){await app.vault.modify(existing,content);return {ok:true,path,mode:"modify"};}` +
+    `const f=await app.vault.create(path,content);` +
+    `return {ok:true,path:f.path,mode:"create"};` +
+    `})()`;
+  runObsidian(["eval", `code=${code}`]);
+}
+
+// Merge a `vars:` map into a project's STATUS.md frontmatter via
+// processFrontMatter. Stored as a YAML map (object), matching what
+// `readProjectVars` in `explainWorkflow.ts` expects.
+function setProjectVars(slug, vars) {
+  const statusPath = `Projects/${slug}/STATUS.md`;
+  const code =
+    `(async()=>{` +
+    `const f=app.vault.getAbstractFileByPath(${JSON.stringify(statusPath)});` +
+    `if(!f){return {error:"not found:"+${JSON.stringify(statusPath)}}}` +
+    `await app.fileManager.processFrontMatter(f,fm=>{fm.vars=${JSON.stringify(vars)};});` +
+    `return {ok:true,path:f.path,vars:${JSON.stringify(vars)}};` +
+    `})()`;
+  runObsidian(["eval", `code=${code}`]);
+}
+
+// Set the `agent:` frontmatter field on an issue note. Used to make TST-5's
+// agent deterministic so the smoke probe's `op-explain-workflow` call resolves
+// the same agent profile every run regardless of the vault's defaultAgent.
+function setIssueAgent(vaultRelativePath, agent) {
+  const code =
+    `(async()=>{` +
+    `const f=app.vault.getAbstractFileByPath(${JSON.stringify(vaultRelativePath)});` +
+    `if(!f){return {error:"not found:"+${JSON.stringify(vaultRelativePath)}}}` +
+    `await app.fileManager.processFrontMatter(f,fm=>{fm.agent=${JSON.stringify(agent)};});` +
+    `return {ok:true,path:f.path,agent:${JSON.stringify(agent)}};` +
+    `})()`;
   runObsidian(["eval", `code=${code}`]);
 }
 
