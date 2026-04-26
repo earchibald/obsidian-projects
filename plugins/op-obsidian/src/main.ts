@@ -41,6 +41,9 @@ import { RELATION_NAMES, type RelationName } from "./relations";
 import { runEvaluatorFlow } from "./evaluator";
 import { launchHeadlessSubtask } from "./launchHeadlessSubtask";
 import { makeTmuxRelay } from "./relaySession";
+import { composeWorkflowSection } from "./promptBuild";
+import { gitBranchAt } from "./gitBranch";
+import { modeToWorkflowStep } from "./agentProfiles";
 import {
   flowAdvanceDecision,
   type FlowAdvanceOutput,
@@ -1654,12 +1657,48 @@ export default class OpPlugin extends Plugin {
         statusLine: (line) => notify(`op-evaluate ${entry.id}: ${line}`),
         paneStream: (chunk) => console.log(`[op-evaluate ${entry.id}] ${chunk}`),
       });
+      // OP-199 (2b): in modules-mode, compose the workflow's `evaluate` step
+      // and prepend it to the evaluator's prompt. Launch context is best-
+      // effort here (no `wd` resolution because the evaluator runs in-
+      // process, not in a terminal) — `repoPath` from `resolveRepoPath`,
+      // `branch` via `git rev-parse` at that path. Evaluator-step modules
+      // that reference `{{branch}}` etc. resolve to either the real value
+      // or a `missing-var` diagnostic, never break the launch.
+      const composeWorkflowSectionFn =
+        this.settings.workflowMode === "modules"
+          ? async () => {
+              const profile = resolveProfile(this.settings, this.settings.defaultAgent);
+              const repoPath = resolveRepoPath(this.app, this.settings, entry.project);
+              const branch = repoPath ? await gitBranchAt(repoPath) : undefined;
+              const parentRaw = (this.app.metadataCache.getFileCache(
+                this.app.vault.getAbstractFileByPath(entry.path) as TFile,
+              )?.frontmatter as Record<string, unknown> | undefined)?.parent;
+              const parentId =
+                typeof parentRaw === "string" && parentRaw.trim().length > 0
+                  ? parentRaw
+                  : null;
+              return composeWorkflowSection(this.app, {
+                entry,
+                profile,
+                injection: this.settings.injection,
+                vaultBasePath: (this.app.vault.adapter as unknown as { basePath?: string }).basePath,
+                mode: "evaluate",
+                workflowMode: this.settings.workflowMode,
+                workflowVars: this.settings.workflowVars,
+                workflowStep: modeToWorkflowStep("evaluate"),
+                repoPath,
+                branch,
+                parentId,
+              });
+            }
+          : undefined;
       const result = await runEvaluatorFlow(
         {
           launch: launchHeadlessSubtask,
           setEvaluation: (e, evaluation) => setEvaluation(this.app, e, evaluation),
           setFlow: (e, i) => setFlow(this.app, e, i),
           relaySession,
+          composeWorkflowSection: composeWorkflowSectionFn,
         },
         entry,
         body,

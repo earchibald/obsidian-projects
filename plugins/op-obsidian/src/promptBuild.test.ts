@@ -558,3 +558,291 @@ describe("buildPrompt — OP-198 (2a)", () => {
     expect(out).not.toContain("## Project workflow");
   });
 });
+
+// ---------------------------------------------------------------------------
+// buildPrompt — OP-199 (2b): per-mode injection + launch context
+// ---------------------------------------------------------------------------
+
+import { composeWorkflowSection } from "./promptBuild";
+
+/**
+ * Workflow file with one step per mode + a kickoff step. Each step's only
+ * module emits a unique sentinel string so the test asserts which step
+ * actually composed.
+ */
+function perModeWorkflowFiles(): FakeFile[] {
+  const steps = ["kickoff", "evaluate", "plan", "implement", "review", "finalize"];
+  const files: FakeFile[] = [
+    {
+      path: "Projects/demo/WORKFLOW.md",
+      frontmatter: {
+        type: "workflow",
+        schema: 1,
+        project: "demo",
+        default_agent: "claude",
+        default_model: "opus",
+        steps: steps.map((s) => ({ step: s, modules: [`${s}-mod`] })),
+      },
+      raw: "---\n# yaml omitted\n---\n",
+    },
+  ];
+  for (const s of steps) {
+    files.push({
+      path: `Projects/_op-modules/${s}-mod.md`,
+      frontmatter: {
+        id: `${s}-mod`,
+        title: `${s} module`,
+        type: "workflow-module",
+        scope: s,
+        vars: [],
+      },
+      raw: `---\n# yaml omitted\n---\nSTEP=${s}\n`,
+    });
+  }
+  return files;
+}
+
+describe("buildPrompt — OP-199 (2b)", () => {
+  it.each([
+    ["evaluate", "STEP=evaluate"],
+    ["plan", "STEP=plan"],
+    ["implement", "STEP=implement"],
+    ["review", "STEP=review"],
+    ["finalize", "STEP=finalize"],
+  ])("workflowStep='%s' composes its own step's modules", async (step, expected) => {
+    const app = fakeApp(perModeWorkflowFiles());
+    const out = await buildPrompt(app, fakeStore(), {
+      entry: entry(),
+      profile: profile(),
+      injection: injection(),
+      vaultBasePath: "/Users/me/vault",
+      workflowMode: "modules",
+      workflowStep: step,
+    });
+    expect(out).toContain(expected);
+    // Sibling steps must not bleed in.
+    for (const sibling of ["evaluate", "plan", "implement", "review", "finalize"]) {
+      if (sibling === step) continue;
+      expect(out).not.toContain(`STEP=${sibling}`);
+    }
+  });
+
+  it("lenient kickoff fallback: workflow has only 'kickoff', non-kickoff step requested → kickoff content composes", async () => {
+    // Authors who haven't migrated to per-mode steps still get the kickoff
+    // content at every mode launch.
+    const app = fakeApp([
+      {
+        path: "Projects/demo/WORKFLOW.md",
+        frontmatter: {
+          type: "workflow",
+          schema: 1,
+          project: "demo",
+          default_agent: "claude",
+          default_model: "opus",
+          steps: [{ step: "kickoff", modules: ["kickoff-only"] }],
+        },
+        raw: "---\n# yaml omitted\n---\n",
+      },
+      {
+        path: "Projects/_op-modules/kickoff-only.md",
+        frontmatter: {
+          id: "kickoff-only",
+          title: "Kickoff",
+          type: "workflow-module",
+          scope: "kickoff",
+          vars: [],
+        },
+        raw: "---\n# yaml omitted\n---\nKickoff fallback content.\n",
+      },
+    ]);
+    const out = await buildPrompt(app, fakeStore(), {
+      entry: entry(),
+      profile: profile(),
+      injection: injection(),
+      vaultBasePath: "/Users/me/vault",
+      workflowMode: "modules",
+      workflowStep: "plan",
+    });
+    expect(out).toContain("Kickoff fallback content.");
+  });
+
+  it("explicit-suppress preserved: step exists with modules:[] → no fallback to kickoff", async () => {
+    // OP-198 contract — author-defined empty step suppresses the section
+    // entirely. The lenient fallback must NOT trigger here.
+    const app = fakeApp([
+      {
+        path: "Projects/demo/WORKFLOW.md",
+        frontmatter: {
+          type: "workflow",
+          schema: 1,
+          project: "demo",
+          default_agent: "claude",
+          default_model: "opus",
+          steps: [
+            { step: "kickoff", modules: ["kickoff-only"] },
+            { step: "plan", modules: [] },
+          ],
+        },
+        raw: "---\n# yaml omitted\n---\n",
+      },
+      {
+        path: "Projects/_op-modules/kickoff-only.md",
+        frontmatter: {
+          id: "kickoff-only",
+          title: "Kickoff",
+          type: "workflow-module",
+          scope: "kickoff",
+          vars: [],
+        },
+        raw: "---\n# yaml omitted\n---\nKickoff content (must NOT bleed in).\n",
+      },
+    ]);
+    const out = await buildPrompt(app, fakeStore(), {
+      entry: entry(),
+      profile: profile(),
+      injection: injection(),
+      vaultBasePath: "/Users/me/vault",
+      workflowMode: "modules",
+      workflowStep: "plan",
+    });
+    expect(out).not.toContain("## Project workflow");
+    expect(out).not.toContain("Kickoff content (must NOT bleed in).");
+  });
+
+  it("launch-context fields populate {{repo_path}}, {{branch}}, {{parent}} in module bodies", async () => {
+    const app = fakeApp([
+      {
+        path: "Projects/demo/WORKFLOW.md",
+        frontmatter: {
+          type: "workflow",
+          schema: 1,
+          project: "demo",
+          default_agent: "claude",
+          default_model: "opus",
+          steps: [{ step: "implement", modules: ["context"] }],
+        },
+        raw: "---\n# yaml omitted\n---\n",
+      },
+      {
+        path: "Projects/_op-modules/context.md",
+        frontmatter: {
+          id: "context",
+          title: "Context",
+          type: "workflow-module",
+          scope: "implement",
+          vars: [],
+        },
+        raw:
+          "---\n# yaml omitted\n---\n" +
+          "repo={{repo_path}} branch={{branch}} parent={{parent}}\n",
+      },
+    ]);
+    const out = await buildPrompt(app, fakeStore(), {
+      entry: entry(),
+      profile: profile(),
+      injection: injection(),
+      vaultBasePath: "/Users/me/vault",
+      workflowMode: "modules",
+      workflowStep: "implement",
+      repoPath: "/Users/me/Projects/demo",
+      branch: "feature/op-199",
+      parentId: "OP-185",
+    });
+    expect(out).toContain("repo=/Users/me/Projects/demo");
+    expect(out).toContain("branch=feature/op-199");
+    expect(out).toContain("parent=OP-185");
+  });
+
+  it("parent: null renders {{parent}} as PARENT_NONE_SENTINEL", async () => {
+    const app = fakeApp([
+      {
+        path: "Projects/demo/WORKFLOW.md",
+        frontmatter: {
+          type: "workflow",
+          schema: 1,
+          project: "demo",
+          default_agent: "claude",
+          default_model: "opus",
+          steps: [{ step: "implement", modules: ["par"] }],
+        },
+        raw: "---\n# yaml omitted\n---\n",
+      },
+      {
+        path: "Projects/_op-modules/par.md",
+        frontmatter: {
+          id: "par",
+          title: "Par",
+          type: "workflow-module",
+          scope: "implement",
+          vars: [],
+        },
+        raw: "---\n# yaml omitted\n---\nparent={{parent}}\n",
+      },
+    ]);
+    const out = await buildPrompt(app, fakeStore(), {
+      entry: entry(),
+      profile: profile(),
+      injection: injection(),
+      vaultBasePath: "/Users/me/vault",
+      workflowMode: "modules",
+      workflowStep: "implement",
+      // parentId omitted → null in render context.
+    });
+    // PARENT_NONE_SENTINEL = "(none — this is a top-level issue)"
+    expect(out).toContain("parent=(none — this is a top-level issue)");
+  });
+});
+
+describe("composeWorkflowSection — OP-199 (2b)", () => {
+  it("returns the composed `## Project workflow\\n\\n…` section directly (for evaluator-style callers)", async () => {
+    const app = fakeApp(perModeWorkflowFiles());
+    const section = await composeWorkflowSection(app, {
+      entry: entry(),
+      profile: profile(),
+      injection: injection(),
+      vaultBasePath: "/Users/me/vault",
+      workflowMode: "modules",
+      workflowStep: "evaluate",
+    });
+    expect(section).toBe("## Project workflow\n\nSTEP=evaluate");
+  });
+
+  it("returns null when WORKFLOW.md is missing (caller falls back to legacy)", async () => {
+    const app = fakeApp([]);
+    const section = await composeWorkflowSection(app, {
+      entry: entry(),
+      profile: profile(),
+      injection: injection(),
+      vaultBasePath: "/Users/me/vault",
+      workflowMode: "modules",
+      workflowStep: "evaluate",
+    });
+    expect(section).toBeNull();
+  });
+
+  it("returns '' when the requested step exists but is empty (explicit-suppress)", async () => {
+    const app = fakeApp([
+      {
+        path: "Projects/demo/WORKFLOW.md",
+        frontmatter: {
+          type: "workflow",
+          schema: 1,
+          project: "demo",
+          default_agent: "claude",
+          default_model: "opus",
+          steps: [{ step: "evaluate", modules: [] }],
+        },
+        raw: "---\n# yaml omitted\n---\n",
+      },
+    ]);
+    const section = await composeWorkflowSection(app, {
+      entry: entry(),
+      profile: profile(),
+      injection: injection(),
+      vaultBasePath: "/Users/me/vault",
+      workflowMode: "modules",
+      workflowStep: "evaluate",
+    });
+    expect(section).toBe("");
+  });
+});

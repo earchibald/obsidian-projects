@@ -69,6 +69,32 @@ describe("buildEvaluatorPrompt", () => {
     const p = buildEvaluatorPrompt(entry, "   \n\n");
     expect(p).not.toContain("## Issue body");
   });
+
+  it("OP-199 (2b): prepends the workflowSection when supplied", () => {
+    const p = buildEvaluatorPrompt(
+      entry,
+      "scope",
+      "## Project workflow\n\nReview-step rules.",
+    );
+    // Workflow section appears before the evaluator's first directive.
+    const wfIdx = p.indexOf("## Project workflow");
+    const evalIdx = p.indexOf("Evaluate ");
+    expect(wfIdx).toBeGreaterThanOrEqual(0);
+    expect(evalIdx).toBeGreaterThan(wfIdx);
+  });
+
+  it("OP-199 (2b): null workflowSection leaves the prompt byte-identical to pre-OP-199 shape", () => {
+    const withoutArg = buildEvaluatorPrompt(entry, "scope");
+    const withNull = buildEvaluatorPrompt(entry, "scope", null);
+    expect(withNull).toBe(withoutArg);
+  });
+
+  it("OP-199 (2b): empty/whitespace workflowSection is treated as no injection", () => {
+    const p = buildEvaluatorPrompt(entry, "scope", "   \n\n  ");
+    expect(p).not.toContain("## Project workflow");
+    // Same shape as the no-arg call.
+    expect(p).toBe(buildEvaluatorPrompt(entry, "scope"));
+  });
 });
 
 describe("runEvaluatorFlow", () => {
@@ -139,6 +165,85 @@ describe("runEvaluatorFlow", () => {
     ).rejects.toThrow(/COMPLEXITY/);
     expect(setEvaluation).not.toHaveBeenCalled();
     expect(setFlow).not.toHaveBeenCalled();
+  });
+
+  it("OP-199 (2b): composeWorkflowSection dep is invoked and its result threads into the launched prompt", async () => {
+    const composeWorkflowSection = vi
+      .fn()
+      .mockResolvedValue("## Project workflow\n\nEvaluate-step rules.");
+    const launch = vi.fn().mockResolvedValue({
+      text: "body\nCOMPLEXITY: simple",
+      jsonResult: {},
+      stdout: "",
+      stderr: "",
+      exitCode: 0,
+      durationMs: 1,
+    });
+    const setEvaluation = vi.fn().mockResolvedValue({ issueId: entry.id, path: entry.path, evaluation: "body", replaced: false });
+    const setFlow = vi.fn().mockResolvedValue({ issueId: entry.id, path: entry.path, flow: "evaluate", complexity: "simple" });
+    await runEvaluatorFlow(
+      { launch, setEvaluation, setFlow, relaySession: makeTestRelay(), composeWorkflowSection },
+      entry,
+      "scope",
+    );
+    expect(composeWorkflowSection).toHaveBeenCalledTimes(1);
+    expect(launch.mock.calls[0][0].prompt).toContain("Evaluate-step rules.");
+  });
+
+  it("OP-199 (2b): composeWorkflowSection returning null leaves the prompt byte-identical to no-dep shape", async () => {
+    const composeWorkflowSection = vi.fn().mockResolvedValue(null);
+    const launch = vi.fn().mockResolvedValue({
+      text: "body\nCOMPLEXITY: simple",
+      jsonResult: {},
+      stdout: "",
+      stderr: "",
+      exitCode: 0,
+      durationMs: 1,
+    });
+    const setEvaluation = vi.fn().mockResolvedValue({ issueId: entry.id, path: entry.path, evaluation: "body", replaced: false });
+    const setFlow = vi.fn().mockResolvedValue({ issueId: entry.id, path: entry.path, flow: "evaluate", complexity: "simple" });
+
+    const launchNoDep = vi.fn().mockResolvedValue({
+      text: "body\nCOMPLEXITY: simple",
+      jsonResult: {},
+      stdout: "",
+      stderr: "",
+      exitCode: 0,
+      durationMs: 1,
+    });
+    await runEvaluatorFlow(
+      { launch, setEvaluation, setFlow, relaySession: makeTestRelay(), composeWorkflowSection },
+      entry,
+      "scope",
+    );
+    await runEvaluatorFlow(
+      { launch: launchNoDep, setEvaluation, setFlow, relaySession: makeTestRelay() },
+      entry,
+      "scope",
+    );
+    expect(launch.mock.calls[0][0].prompt).toBe(launchNoDep.mock.calls[0][0].prompt);
+  });
+
+  it("OP-199 (2b): composeWorkflowSection that throws is fail-soft — launch proceeds without injection", async () => {
+    const composeWorkflowSection = vi.fn().mockRejectedValue(new Error("compose blew up"));
+    const launch = vi.fn().mockResolvedValue({
+      text: "body\nCOMPLEXITY: simple",
+      jsonResult: {},
+      stdout: "",
+      stderr: "",
+      exitCode: 0,
+      durationMs: 1,
+    });
+    const setEvaluation = vi.fn().mockResolvedValue({ issueId: entry.id, path: entry.path, evaluation: "body", replaced: false });
+    const setFlow = vi.fn().mockResolvedValue({ issueId: entry.id, path: entry.path, flow: "evaluate", complexity: "simple" });
+    const result = await runEvaluatorFlow(
+      { launch, setEvaluation, setFlow, relaySession: makeTestRelay(), composeWorkflowSection },
+      entry,
+      "scope",
+    );
+    expect(result.complexity).toBe("simple");
+    // Prompt has no workflow section.
+    expect(launch.mock.calls[0][0].prompt).not.toContain("## Project workflow");
   });
 
   it("setEvaluation failure skips setFlow", async () => {

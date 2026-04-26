@@ -63,8 +63,22 @@ export function parseEvaluatorClassification(raw: string): EvaluatorParseResult 
 // read-only scope; the prompt itself names the issue and embeds the scope
 // body so the evaluator doesn't have to read the note first. The final
 // `COMPLEXITY:` marker is parsed by `parseEvaluatorClassification`.
-export function buildEvaluatorPrompt(entry: IssueEntry, body: string): string {
+//
+// OP-199 (2b): an optional `workflowSection` is prepended verbatim — when
+// the caller is in modules-mode, it composes the workflow's `evaluate` step
+// (via `composeWorkflowSection` from `promptBuild.ts`) and threads the
+// result here. `null` / empty means no injection (legacy mode, or modules
+// mode without a workflow file). The trailing `evaluate` paragraph stays
+// at the end so the `COMPLEXITY:` marker contract is unchanged.
+export function buildEvaluatorPrompt(
+  entry: IssueEntry,
+  body: string,
+  workflowSection?: string | null,
+): string {
   const parts: string[] = [];
+  if (workflowSection && workflowSection.trim().length > 0) {
+    parts.push(workflowSection.trim());
+  }
   parts.push(
     `Evaluate ${entry.id} — ${entry.title}. Project: ${entry.project}. Note path: ${entry.path}.`,
   );
@@ -93,6 +107,16 @@ export interface EvaluatorFlowDeps {
    * the typechecker rejects deps that omit it.
    */
   relaySession: RelaySession;
+  /**
+   * OP-199 (2b): optional async hook that returns the composed workflow
+   * section to prepend to the evaluator's prompt. Wired by `main.ts` to
+   * `composeWorkflowSection(app, { ..., workflowStep: 'evaluate' })` when
+   * `settings.workflowMode === 'modules'`. `null` (or omission) means no
+   * injection — the evaluator's prompt is byte-identical to the pre-OP-199
+   * shape, so legacy mode and tests that don't supply this dep see no
+   * behavior change.
+   */
+  composeWorkflowSection?: () => Promise<string | null>;
 }
 
 export interface EvaluatorFlowResult {
@@ -110,7 +134,20 @@ export async function runEvaluatorFlow(
   entry: IssueEntry,
   body: string,
 ): Promise<EvaluatorFlowResult> {
-  const prompt = buildEvaluatorPrompt(entry, body);
+  // OP-199 (2b): compose the workflow section for the `evaluate` step
+  // (when modules-mode is on). Fail-soft — any error in the composer
+  // bubbles up as `null` so a misconfigured workflow file doesn't block
+  // the evaluator launch.
+  let workflowSection: string | null = null;
+  if (deps.composeWorkflowSection) {
+    try {
+      workflowSection = await deps.composeWorkflowSection();
+    } catch (err) {
+      console.warn("[op-obsidian] evaluator: composeWorkflowSection threw — proceeding without injection", err);
+      workflowSection = null;
+    }
+  }
+  const prompt = buildEvaluatorPrompt(entry, body, workflowSection);
   const launchResult = await deps.launch({
     prompt,
     agents: { [EVALUATOR_AGENT_NAME]: EVALUATOR_AGENT_DEFINITION },

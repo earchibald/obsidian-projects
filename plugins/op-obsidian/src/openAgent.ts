@@ -10,8 +10,10 @@ import {
   type AgentProfile,
   launchFlagsFor,
   mergeProfile,
+  modeToWorkflowStep,
 } from "./agentProfiles";
 import { buildPrompt } from "./promptBuild";
+import { gitBranchAt } from "./gitBranch";
 import { workIssue } from "./workIssue";
 import { resolveWorkingDir } from "./workingDir";
 import { launchInTerminal } from "./terminalLaunch";
@@ -121,6 +123,16 @@ export async function openAgent(
   }
 
   const vaultBasePath = getVaultBasePath(app);
+  // OP-199 (2b): launch-context plumbing for the modules-mode composer.
+  // - `branch` via fail-soft `git rev-parse --abbrev-ref HEAD` at the
+  //   working dir. ~20–80ms per launch; tolerable on a user-initiated
+  //   action. Errors → undefined, surfaced as a `missing-var` diagnostic.
+  // - `parentId` from the issue's frontmatter via `metadataCache`. Null
+  //   when no parent (or no cache entry yet).
+  // - `repoPath` is just `wd.path` — the directory the agent is cd'ing
+  //   into. Modules referencing `{{repo_path}}` resolve to this.
+  const branch = await gitBranchAt(wd.path);
+  const parentId = readParentId(app, args.entry.path);
   const prompt = await buildPrompt(app, store, {
     entry: args.entry,
     profile,
@@ -129,6 +141,10 @@ export async function openAgent(
     mode,
     workflowMode: settings.workflowMode,
     workflowVars: settings.workflowVars,
+    workflowStep: modeToWorkflowStep(mode),
+    repoPath: wd.path,
+    branch,
+    parentId,
   });
 
   const { scriptPath, tmuxSession, tmuxWindow } = await launchInTerminal({
@@ -262,4 +278,26 @@ function getVaultBasePath(app: App): string | undefined {
   if (typeof adapter.getBasePath === "function") return adapter.getBasePath();
   if (typeof adapter.basePath === "string") return adapter.basePath;
   return undefined;
+}
+
+/**
+ * OP-199 (2b): pull `parent:` from the issue's frontmatter via metadataCache.
+ * Returns `null` when:
+ *  - the path doesn't resolve to a `TFile`,
+ *  - the metadata cache has no entry yet (early launches in a fresh session),
+ *  - the frontmatter has no `parent:` key,
+ *  - or the value isn't a string (defensive — should be rare).
+ *
+ * The composer renders a `null` parent as `PARENT_NONE_SENTINEL`, so callers
+ * never see a stray `{{parent}}` token in module bodies — even when no
+ * parent is set.
+ */
+function readParentId(app: App, path: string): string | null {
+  const file = app.vault.getAbstractFileByPath(path);
+  if (!(file instanceof TFile)) return null;
+  const cache = app.metadataCache.getFileCache(file);
+  const fm = cache?.frontmatter;
+  if (!fm) return null;
+  const raw = fm.parent;
+  return typeof raw === "string" && raw.trim().length > 0 ? raw : null;
 }
