@@ -57,8 +57,14 @@ All `op-*` commands take `key=value` arguments (not `--flag`). Each prints a one
 | `op-work` | `issue` | `agent`, `agent_session` (alias: `session`), `force` | sets `status: in-progress`; creates the initial TASKS note. Optional params: `agent=` records the working agent id; `agent_session=` adds an opaque per-session id. If a different agent or session is already registered, returns `conflict` in the JSON payload and refuses to write (pass `force=true` to override). Force-overwriting a different agent without supplying `agent_session=` clears the stale session from the previous agent. |
 | `op-append-commit` | `issue`, `sha`, `subject` | — | idempotent append to issue's `commits:` list |
 | `op-set-pr` | `issue`, `url` | — | sets scalar `pr:` |
-| `op-get-workflow` | `project` | — | reads `Projects/<project>/WORKFLOW.md` (the project's SDLC policy, optional). Returns `{exists, path, content, size}`. Read-only. |
-| `op-edit-workflow` | `project` | — | launches an agent in tmux to interview the user and author/refine `Projects/<project>/WORKFLOW.md`. Window naming `op-workflow-<slug>` keeps it distinct from issue sessions. The session has full edit capability but is bounded to writing the workflow file (no `op-work` / `op-resolve` / version bump). |
+| `op-get-workflow` | `project` | — | reads `Projects/<project>/WORKFLOW.md` (the project's workflow file — modern `type: workflow` / `schema: 1` shape preferred; legacy plain prose still parses via the fallback ladder). Returns `{exists, path, content, size}`. Read-only. |
+| `op-edit-workflow` | `project` | — | launches an agent in tmux to interview the user and author/refine `Projects/<project>/WORKFLOW.md` as a modern workflow file (frontmatter `type: workflow`, `schema: 1`, `default_agent`, `default_model`, ordered `steps:` referencing module ids; optional `extends:` to a global default). Window naming `op-workflow-<slug>` keeps it distinct from issue sessions. The session has full edit capability but is bounded to writing the workflow file (no `op-work` / `op-resolve` / version bump). |
+| `op-edit-module` | `module` | `scope=global\|project`, `project` | launches an agent in tmux to author/refine a workflow module file. `scope=global` writes to `Projects/_op-modules/<id>.md`; `scope=project` writes to `Projects/<project>/MODULES/<id>.md` and requires `project=`. The session is bounded to a single module file — no `op-work` / `op-resolve` / version bump. Like `op-edit-workflow`, this is the editor entry point; agents working an issue should not call it directly without user intent. |
+| `op-explain-workflow` | `issue`, `mode` | `agent` | renders the composed prompt for `<issue>` at `mode=kickoff\|evaluate\|plan\|implement\|review\|finalize`. **Read-only and non-destructive.** Use it to verify what an agent launch would inject before launching, or as a smoke probe after editing modules / workflow files. JSON payload: `composed.text` (verbatim launch text), `composed.chunks` (per-module breakdown with id / scope / sizeChars), `vars` (one row per **referenced user var** with its resolved value and the precedence layer that supplied it — `module` / `global` / `project` / `launch` / `null` if unresolved), `diagnostics` formatted through the unified WorkflowDiagnostic stream, plus the resolved `agent` and (when selectable) `model`. Does not return the workflow file path. |
+| `op-list-vars` | — | `project`, `issue` | enumerates the **plugin var registry** (`PLUGIN_VAR_REGISTRY` — the always-on namespace covering `{{id}}`, `{{repo_path}}`, `{{today}}`, etc.), with `name`, `description`, `example`, and `currentValue` (resolved against the supplied `project=` / `issue=` context, or `null` when context-less or `compute` returned undefined). **Read-only.** This is the registry browser and the same data the Settings → "Available variables" reference panel renders. For **user-var** introspection (module-declared `vars:` and the four-layer precedence chain), use `op-explain-workflow` — its `vars` array has the per-var precedence breakdown. |
+| `op-export-module` | `id` **or** `project` (mutually exclusive) | — | bundles modules into the fixed `Projects/_op-export/` folder. `id=<moduleId>` writes a single module to `Projects/_op-export/<id>.md`. `project=<slug>` writes every module visible to that project (per-project modules + globals carrying that `project:`) to `Projects/_op-export/<slug>/<id>.md`. The bundle is plain-text-shareable across vaults; the receiving side imports with `op-import-module`. Aborts (no half-written bundle) if any module fails to load with an error-severity diagnostic. |
+| `op-import-module` | `path` | `scope=global\|project`, `project`, `vars`, `var.<name>` | imports a bundle written by `op-export-module` into the current vault. `scope=` selects the destination layer (defaults to the export's recorded scope when present); `scope=project` requires `project=<slug>`. Module-declared `vars:` defaults can be answered up front via `vars=name=val\nname2=val2` (packed) or per-var via `var.<name>=<value>` keys. **Atomic + recorded:** every imported file is logged in a transaction record so `op-undo-last-import` can reverse exactly the last import. Conflicts (same module id already present) are surfaced as diagnostics — resolve by editing locally, not by re-importing. |
+| `op-undo-last-import` | — | — | reverses the most recent `op-import-module` transaction. JSON payload: `status: "ok"` when the undo applied, or `status: "no-history"` (CLI prints `no transaction history to undo`) when there's nothing to reverse. Only the **most recent** import is undoable — no multi-step history. Use immediately after a regretted import; don't expect it to roll back yesterday's mistake. |
 | `op-set-scope` | `issue`, `scope` | `mode=scope\|body` | default `mode=scope` replaces the issue body's `## Scope` section (appends it if missing); payload is markdown without H2 headings. `mode=body` replaces the entire body content after the optional `# Title` heading; payload may include H2s. Use this when you genuinely want to rewrite Scope or the whole body — not for routine Plan/Notes/Summary edits, where `op-set-section` is safer (it scopes to one section). |
 | `op-set-evaluation` | `issue`, `evaluation` | — | replace (or append if missing) the issue body's `## Initial Evaluation` section. Frontmatter, the `# Title`, and every other H2 section are preserved; payload must not contain a bare `## ` H2 (would terminate the section). Use this when an evaluate-mode agent persists its output — it's section-scoped and won't clobber `## Plan`, `## Notes`, or `## Summary`. |
 | `op-set-section` | `issue`, `name`, `content` | `append=true` | replace (or, with `append=true`, extend) the issue body's `## <name>` section. `name` must be one of `Plan`, `Notes`, `Summary`. Frontmatter, the `# Title`, and any other H2 sections are preserved; payload must not contain its own `## ` H2 (would terminate the section). Preferred path for the Plan/Notes/Summary writes the workflow does on every issue — including the racy `### <ID>.<N>` block append under `## Notes` as tasks complete. |
@@ -73,6 +79,101 @@ All `op-*` commands take `key=value` arguments (not `--flag`). Each prints a one
 **URI senders (`obsidian://op-new?…`):** Obsidian's protocol parser is `Record<string, string>` and last-wins, so repeated `scope=a&scope=b` keys collapse to only the last value. Pack multi-value lists into a single `scope=` param using `%0A` (newline) or `,` as the delimiter; the plugin's `collectRepeated` helper splits on either. Spaces and `+`: the parser uses `decodeURIComponent`, which leaves `+` untouched — but the plugin normalizes `+` → space at the dispatch boundary to match `URLSearchParams.toString()` semantics. To preserve a literal `+`, encode it as `%2B`.
 
 Prefix → slug is **not** a plugin command — scan `Projects/*/STATUS.md` directly and read the `prefix:` frontmatter to disambiguate. Do not use `obsidian search` for this (it misreads `prefix:` as a query operator). **Legacy fallback:** if no `STATUS.md` declares that prefix (pre-`prefix:`-field projects, or the file is missing), scan `Projects/*/ISSUES/<PREFIX>-*.md` and `Projects/*/RESOLVED ISSUES/<PREFIX>-*.md` filenames instead and infer the slug from the parent folder. If still no match, stop and ask the user for the slug, then write `prefix:` into that project's `STATUS.md` before continuing so the next lookup is deterministic.
+
+---
+
+## Workflow modules — what gets injected at launch
+
+When an agent is launched against an issue (`op:open-agent` or the protocol URI), the plugin composes the kickoff and per-step prompts from a set of **workflow modules** rather than a monolithic per-project SDLC document. The composer is governed by the `workflowMode` setting:
+
+- **`workflowMode: "modules"`** — modules drive injection. The plugin reads the project's workflow file, resolves the module set, and splices the rendered text in at the matching step.
+- **`workflowMode: "legacy"`** — the pre-modules behavior. The plugin reads `Projects/<slug>/WORKFLOW.md` as opaque prose and pastes it into the kickoff prompt.
+
+Fresh installs default to `"modules"` (flipped in OP-208). `mergeSettings` preserves whatever value an existing `data.json` blob has, so users who explicitly opted into either mode keep it across upgrades — only blobs missing the field pick up the new default. Check your install's setting via `Settings → Workflows` (or `app.plugins.plugins["op-obsidian"]?.settings?.workflowMode` in the dev console) when you need to know which path you're on.
+
+### File layout
+
+| Layer | Path | Applies to |
+| :--- | :--- | :--- |
+| Global module | `Projects/_op-modules/<id>.md` | Every project (unless shadowed). |
+| Per-project module | `Projects/<slug>/MODULES/<id>.md` | Only project `<slug>`; shadows a same-id global silently. |
+| Per-project workflow file | `Projects/<slug>/WORKFLOW.md` | Selects which modules participate at which step; declares default agent/model and may override per-step. |
+| Global workflow default | `Projects/_op-workflow.md` (by convention) | Inherited via `extends:` from a per-project workflow. One level only — no chains. |
+
+Module files are markdown with a small frontmatter block (`id`, `title`, `type: workflow-module`, `scope`, optional `agent` / `project` / `order` / `vars`). Workflow files are markdown with `type: workflow`, `schema: 1`, `default_agent`, `default_model`, and an ordered `steps:` list whose entries name modules by id and may override the default agent/model for that step.
+
+Full file-format references live at `docs/specs/workflow-module-schema.md` and `docs/specs/workflow-file-schema.md`. Conceptual docs are at `docs/workflow-modules/`.
+
+### Two template-var namespaces
+
+Module bodies are templated through two distinct `{{…}}` namespaces — they look similar but resolve differently:
+
+- **Plugin vars** — `{{id}}`, `{{repo_path}}`, `{{today}}`, `{{project}}`, `{{agent}}`, etc. These are the bare-name tokens. They come from a fixed registry (`PLUGIN_VAR_REGISTRY`) baked into the plugin and resolved at render time from the launch's `RenderContext`. **Not subject to precedence layers** — the registry is the only source. `op-list-vars [project=<slug>] [issue=<ID>]` is the registry browser and shows each var's resolved current value against the supplied context.
+- **User vars** — `{{vars.<name>}}` (note the `vars.` prefix). Declared by workflow modules in their `vars:` frontmatter and resolved through a four-layer precedence chain — **higher layers override lower**:
+  1. **Module default** — entries in a module's `vars:` list, written `name=value` in shorthand or `{ name: x, default: v }` in object form. Inline-list shape is `vars: [name=value]`; block-list shape is `vars:\n  - name=value`.
+  2. **Global user** — `workflowVars` in the plugin's settings (`Settings → Workflows → Global variables`).
+  3. **Project user** — the `vars:` map in `Projects/<slug>/STATUS.md`.
+  4. **Launch override** — values supplied through the launch modal's variable override panel for this single launch.
+
+`op-explain-workflow issue=<ID> mode=<step>` is the diagnostic surface for user vars: its `vars` array reports each referenced user var, the resolved value, and the precedence scope that supplied it (or `null` when unresolved).
+
+### `scope:` is metadata, not step routing
+
+A module's `scope:` field is **not** what routes its body into a workflow step. Routing happens via the workflow file's `steps[].modules` list — the composer walks each step's named module ids and concatenates their bodies. A module's `scope:` is metadata used for two things: surfacing on chunk records / diagnostics, and partitioning the intra-scope-collision check that flags two modules at the same `scope:` declaring the same user-var name. The set of valid scope names is open-ended; conventions emerging in shipped fixtures are `kickoff` / `plan` / `evaluate` / `implement` / `review` / `finalize`, but you can invent your own. **Setting `scope: foo` does not inject the module at step `foo` — listing the module id under `steps[].modules` does.**
+
+### Per-step agent / model selection
+
+Workflow files declare a default agent + model, then optionally override per step. Every shape `default_model` accepts (scalar / list / keyed-map) is also valid in a per-step `model:` slot:
+
+```yaml
+---
+type: workflow
+schema: 1
+project: my-project
+default_agent: claude
+default_model: opus              # scalar — applies to every agent in default_agent
+steps:
+  - step: kickoff
+    modules: [orient, branching]
+    # inherits default_agent + default_model
+  - step: plan
+    modules: [plan-mode-rules]
+    agent: claude
+    model: sonnet                # per-step override; cheaper model for plan-mode reasoning
+  - step: review
+    modules: [adversarial-review]
+    agent: [claude, gemini]      # list — launch context picks one
+    model:                       # keyed-map — different model per agent
+      claude: opus
+      gemini: pro
+  - step: finalize
+    modules: [release-notes]
+---
+```
+
+Both `agent` and `model` may be a scalar, a list, or (for `model`) a per-agent keyed map. List forms let the launch context pick — useful when more than one runtime can do the work. The composer validates every model name against the model registry; unknown names emit a `bad-model` diagnostic with a `BadModelSpec` payload (the recovery dialog renders a "did you mean?" picker straight from this).
+
+### Visibility tenet for headless subtasks
+
+OP-181 §"Visibility tenet": **every step is observable**. The plugin's `launchHeadlessSubtask` (the path used for evaluator subtasks and any other `claude -p` background invocation) takes a required `relaySession: RelaySession` arg — the typechecker rejects callers that omit it. Production paths construct a tmux relay; test paths construct a capture relay. The point is that no step produces output that disappears into a void; the user (or an enclosing orchestrator) always has a surface to watch. When you wire a new headless step, route its output through the relay rather than letting it silently complete.
+
+### Verifying workflow injection
+
+Two non-destructive CLIs let you preview what a launch would do without launching:
+
+```bash
+# Render the composed prompt + per-referenced-user-var precedence breakdown.
+obsidian vault=<name> op-explain-workflow issue=<PREFIX>-<N> mode=kickoff
+
+# Browse the plugin var registry (the {{id}} / {{repo_path}} / {{today}} namespace).
+obsidian vault=<name> op-list-vars project=<slug> issue=<PREFIX>-<N>
+```
+
+Both write a JSON payload to `Projects/_scratch/op-last-response.md` and emit a one-line summary. Use `op-explain-workflow` as the smoke probe after editing modules or the workflow file (it reports diagnostics and shows exactly which body chunks would be injected and which user vars resolved at which precedence layer); use `op-list-vars` to confirm a plugin var resolves the way you expect against a given issue/project context.
+
+### Sharing modules across vaults
+
+`op-export-module` writes workflow modules as plain markdown files under `Projects/_op-export/`. Two modes: `id=<moduleId>` writes a single module to `Projects/_op-export/<id>.md`; `project=<slug>` writes every module visible to that project (per-project modules + globals carrying that `project:`) to `Projects/_op-export/<slug>/<id>.md`. The exporter only serializes modules — workflow files are not bundled. `op-import-module path=<bundle>` ingests a single module file in the receiving vault. If a module with the same id already exists at the destination, the import **overwrites it after taking a backup** (under `Projects/_op-import-history/<timestamp>.bak/...`). Every import is recorded as a transaction; `op-undo-last-import` reverses exactly the most recent one (restoring backed-up content if any) — no multi-step history.
 
 ---
 
@@ -121,7 +222,7 @@ Accepts `slug N`, `slug PREFIX-N`, `PREFIX N`, `PREFIX-N`, or just `slug`/`PREFI
    - `conflict: { agent?, session? }` → another agent (or another session) is already registered. **Stop and ask the user** whether to take over — never pass `force=true` on your own. If they confirm, retry with `force=true`.
 
    Emit a one-line ack with the issue's `obsidian://` link so the user can open the note while you write `## Plan`.
-2. **Check for a project workflow.** Read `Projects/<slug>/WORKFLOW.md` if it exists — that's the project's authoritative SDLC policy (branching, version cadence, PR rules, commit-to-issue mapping). Programmatic access: `obsidian op-get-workflow project=<slug>` returns `{exists, path, content}`. If absent, the project has no opinion — ask the user when policy ambiguity comes up; if the user wants to author one, the **`op: edit project workflow (WORKFLOW.md)`** palette command (or `obsidian op-edit-workflow project=<slug>`) launches an agent dedicated to that. (When you're launched via `op:open-agent`, the kickoff prompt already inlines the workflow text up to a configurable cap; use the CLI when you need the full file or want to verify.)
+2. **Check for a project workflow.** When you're launched via `op:open-agent` with `workflowMode: "modules"` (the post-OP-208 default for fresh installs), the kickoff prompt has already been composed from the project's workflow modules — the rules you need are already in your context. Under `workflowMode: "legacy"`, the kickoff prompt inlines the raw `WORKFLOW.md` text up to a configurable cap. Either way, `obsidian op-explain-workflow issue=<PREFIX>-<N> mode=kickoff` (read-only, non-destructive) is the diagnostic surface to dump exactly what was — or would be — injected. To inspect the raw workflow file, `obsidian op-get-workflow project=<slug>` returns `{exists, path, content}`. If the file is absent, the project has no workflow opinion — ask the user when policy ambiguity comes up; the **`op: edit project workflow (WORKFLOW.md)`** palette command (or `obsidian op-edit-workflow project=<slug>`) launches an agent dedicated to authoring/refining it, and `op: edit workflow module` (`obsidian op-edit-module module=<id> scope=<global|project> [project=<slug>]`) does the same for an individual module.
 3. If the body is empty or one line, scope is ambiguous — state your interpretation and confirm before implementing, even in auto mode.
 4. Reconcile scope vs. current repo/vault state — skip items already done; flag drift between the schema and observed reality.
 5. **Write the `## Plan` section now** (approach, key decisions, files to touch, risks) via `obsidian op-set-section issue=<PREFIX>-<N> name=Plan content="…"`. The verb scopes the rewrite to `## Plan` only — frontmatter, `## Scope`, `## Tasks`, `## Notes`, `## Summary`, and any other sections are untouched. Reconcile, don't overwrite: if the section already has user or prior-agent content, read the file first (`obsidian read`) and pass the merged Plan as `content=` rather than blowing existing prose away. Replace the italic placeholder if still present.
