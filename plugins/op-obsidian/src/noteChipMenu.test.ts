@@ -1,13 +1,21 @@
 import { describe, expect, it, vi } from "vitest";
-import { prefixedCommandId } from "./noteChipState";
+
+vi.mock("obsidian", () => ({
+  App: class {},
+  Menu: class {
+    addItem() { return this; }
+    showAtMouseEvent() {}
+  },
+}));
+
+import { prefixedCommandId, dispatchCommand } from "./noteChipMenu";
 
 // Regression for OP-173: chip click sites and the `op-action` codeblock
 // dispatched bare command ids (`op-attach-current`, `op-open-agent`),
 // but Obsidian keys commands as `<plugin-id>:<id>` — so every chip click
 // silently failed with "unavailable — open the issue note first." The
-// prefix is applied centrally now; tests below assert the helper plus
-// the dispatch shape (the chip click and the codeblock both call
-// `executeCommandById(prefixedCommandId(raw))`).
+// prefix is applied centrally now via `dispatchCommand`; tests below assert
+// the helper plus the dispatch shape.
 describe("prefixedCommandId", () => {
   it("prepends op-obsidian: to a bare command id", () => {
     expect(prefixedCommandId("op-attach-current")).toBe(
@@ -27,30 +35,60 @@ describe("prefixedCommandId", () => {
       "workspace:open-file",
     );
   });
+
+  // Edge cases: all pass through or get prefixed per the contains-colon rule.
+  // None crash; Obsidian's executeCommandById will return false for
+  // unrecognised ids, which the !ok guard handles gracefully.
+  it("empty string gets prefixed (harmless: executeCommandById returns false)", () => {
+    expect(prefixedCommandId("")).toBe("op-obsidian:");
+  });
+
+  it("leading-colon id passes through unchanged (already has ':')", () => {
+    expect(prefixedCommandId(":op-foo")).toBe(":op-foo");
+  });
+
+  it("multi-colon id passes through unchanged (treated as foreign-plugin id)", () => {
+    expect(prefixedCommandId("op-foo:bar:baz")).toBe("op-foo:bar:baz");
+  });
+
+  it("bare colon passes through unchanged", () => {
+    expect(prefixedCommandId(":")).toBe(":");
+  });
+
+  it("whitespace-only string gets prefixed (no colon present)", () => {
+    expect(prefixedCommandId("  ")).toBe("op-obsidian:  ");
+  });
 });
 
-// Stand-in for the chip-click dispatch (noteDecorations.ts) and the
-// menu-item dispatch (noteChipMenu.ts). Both call:
-//   app.commands.executeCommandById(prefixedCommandId(raw))
-// We assert the prefix is applied at the call boundary so a future
-// regression — passing `state.primaryCommand` straight through — fails
-// loudly here instead of silently in the UI.
-describe("dispatch boundary applies the plugin-id prefix", () => {
-  it("chip click forwards the prefixed id to executeCommandById", () => {
+// `dispatchCommand` is the single gateway to `executeCommandById`. Every
+// dispatch site should call this — never the raw pattern — so a future
+// fourth site that forgets the prefix is caught here.
+describe("dispatchCommand applies prefix before calling executeCommandById", () => {
+  it("forwards the prefixed id when given a bare command id", () => {
     const executeCommandById = vi.fn().mockReturnValue(true);
-    const app = { commands: { executeCommandById } };
-    app.commands.executeCommandById(prefixedCommandId("op-attach-current"));
+    const app = { commands: { executeCommandById } } as any;
+    dispatchCommand(app, "op-attach-current");
     expect(executeCommandById).toHaveBeenCalledWith(
       "op-obsidian:op-attach-current",
     );
   });
 
-  it("menu item forwards the prefixed id to executeCommandById", () => {
+  it("is idempotent — already-prefixed id is not double-prefixed", () => {
     const executeCommandById = vi.fn().mockReturnValue(true);
-    const app = { commands: { executeCommandById } };
-    app.commands.executeCommandById(prefixedCommandId("op-close-current-issue"));
+    const app = { commands: { executeCommandById } } as any;
+    dispatchCommand(app, "op-obsidian:op-attach-current");
     expect(executeCommandById).toHaveBeenCalledWith(
-      "op-obsidian:op-close-current-issue",
+      "op-obsidian:op-attach-current",
     );
+  });
+
+  it("returns true when executeCommandById succeeds", () => {
+    const app = { commands: { executeCommandById: vi.fn().mockReturnValue(true) } } as any;
+    expect(dispatchCommand(app, "op-attach-current")).toBe(true);
+  });
+
+  it("returns false when executeCommandById declines", () => {
+    const app = { commands: { executeCommandById: vi.fn().mockReturnValue(false) } } as any;
+    expect(dispatchCommand(app, "op-attach-current")).toBe(false);
   });
 });
