@@ -1,4 +1,4 @@
-import { Notice, Plugin, TFile, WorkspaceLeaf } from "obsidian";
+import { Notice, Plugin, TFile, WorkspaceLeaf, type Editor, type MarkdownView } from "obsidian";
 import { OP_SIDEBAR_VIEW_TYPE, OpSidebarView } from "./sidebarView";
 import { revealAgentSession } from "./revealAgentSession";
 import { findAgentTmuxLocation } from "./agentTmuxLocation";
@@ -102,6 +102,7 @@ import { detectTmux } from "./tmuxDetect";
 import { notify, notifyAction, registerApp, unregisterApp, openNotificationLog } from "./notificationLog";
 import { probeLiveTmuxWindows, selectStaleAgentBadges } from "./staleAgentBadges";
 import { appendRecency, mostRecent } from "./recencyLog";
+import { deriveTitle, packScope, resolveCaptureProject } from "./quickCapture";
 import { openErrorLog, writeErrorLog } from "./errorLog";
 import { configureClient } from "./iterm/client";
 import { closeWindow as itermCloseWindow } from "./iterm/driver";
@@ -504,6 +505,22 @@ export default class OpPlugin extends Plugin {
       id: "op-new",
       name: "op: new issue",
       callback: () => this.runNewIssueCommand(),
+    });
+
+    // Quick-capture (OP-159 / spec §8). Two thin entry-points around `op-new`
+    // that pre-fill the modal from the editor selection or system clipboard,
+    // and skip the project picker when context resolves a project.
+    this.addCommand({
+      id: "op-new-from-selection",
+      name: "op: new from selection",
+      editorCallback: (editor: Editor, view: MarkdownView) =>
+        this.runNewFromSelectionCommand(editor, view),
+    });
+
+    this.addCommand({
+      id: "op-new-from-clipboard",
+      name: "op: new from clipboard",
+      callback: () => void this.runNewFromClipboardCommand(),
     });
 
     this.addCommand({
@@ -1427,6 +1444,93 @@ export default class OpPlugin extends Plugin {
         { autoCreateGithubIssue: this.settings.github.autoCreateGithubIssue },
       ).open();
     }).open();
+  }
+
+  /**
+   * Open the New Issue modal for a quick-capture command (selection or
+   * clipboard). The capture path resolves the project per spec §8 — active
+   * note's `project:` frontmatter, then the recency log, falling through to
+   * the picker — and pre-fills the modal with the captured title + scope so
+   * the user only has to confirm. The modal still pauses for explicit
+   * confirmation per the op-skill rule.
+   */
+  private openQuickCaptureModal(args: { title: string; scopeBody: string; activeFile?: TFile | null }): void {
+    const projects = applyProjectOrder(listProjects(this.app), this.settings.projectOrder);
+    if (projects.length === 0) {
+      notify("op: no projects found under Projects/");
+      return;
+    }
+    const activeFm = args.activeFile
+      ? this.app.metadataCache.getFileCache(args.activeFile)?.frontmatter
+      : undefined;
+    const activeProjectSlug =
+      typeof activeFm?.project === "string" ? activeFm.project : undefined;
+    const resolved = resolveCaptureProject({
+      activeProjectSlug,
+      recent: this.settings.recent,
+      projects,
+    });
+    const initial = {
+      title: args.title,
+      scopeRaw: args.scopeBody,
+      scopeMode: "body" as const,
+    };
+    const open = (project: typeof projects[number]): void => {
+      new NewIssueModal(
+        this.app,
+        project,
+        (input, opts) => {
+          this.submitCreateIssue(input, opts);
+        },
+        {
+          autoCreateGithubIssue: this.settings.github.autoCreateGithubIssue,
+          initial,
+        },
+      ).open();
+    };
+    if (resolved) {
+      open(resolved);
+      return;
+    }
+    new ProjectSuggestModal(this.app, projects, open).open();
+  }
+
+  private runNewFromSelectionCommand(editor: Editor, view: MarkdownView): void {
+    const selection = editor.somethingSelected() ? editor.getSelection() : "";
+    const file = view.file ?? null;
+    let title: string;
+    let scopeBody: string;
+    if (selection.trim().length > 0) {
+      title = deriveTitle(selection);
+      scopeBody = packScope({ text: selection });
+    } else {
+      // No selection — fall back to "title = active note title", scope = backlink
+      // to that note. Spec §8: "If no selection, falls back to the current
+      // note's title + a backlink to the source note in scope."
+      const noteTitle = file?.basename ?? "";
+      title = noteTitle;
+      scopeBody = packScope({ text: "", fallbackBacklinkTo: noteTitle });
+    }
+    this.openQuickCaptureModal({ title, scopeBody, activeFile: file });
+  }
+
+  private async runNewFromClipboardCommand(): Promise<void> {
+    let text = "";
+    try {
+      // navigator.clipboard.readText() rejects when the document doesn't have
+      // focus or the user hasn't granted clipboard permission. Treat that as
+      // "fall through to a plain modal" rather than a hard failure — the user
+      // can still capture by hand.
+      text = (await navigator.clipboard.readText()) ?? "";
+    } catch (err) {
+      console.warn("[op-obsidian] clipboard read failed", err);
+      new Notice("op: clipboard unavailable — fill the form manually.");
+      text = "";
+    }
+    const file = this.app.workspace.getActiveFile();
+    const title = deriveTitle(text);
+    const scopeBody = packScope({ text });
+    this.openQuickCaptureModal({ title, scopeBody, activeFile: file ?? null });
   }
 
   private runFindIssueCommand(): void {

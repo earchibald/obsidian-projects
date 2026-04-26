@@ -100,20 +100,40 @@ export interface NewIssueSubmitOptions {
   startFlow: boolean;
 }
 
+/**
+ * Optional pre-fill for the modal — used by quick-capture (OP-159) and any
+ * future caller that already knows the title/scope. `scopeMode` controls how
+ * the textarea content is submitted:
+ *   - `"bullets"` (default): textarea is split per non-empty line, each line
+ *     becomes one scope bullet. Matches the original modal behavior.
+ *   - `"body"`: textarea is submitted verbatim as `scopeBody`, preserving
+ *     paragraphs, blockquotes, blank lines. Quick-capture uses this so a
+ *     selected paragraph round-trips intact.
+ */
+export interface NewIssueInitial {
+  title?: string;
+  scopeRaw?: string;
+  scopeMode?: "bullets" | "body";
+}
+
 export class NewIssueModal extends Modal {
   private title = "";
   private priority: Priority = "med";
   private scopeRaw = "";
   private githubIssue = "";
   private evaluateComplexity = false;
+  private scopeMode: "bullets" | "body";
 
   constructor(
     app: App,
     private project: ProjectInfo,
     private onSubmit: (input: CreateIssueInput, opts: NewIssueSubmitOptions) => void,
-    private opts: { autoCreateGithubIssue?: boolean } = {},
+    private opts: { autoCreateGithubIssue?: boolean; initial?: NewIssueInitial } = {},
   ) {
     super(app);
+    this.title = opts.initial?.title ?? "";
+    this.scopeRaw = opts.initial?.scopeRaw ?? "";
+    this.scopeMode = opts.initial?.scopeMode ?? "bullets";
   }
 
   onOpen(): void {
@@ -126,7 +146,10 @@ export class NewIssueModal extends Modal {
     new Setting(contentEl)
       .setName("Title")
       .addText((t) =>
-        t.setPlaceholder("Short descriptive title").onChange((v) => (this.title = v)),
+        t
+          .setPlaceholder("Short descriptive title")
+          .setValue(this.title)
+          .onChange((v) => (this.title = v)),
       );
 
     new Setting(contentEl).setName("Priority").addDropdown((d) =>
@@ -138,11 +161,16 @@ export class NewIssueModal extends Modal {
         .onChange((v) => (this.priority = v as Priority)),
     );
 
+    const scopeDesc =
+      this.scopeMode === "body"
+        ? "Captured text — submitted verbatim under ## Scope. Edit as needed."
+        : "One bullet per line. e.g. Wire the command / Write unit tests.";
     new Setting(contentEl)
       .setName("Scope (optional)")
-      .setDesc("One bullet per line. e.g. Wire the command / Write unit tests.")
+      .setDesc(scopeDesc)
       .addTextArea((t) => {
         t.setPlaceholder("e.g.\nWire the command\nWrite unit tests");
+        t.setValue(this.scopeRaw);
         t.onChange((v) => (this.scopeRaw = v));
         t.inputEl.rows = 6;
         t.inputEl.style.width = "100%";
@@ -181,12 +209,20 @@ export class NewIssueModal extends Modal {
         return;
       }
       this.close();
+      // In "body" mode (quick-capture), submit the textarea content verbatim
+      // as `scopeBody` so paragraphs / blockquotes / blank lines round-trip
+      // intact. In "bullets" mode (default), keep the legacy bullet split.
+      const scopeBody =
+        this.scopeMode === "body" && this.scopeRaw.trim().length > 0
+          ? this.scopeRaw.replace(/\s+$/g, "")
+          : undefined;
       this.onSubmit(
         {
           slug: this.project.slug,
           title: result.value.title,
           priority: result.value.priority,
-          scope: result.value.scope,
+          scope: scopeBody === undefined ? result.value.scope : undefined,
+          scopeBody,
           githubIssue: result.value.githubIssue,
         },
         opts,
