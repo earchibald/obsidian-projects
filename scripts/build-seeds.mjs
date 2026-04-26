@@ -210,14 +210,29 @@ build("seed/workflow-modules", () => {
   // Launchable test issue. The plugin numbers issues by walking the
   // ISSUES/RESOLVED ISSUES folders, so this lands as TST-5 deterministically
   // (TST-1..4 came from seed/mid-flow). agent: claude makes the smoke probe's
-  // `op-explain-workflow` call use the claude profile by default.
-  dispatch("op-new", {
+  // `op-explain-workflow` call use the claude profile by default. The created
+  // path is read back from `op-new`'s JSON response so a future title tweak
+  // doesn't desync this script from the on-disk filename.
+  const tst5 = dispatch("op-new", {
     project: "testing",
     title: "Workflow modules smoke target",
     priority: "med",
     scope: "Smoke probe target for op-explain-workflow + op-list-vars.",
   });
-  setIssueAgent("Projects/testing/ISSUES/TST-5 Workflow modules smoke target.md", "claude");
+  if (!tst5?.path || !tst5?.issueId) {
+    fail(
+      "seed/workflow-modules: op-new for the testing-project smoke target did not return path+issueId; " +
+        "cannot stamp agent: claude on the issue.",
+    );
+  }
+  if (tst5.issueId !== "TST-5") {
+    fail(
+      `seed/workflow-modules: expected op-new to return TST-5 (cumulative ladder includes TST-1..4 from seed/mid-flow), got ${tst5.issueId}. ` +
+        "If a new seed has been inserted between seed/mid-flow and seed/workflow-modules that adds testing-project issues, " +
+        "the smoke harness's hardcoded ISSUE = 'TST-5' must move in lockstep.",
+    );
+  }
+  setIssueAgent(tst5.path, "claude");
 });
 
 console.log("\nseed ladder built and tagged. Verify with `git -C <op-test> tag -l seed/*`.");
