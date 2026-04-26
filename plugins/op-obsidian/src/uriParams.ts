@@ -25,3 +25,48 @@ export function collectRepeated(params: Record<string, string>, key: string): st
     .map((l) => l.trim())
     .filter(Boolean);
 }
+
+/**
+ * OP-204 (3d): extract per-launch user-var overrides from URI params for
+ * `obsidian://op-open-agent`. Two accepted forms — both can be combined; the
+ * packed form wins on duplicates because it's the more explicit affordance.
+ *
+ *   1. **Prefixed keys**: `?var.tone=playful&var.reviewer=alice` — every key
+ *      matching `^var\.([A-Za-z_][A-Za-z0-9_-]*)$` is copied into the map
+ *      with the `var.` prefix stripped. Each key is unique so Obsidian's
+ *      last-wins collapse never mangles them.
+ *   2. **Packed key**: `?vars=tone=playful%0Areviewer=alice` — a single
+ *      `vars` key carrying newline-or-comma-separated `name=value` entries,
+ *      split via {@link collectRepeated}. The first `=` per entry separates
+ *      name from value; subsequent `=` characters are part of the value.
+ *
+ * Empty string is preserved as a distinct value (matches the composer's
+ * "empty Launch override wins" semantics). Malformed names — empty,
+ * non-conforming to `[A-Za-z_][A-Za-z0-9_-]*`, or `var.` keys with no name
+ * after the dot — are silently dropped rather than thrown so a typo in one
+ * param doesn't sink the whole launch.
+ */
+export function parseLaunchVarsFromUri(
+  params: Record<string, string>,
+): Record<string, string> {
+  const out: Record<string, string> = {};
+  const nameRe = /^[A-Za-z_][A-Za-z0-9_-]*$/;
+
+  for (const [key, value] of Object.entries(params)) {
+    if (!key.startsWith("var.")) continue;
+    const name = key.slice(4);
+    if (!name || !nameRe.test(name)) continue;
+    if (typeof value !== "string") continue;
+    out[name] = value;
+  }
+
+  for (const entry of collectRepeated(params, "vars")) {
+    const eq = entry.indexOf("=");
+    if (eq < 0) continue;
+    const name = entry.slice(0, eq).trim();
+    if (!name || !nameRe.test(name)) continue;
+    out[name] = entry.slice(eq + 1);
+  }
+
+  return out;
+}

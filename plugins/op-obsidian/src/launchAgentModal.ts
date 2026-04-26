@@ -1,0 +1,410 @@
+import { App, Modal, Setting } from "obsidian";
+import type { AgentId } from "./agentProfiles";
+import { AGENT_IDS } from "./agentProfiles";
+import { loadAndComposeWorkflow, type LoadedModule } from "./composeWorkflow";
+import type { ComposedPrompt } from "./composeWorkflowPure";
+import type { OpSettings } from "./settings";
+import {
+  buildPanelRows,
+  clearLaunchOverride,
+  mergeLaunchOverride,
+  type PanelRow,
+} from "./varOverridePanelPure";
+import { precedenceScopeAbbrev, precedenceScopeLabel } from "./workflowDiagnosticFormat";
+
+// OP-204 (3d): launch-modal IO seam. Wraps the agent picker AND the folded
+// "Workflow variables" disclosure on a single Obsidian Modal. The pure data
+// (`varOverridePanelPure.buildPanelRows`) drives row rendering; this module
+// owns DOM writes, state management, and the final `{ agentId, launchVars }`
+// payload that `doOpenAgent` plumbs into `openAgent`.
+//
+// Surfaces that currently route through here: the `op-open-agent-pick`
+// palette command, the sidebar shift-click affordance, and any future
+// "with vars…" entry point. The silent default-agent path stays silent —
+// users explicitly opt into the modal for the vars surface.
+
+export interface LaunchAgentModalArgs {
+  /** Project slug — used to load modules and resolve the workflow. */
+  project: string;
+  /** Agents installed on this machine — populates the dropdown. */
+  installed: AgentId[];
+  /** Default agent to preselect. */
+  defaultAgent: AgentId;
+  /** Vault settings — `workflowMode` decides whether modules even apply. */
+  settings: OpSettings;
+  /** Existing launch overrides (e.g. carried from `fm.launch_vars`). */
+  initialLaunchVars?: Record<string, string>;
+  /** Whether the panel should expand on open (e.g. URI passed `expand=1`). */
+  startExpanded?: boolean;
+}
+
+export interface LaunchAgentModalResult {
+  agentId: AgentId;
+  launchVars: Record<string, string>;
+}
+
+/**
+ * Open the launch modal and resolve with `{ agentId, launchVars }` when the
+ * user clicks Launch (or hits Enter), or `undefined` if they cancel.
+ *
+ * Always renders even when only one agent is installed — the panel is the
+ * point of the modal. Callers that want the legacy zero-friction launch
+ * (silent on the default-agent path) should not invoke this at all.
+ */
+export function openLaunchAgentModal(
+  app: App,
+  args: LaunchAgentModalArgs,
+): Promise<LaunchAgentModalResult | undefined> {
+  return new Promise((resolve) => {
+    const modal = new LaunchAgentModal(app, args, (result) => resolve(result));
+    modal.open();
+  });
+}
+
+class LaunchAgentModal extends Modal {
+  private agentId: AgentId;
+  private launchVars: Record<string, string>;
+  private rows: PanelRow[] = [];
+  private referencedNames: Set<string> = new Set();
+  private loadedModules: LoadedModule[] = [];
+  private composed: ComposedPrompt | null = null;
+  private expanded: boolean;
+  private showAll = false;
+  private decided = false;
+
+  // DOM handles re-used by the re-render path so the modal feels reactive
+  // without re-creating the entire content element on every keystroke.
+  private panelContainer?: HTMLElement;
+  private summaryEl?: HTMLElement;
+
+  constructor(
+    app: App,
+    private readonly args: LaunchAgentModalArgs,
+    private readonly done: (r: LaunchAgentModalResult | undefined) => void,
+  ) {
+    super(app);
+    this.agentId = args.installed.includes(args.defaultAgent)
+      ? args.defaultAgent
+      : args.installed[0] ?? AGENT_IDS[0];
+    this.launchVars = { ...(args.initialLaunchVars ?? {}) };
+    this.expanded = args.startExpanded ?? Object.keys(this.launchVars).length > 0;
+  }
+
+  async onOpen(): Promise<void> {
+    const { contentEl, titleEl } = this;
+    titleEl.setText("Launch agent");
+    contentEl.addClass("op-launch-modal");
+
+    // Agent dropdown — only render when multiple installed; single-agent
+    // setups don't benefit from a "pick" widget.
+    if (this.args.installed.length > 1) {
+      new Setting(contentEl)
+        .setName("Agent")
+        .setDesc("Choose the agent to launch this issue with.")
+        .addDropdown((d) => {
+          for (const id of this.args.installed) {
+            d.addOption(id, id === this.args.defaultAgent ? `${id} (default)` : id);
+          }
+          d.setValue(this.agentId).onChange(async (v) => {
+            this.agentId = v as AgentId;
+            await this.refreshComposed();
+            this.renderPanel();
+          });
+        });
+    }
+
+    // Folded "Workflow variables" disclosure.
+    this.panelContainer = contentEl.createDiv({ cls: "op-launch-modal__panel" });
+
+    // Footer buttons.
+    new Setting(contentEl)
+      .addButton((b) =>
+        b.setButtonText("Cancel").onClick(() => {
+          this.decided = true;
+          this.done(undefined);
+          this.close();
+        }),
+      )
+      .addButton((b) =>
+        b
+          .setButtonText("Launch")
+          .setCta()
+          .onClick(() => this.submit()),
+      );
+
+    // Initial compose + render. Failures are tolerated — a broken workflow
+    // shouldn't block the launch surface.
+    await this.refreshComposed();
+    this.renderPanel();
+
+    // Submit-on-Enter when no input is focused (matches Obsidian modal idiom).
+    this.scope.register([], "Enter", (evt) => {
+      const t = evt.target as HTMLElement | null;
+      if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA")) return;
+      this.submit();
+    });
+  }
+
+  onClose(): void {
+    this.contentEl.empty();
+    if (!this.decided) this.done(undefined);
+  }
+
+  private submit(): void {
+    if (this.decided) return;
+    this.decided = true;
+    this.done({ agentId: this.agentId, launchVars: { ...this.launchVars } });
+    this.close();
+  }
+
+  private async refreshComposed(): Promise<void> {
+    if (this.args.settings.workflowMode !== "modules") {
+      this.rows = [];
+      this.referencedNames = new Set();
+      this.loadedModules = [];
+      this.composed = null;
+      return;
+    }
+    try {
+      const { composed, bundle } = await loadAndComposeWorkflow(this.app, {
+        project: this.args.project,
+        step: "kickoff",
+        ctx: {
+          render: emptyRenderContext(),
+          globalVars: this.args.settings.workflowVars ?? {},
+          launchVars: this.launchVars,
+        },
+      });
+      this.loadedModules = bundle.loadedModules;
+      this.composed = composed;
+      this.referencedNames = new Set(
+        composed ? Object.keys(composed.perVarSourceMap) : [],
+      );
+    } catch (err) {
+      console.warn("[op-obsidian] launch modal compose failed", err);
+      this.rows = [];
+      this.referencedNames = new Set();
+      this.composed = null;
+    }
+    this.rows = buildPanelRows({
+      loadedModules: this.loadedModules,
+      globalVars: this.args.settings.workflowVars ?? {},
+      projectVars: {},
+      launchVars: this.launchVars,
+      referencedNames: this.referencedNames,
+    });
+  }
+
+  private renderPanel(): void {
+    const root = this.panelContainer;
+    if (!root) return;
+    root.empty();
+
+    if (this.args.settings.workflowMode !== "modules") {
+      root.createDiv({
+        cls: "op-launch-modal__hint",
+        text: "Workflow modules disabled (Settings → workflowMode = legacy). Launch overrides are inert.",
+      });
+      return;
+    }
+
+    if (this.rows.length === 0) {
+      root.createDiv({
+        cls: "op-launch-modal__hint",
+        text:
+          "No workflow variables declared in this project's modules. Nothing to override.",
+      });
+      return;
+    }
+
+    const referencedCount = this.rows.filter((r) => r.isReferenced).length;
+    const visibleRows = this.showAll
+      ? this.rows
+      : this.rows.filter((r) => r.isReferenced || r.hasLaunchOverride);
+    const overrideCount = Object.keys(this.launchVars).length;
+
+    // Disclosure header.
+    const summary = root.createEl("button", {
+      cls: "op-launch-modal__summary",
+      attr: { type: "button", "aria-expanded": String(this.expanded) },
+    });
+    this.summaryEl = summary;
+    summary.createSpan({
+      cls: "op-launch-modal__summary-icon",
+      text: this.expanded ? "▼" : "▶",
+    });
+    summary.createSpan({
+      cls: "op-launch-modal__summary-label",
+      text: "Workflow variables",
+    });
+    summary.createSpan({
+      cls: "op-launch-modal__summary-count",
+      text:
+        overrideCount > 0
+          ? `${referencedCount} referenced · ${overrideCount} override${overrideCount === 1 ? "" : "s"}`
+          : `${referencedCount} referenced`,
+    });
+    summary.addEventListener("click", () => {
+      this.expanded = !this.expanded;
+      this.renderPanel();
+    });
+
+    if (!this.expanded) return;
+
+    // Toolbar — show-all toggle.
+    const toolbar = root.createDiv({ cls: "op-launch-modal__toolbar" });
+    new Setting(toolbar)
+      .setName("Show all variables")
+      .setDesc(
+        this.showAll
+          ? "Showing every declared variable, including unused ones."
+          : `Showing ${visibleRows.length} referenced or overridden variable${visibleRows.length === 1 ? "" : "s"}.`,
+      )
+      .addToggle((t) =>
+        t.setValue(this.showAll).onChange((v) => {
+          this.showAll = v;
+          this.renderPanel();
+        }),
+      );
+
+    if (visibleRows.length === 0) {
+      root.createDiv({
+        cls: "op-launch-modal__hint",
+        text:
+          "No referenced variables in the kickoff step. Enable “Show all variables” to surface declared-but-unused entries.",
+      });
+      return;
+    }
+
+    // Rows.
+    const list = root.createDiv({ cls: "op-launch-modal__rows" });
+    for (const row of visibleRows) {
+      this.renderRow(list, row);
+    }
+  }
+
+  private renderRow(parent: HTMLElement, row: PanelRow): void {
+    const wrap = parent.createDiv({ cls: "op-launch-modal__row" });
+    if (row.isUnset) wrap.addClass("op-launch-modal__row--unset");
+    if (row.hasLaunchOverride) wrap.addClass("op-launch-modal__row--override");
+
+    // Label + badge.
+    const labelLine = wrap.createDiv({ cls: "op-launch-modal__row-label" });
+    labelLine.createSpan({
+      cls: "op-launch-modal__row-name",
+      text: `{{vars.${row.name}}}`,
+    });
+    if (row.currentScopeLabel) {
+      const badge = labelLine.createSpan({
+        cls: `op-launch-modal__badge op-launch-modal__badge--${row.currentScope}`,
+        // Per OP-201 contract: full canonical name in user-visible primary
+        // copy; the abbreviation is tooltip-only.
+        text: row.currentScopeLabel,
+      });
+      if (row.currentScopeAbbrev) badge.title = row.currentScopeAbbrev;
+    } else {
+      labelLine.createSpan({
+        cls: "op-launch-modal__badge op-launch-modal__badge--unset",
+        text: "Unset",
+        attr: { title: "—" },
+      });
+    }
+
+    if (row.description) {
+      wrap.createDiv({
+        cls: "op-launch-modal__row-desc",
+        text: row.description,
+      });
+    }
+
+    // Value input.
+    const inputRow = wrap.createDiv({ cls: "op-launch-modal__row-input" });
+    const initialValue = Object.prototype.hasOwnProperty.call(this.launchVars, row.name)
+      ? this.launchVars[row.name]
+      : row.currentValue ?? "";
+    new Setting(inputRow)
+      .setName("Value")
+      .addText((t) => {
+        t.setValue(initialValue).onChange((v) => {
+          this.launchVars = mergeLaunchOverride(this.launchVars, row.name, v);
+          // Lightweight refresh: rebuild rows so the badge flips to
+          // "Launch override" without forcing another vault re-read.
+          this.rebuildRowsLightly();
+          // Update only this row's badge in place — full panel re-render
+          // would steal focus from the input mid-typing.
+          updateRowBadge(wrap, this.findRow(row.name));
+        });
+        t.inputEl.addClass("op-launch-modal__input");
+      })
+      .addExtraButton((b) =>
+        b
+          .setIcon("rotate-ccw")
+          .setTooltip("Reset to default — clears the Launch override and falls back to the next layer")
+          .onClick(() => {
+            this.launchVars = clearLaunchOverride(this.launchVars, row.name);
+            this.rebuildRowsLightly();
+            this.renderPanel();
+          }),
+      );
+  }
+
+  private rebuildRowsLightly(): void {
+    this.rows = buildPanelRows({
+      loadedModules: this.loadedModules,
+      globalVars: this.args.settings.workflowVars ?? {},
+      projectVars: {},
+      launchVars: this.launchVars,
+      referencedNames: this.referencedNames,
+    });
+  }
+
+  private findRow(name: string): PanelRow | undefined {
+    return this.rows.find((r) => r.name === name);
+  }
+}
+
+function updateRowBadge(wrap: HTMLElement, row: PanelRow | undefined): void {
+  if (!row) return;
+  const labelLine = wrap.querySelector(".op-launch-modal__row-label");
+  if (!labelLine) return;
+  const badge = labelLine.querySelector(".op-launch-modal__badge");
+  if (!badge) return;
+  if (row.currentScope) {
+    badge.className = `op-launch-modal__badge op-launch-modal__badge--${row.currentScope}`;
+    badge.textContent = precedenceScopeLabel(row.currentScope);
+    (badge as HTMLElement).title = precedenceScopeAbbrev(row.currentScope);
+  } else {
+    badge.className = "op-launch-modal__badge op-launch-modal__badge--unset";
+    badge.textContent = "Unset";
+    (badge as HTMLElement).title = "—";
+  }
+  wrap.toggleClass("op-launch-modal__row--override", row.hasLaunchOverride);
+  wrap.toggleClass("op-launch-modal__row--unset", row.isUnset);
+}
+
+/**
+ * Empty `RenderContext` for the modal's compose call — we only need
+ * `perVarSourceMap` (which depends on user vars, not plugin vars), so missing
+ * plugin-var values just emit `missing-var` diagnostics that the panel
+ * doesn't surface. The launch itself rebuilds a real context in `buildPrompt`.
+ */
+function emptyRenderContext(): import("./pluginVarRegistry").RenderContext {
+  return {
+    id: "",
+    title: "",
+    project: "",
+    status: "open",
+    priority: undefined,
+    parent: null,
+    pr_url: undefined,
+    github_issue: undefined,
+    repo_path: undefined,
+    vault_path: "",
+    vault_name: "",
+    branch: undefined,
+    today: new Date().toISOString().slice(0, 10),
+    agent: "claude",
+    model: undefined,
+    mode: "work",
+  };
+}

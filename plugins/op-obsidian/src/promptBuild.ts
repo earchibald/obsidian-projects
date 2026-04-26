@@ -23,6 +23,13 @@ export interface BuildPromptArgs {
   /** OP-198 (2a): vault-wide user vars threaded into the composer's Global
    *  precedence layer. Unused when `workflowMode === 'legacy'`. */
   workflowVars?: Record<string, string>;
+  /** OP-204 (3d): per-launch user-var overrides threaded into the composer's
+   *  Launch precedence layer (level 4 — wins over Module / Global / Project).
+   *  Sourced from the launch modal's "Workflow variables" panel, the URI
+   *  parser's `var.<name>=<value>` keys, and the auto-advance carry-through
+   *  (`fm.launch_vars`). Empty/absent maps cleanly omit the layer. Unused
+   *  when `workflowMode === 'legacy'`. */
+  launchVars?: Record<string, string>;
   /** OP-198 (2a) — extended in OP-199 (2b): name of the workflow step to
    *  compose for this launch. Defaults to `'kickoff'`. OP-199 wires
    *  `openAgent` to pass the active mode (`'evaluate'`, `'plan'`,
@@ -213,6 +220,7 @@ export async function composeWorkflowSection(
   const ctx = {
     render,
     globalVars: args.workflowVars ?? {},
+    launchVars: args.launchVars ?? {},
     maxWorkflowChars: injection.maxWorkflowChars,
   };
 

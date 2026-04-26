@@ -41,6 +41,15 @@ export interface OpenAgentArgs {
   forcePick?: boolean;
   /** `"work"` (default) flips the issue to `in-progress`; `"plan"` is read-only. */
   mode?: AgentLaunchMode;
+  /**
+   * OP-204 (3d): per-launch user-var overrides forwarded into the composer's
+   * Launch precedence layer (level 4). Sourced from the launch modal's
+   * "Workflow variables" panel, the URI parser's `var.<name>=<value>` keys,
+   * and `advanceFlowAndLaunch` carry-through. A non-empty map is persisted
+   * to the issue's `launch_vars:` frontmatter so the next auto-advanced stage
+   * inherits the same overrides; an empty/absent map writes nothing.
+   */
+  launchVars?: Record<string, string>;
 }
 
 /** Result payload returned when a launch succeeds. */
@@ -169,6 +178,12 @@ export async function openAgent(
   //   into. Modules referencing `{{repo_path}}` resolve to this.
   const branch = await gitBranchAt(wd.path);
   const parentId = readParentId(app, args.entry.path);
+  // OP-204 (3d): canonicalise launchVars before plumbing further. We accept
+  // both a non-empty Record and undefined; downstream callers (the composer,
+  // the carry-through writer) want a stable Record either way.
+  const launchVars = args.launchVars && Object.keys(args.launchVars).length > 0
+    ? { ...args.launchVars }
+    : {};
   const prompt = await buildPrompt(app, store, {
     entry: args.entry,
     profile,
@@ -177,6 +192,7 @@ export async function openAgent(
     mode,
     workflowMode: settings.workflowMode,
     workflowVars: settings.workflowVars,
+    launchVars,
     workflowStep: modeToWorkflowStep(mode),
     repoPath: wd.path,
     branch,
@@ -190,6 +206,15 @@ export async function openAgent(
   // resolved model is reflected in the prompt (`{{model}}`) but not on their
   // CLI invocations.
   const launchFlags = withModelFlag(launchFlagsFor(profile, mode), agentId, resolved?.canonicalModel);
+
+  // OP-204 (3d): persist or clear `launch_vars:` symmetrically with the
+  // launch we're about to fire. Non-empty map → write; explicit empty map
+  // (`launchVars: {}` from the modal's "reset all" path) → clear so the
+  // auto-advance carry-through doesn't keep an old override alive after the
+  // user took it back.
+  if (args.launchVars !== undefined) {
+    await writeLaunchVarsOnIssue(app, args.entry.path, launchVars);
+  }
 
   const { scriptPath, tmuxSession, tmuxWindow } = await launchInTerminal({
     cwd: wd.path,
@@ -300,6 +325,50 @@ export async function recordAgentOnIssue(app: App, path: string, agentId: AgentI
   if (!(file instanceof TFile)) return;
   await app.fileManager.processFrontMatter(file, (fm) => {
     fm.agent = agentId;
+  });
+}
+
+/**
+ * OP-204 (3d): write the `launch_vars:` mapping to the issue's frontmatter
+ * (non-empty input) or clear it (empty input). The auto-advance handoff
+ * (`advanceFlowAndLaunch`) reads this so a level-4 override the user set in
+ * stage N is still active in stage N+1. `op-resolve` clears it via
+ * {@link clearLaunchVarsOnIssue}, symmetric with `agent:` clearance.
+ *
+ * Empty map writes `delete fm.launch_vars` rather than `fm.launch_vars = {}`
+ * so the field disappears entirely from the YAML — `metadataCache` callers
+ * downstream see "no launch overrides" with no syntactic sugar to scrape.
+ *
+ * No-op when `path` doesn't resolve to a {@link TFile}; the launch already
+ * happened and the user can re-open the issue manually if the note moved
+ * mid-launch (vault rename race).
+ */
+export async function writeLaunchVarsOnIssue(
+  app: App,
+  path: string,
+  launchVars: Record<string, string>,
+): Promise<void> {
+  const file = app.vault.getAbstractFileByPath(path);
+  if (!(file instanceof TFile)) return;
+  await app.fileManager.processFrontMatter(file, (fm) => {
+    if (Object.keys(launchVars).length === 0) {
+      delete fm.launch_vars;
+    } else {
+      fm.launch_vars = { ...launchVars };
+    }
+  });
+}
+
+/**
+ * OP-204 (3d): clear `launch_vars:` from the issue's frontmatter. Used by
+ * `op-resolve` so a resolved issue doesn't carry stale overrides forward if
+ * it's ever re-opened.
+ */
+export async function clearLaunchVarsOnIssue(app: App, path: string): Promise<void> {
+  const file = app.vault.getAbstractFileByPath(path);
+  if (!(file instanceof TFile)) return;
+  await app.fileManager.processFrontMatter(file, (fm) => {
+    delete fm.launch_vars;
   });
 }
 
