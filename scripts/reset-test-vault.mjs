@@ -6,7 +6,7 @@
 //   node scripts/reset-test-vault.mjs <seed>
 //
 //   <seed> is the bare seed name; the tag prefix is added automatically:
-//     empty | scaffolded | mid-flow | github-linked | multi-project
+//     empty | scaffolded | mid-flow | github-linked | multi-project | workflow-modules
 //   Or pass the full tag form: seed/<name>.
 
 import {
@@ -23,6 +23,7 @@ const VALID_SEEDS = new Set([
   "mid-flow",
   "github-linked",
   "multi-project",
+  "workflow-modules",
 ]);
 
 const arg = process.argv[2];
