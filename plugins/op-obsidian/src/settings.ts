@@ -558,11 +558,9 @@ export class OpSettingsTab extends PluginSettingTab {
       cls: "op-workflow-empty-state__body setting-item-description",
     });
     body.appendText("Open the ");
-    // Quickstart docs link target ships in OP-?-10a; the URL is wired here so
-    // landing the docs file is a one-line follow-up.
     const quickstart = body.createEl("a", {
       text: "5-min Quickstart",
-      href: "https://github.com/earchibald/obsidian-projects/blob/main/docs/quickstart.md",
+      href: "https://github.com/earchibald/obsidian-projects/blob/main/docs/workflow-modules/02-quickstart.md",
     });
     quickstart.setAttribute("target", "_blank");
     quickstart.setAttribute("rel", "noopener");
