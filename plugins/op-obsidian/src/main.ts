@@ -39,7 +39,8 @@ import {
 } from "./links";
 import { RELATION_NAMES, type RelationName } from "./relations";
 import { runEvaluatorFlow } from "./evaluator";
-import { launchHeadless } from "./launchHeadless";
+import { launchHeadlessSubtask } from "./launchHeadlessSubtask";
+import { makeTmuxRelay } from "./relaySession";
 import {
   flowAdvanceDecision,
   type FlowAdvanceOutput,
@@ -1642,11 +1643,23 @@ export default class OpPlugin extends Plugin {
     notify(`op: evaluating ${entry.id} — running op-evaluate…`, 6000);
     const body = (input.scope ?? []).map((s) => `- ${s}`).join("\n");
     try {
+      // OP-197: visibility-tenet relay for the headless evaluator subtask.
+      // The evaluator runs in the Obsidian plugin process (no tmux pane), so
+      // statusLine flows to a `Notice` and paneStream to `console.log` — both
+      // surfaces the user can watch live. `target` carries the issue id so log
+      // lines correlate back to a launch. OP-185 will wire a richer streaming
+      // pane; this is the type-level enforcement of the contract today.
+      const relaySession = makeTmuxRelay({
+        target: `obsidian-plugin:${entry.id}`,
+        statusLine: (line) => notify(`op-evaluate ${entry.id}: ${line}`),
+        paneStream: (chunk) => console.log(`[op-evaluate ${entry.id}] ${chunk}`),
+      });
       const result = await runEvaluatorFlow(
         {
-          launch: launchHeadless,
+          launch: launchHeadlessSubtask,
           setEvaluation: (e, evaluation) => setEvaluation(this.app, e, evaluation),
           setFlow: (e, i) => setFlow(this.app, e, i),
+          relaySession,
         },
         entry,
         body,

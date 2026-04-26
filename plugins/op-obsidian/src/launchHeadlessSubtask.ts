@@ -1,4 +1,16 @@
 import { spawn as realSpawn, type ChildProcess, type SpawnOptions } from "child_process";
+import { emitStatus, emitStream, type RelaySession } from "./relaySession";
+
+// Spawn `claude -p --output-format json …` with a prompt and agent config,
+// streaming stdout/stderr through a `RelaySession` so the user has a visible
+// surface to watch the headless subtask in. OP-181 §"Visibility tenet" — every
+// step is observable. The discriminated-union `relaySession` arg is required
+// so the typechecker rejects callers that try to skip the relay.
+//
+// Renamed from `launchHeadless` (OP-194/195/196) to `launchHeadlessSubtask`
+// (OP-197) — the new name reflects the role: this isn't a top-level launch,
+// it's a sub-task of an enclosing visible step. The signature change is the
+// type-level enforcement of the visibility tenet.
 
 export const HEADLESS_DEFAULT_TIMEOUT_MS = 10 * 60 * 1000;
 
@@ -14,8 +26,15 @@ export interface AgentsSpec {
 
 export type PermissionMode = "default" | "acceptEdits" | "bypassPermissions" | "dontAsk";
 
-export interface LaunchHeadlessInput {
+export interface LaunchHeadlessSubtaskInput {
   prompt: string;
+  /**
+   * Visibility-tenet relay surface. Every caller must construct one — the
+   * typechecker rejects calls that omit this field. Production paths
+   * construct `{ kind: "tmux", ... }` (see `makeTmuxRelay`), test paths
+   * construct `{ kind: "test", capture: vi.fn() }` (see `makeTestRelay`).
+   */
+  relaySession: RelaySession;
   // Optional inline agent definitions forwarded as `--agents '<json>'`. OP-95
   // confirmed `--agents` composes with `-p`, but the inline agent's `tools:`
   // allowlist is NOT enforced in `--agent <name>` mode; enforce tool scope at
@@ -35,7 +54,7 @@ export interface LaunchHeadlessInput {
   spawnFn?: (cmd: string, args: string[], options: SpawnOptions) => ChildProcess;
 }
 
-export interface LaunchHeadlessResult<TJson = unknown> {
+export interface LaunchHeadlessSubtaskResult<TJson = unknown> {
   text: string;
   jsonResult: TJson;
   stdout: string;
@@ -80,7 +99,7 @@ export class HeadlessParseError extends Error {
   }
 }
 
-export function buildArgs(input: LaunchHeadlessInput): string[] {
+export function buildArgs(input: LaunchHeadlessSubtaskInput): string[] {
   const args: string[] = ["-p", "--output-format", "json"];
   if (input.agents) {
     args.push("--agents", JSON.stringify(input.agents));
@@ -108,25 +127,31 @@ export function buildArgs(input: LaunchHeadlessInput): string[] {
 }
 
 // Spawn `claude -p --output-format json …` with the given prompt and agent
-// config, collect stdout/stderr, JSON-parse stdout, and return the parsed
-// object's `result` text plus the raw JSON. Default timeout: 10 minutes.
+// config, collect stdout/stderr (mirrored to the relay so the user can watch
+// progress live), JSON-parse stdout, and return the parsed object's `result`
+// text plus the raw JSON. Default timeout: 10 minutes.
+//
 // On timeout: kills with SIGTERM (then SIGKILL after 1s grace) and throws
 // HeadlessTimeoutError. On non-zero exit: HeadlessExitError. On malformed
-// stdout: HeadlessParseError.
-export async function launchHeadless<TJson = unknown>(
-  input: LaunchHeadlessInput,
-): Promise<LaunchHeadlessResult<TJson>> {
+// stdout: HeadlessParseError. The relay always sees a status-line at start
+// + at end (success or error) so the visible surface always closes the loop.
+export async function launchHeadlessSubtask<TJson = unknown>(
+  input: LaunchHeadlessSubtaskInput,
+): Promise<LaunchHeadlessSubtaskResult<TJson>> {
   if (!input.prompt || typeof input.prompt !== "string") {
-    throw new Error("launchHeadless: prompt is required");
+    throw new Error("launchHeadlessSubtask: prompt is required");
   }
   const timeoutMs = input.timeoutMs ?? HEADLESS_DEFAULT_TIMEOUT_MS;
   if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) {
-    throw new Error(`launchHeadless: invalid timeoutMs ${timeoutMs}`);
+    throw new Error(`launchHeadlessSubtask: invalid timeoutMs ${timeoutMs}`);
   }
 
   const args = buildArgs(input);
   const cmd = input.claudeBinary ?? "claude";
   const spawnFn = input.spawnFn ?? realSpawn;
+  const relay = input.relaySession;
+  const agentLabel = input.agent ? `${input.agent} ` : "";
+  emitStatus(relay, `launching headless subtask: ${agentLabel}(timeout ${timeoutMs}ms)`);
   const started = Date.now();
 
   const child = spawnFn(cmd, args, {
@@ -138,13 +163,17 @@ export async function launchHeadless<TJson = unknown>(
   let stdout = "";
   let stderr = "";
   child.stdout?.on("data", (chunk: Buffer | string) => {
-    stdout += chunk.toString();
+    const s = chunk.toString();
+    stdout += s;
+    emitStream(relay, s);
   });
   child.stderr?.on("data", (chunk: Buffer | string) => {
-    stderr += chunk.toString();
+    const s = chunk.toString();
+    stderr += s;
+    emitStream(relay, s);
   });
 
-  return new Promise<LaunchHeadlessResult<TJson>>((resolve, reject) => {
+  return new Promise<LaunchHeadlessSubtaskResult<TJson>>((resolve, reject) => {
     let settled = false;
     let killTimer: ReturnType<typeof setTimeout> | undefined;
 
@@ -164,6 +193,7 @@ export async function launchHeadless<TJson = unknown>(
         }
       }, 1000);
       settled = true;
+      emitStatus(relay, `headless subtask timed out after ${timeoutMs}ms`);
       reject(
         new HeadlessTimeoutError(
           `claude -p timed out after ${timeoutMs}ms`,
@@ -178,6 +208,7 @@ export async function launchHeadless<TJson = unknown>(
       if (settled) return;
       settled = true;
       clearTimeout(timer);
+      emitStatus(relay, `headless subtask spawn error: ${err.message}`);
       reject(err);
     });
 
@@ -188,6 +219,10 @@ export async function launchHeadless<TJson = unknown>(
       settled = true;
       const exitCode = typeof code === "number" ? code : -1;
       if (exitCode !== 0) {
+        emitStatus(
+          relay,
+          `headless subtask exited ${exitCode}${signal ? ` (signal ${signal})` : ""}`,
+        );
         reject(
           new HeadlessExitError(
             `claude -p exited ${exitCode}${signal ? ` (signal ${signal})` : ""}: ${stderr.trim()}`,
@@ -203,6 +238,7 @@ export async function launchHeadless<TJson = unknown>(
       try {
         parsed = JSON.parse(stdout);
       } catch (err) {
+        emitStatus(relay, `headless subtask returned malformed JSON`);
         reject(
           new HeadlessParseError(
             `claude -p stdout was not valid JSON: ${(err as Error).message}`,
@@ -213,13 +249,15 @@ export async function launchHeadless<TJson = unknown>(
         return;
       }
       const text = typeof parsed?.result === "string" ? parsed.result : "";
+      const durationMs = Date.now() - started;
+      emitStatus(relay, `headless subtask completed in ${durationMs}ms`);
       resolve({
         text,
         jsonResult: parsed as TJson,
         stdout,
         stderr,
         exitCode,
-        durationMs: Date.now() - started,
+        durationMs,
       });
     });
   });
