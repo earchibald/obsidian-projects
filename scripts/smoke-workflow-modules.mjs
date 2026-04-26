@@ -12,19 +12,23 @@
 //     it). Run `node scripts/reset-test-vault.mjs workflow-modules` first.
 //
 // What it asserts:
-//   1. `op-explain-workflow id=TST-5 mode=kickoff agent=claude` —
+//   1. `op-explain-workflow id=<issue> mode=kickoff agent=claude` —
 //        - `composed.text` contains the rendered global `branching` module
 //          (literal id substituted in, project-default override applied).
 //        - `composed.chunks` lists a `branching` chunk with kickoff scope.
 //        - No error-severity diagnostics.
-//   2. `op-explain-workflow id=TST-5 mode=plan agent=claude` —
+//   2. `op-explain-workflow id=<issue> mode=plan agent=claude` —
 //        - `composed.text` contains the rendered per-project `plan-rules`
 //          module body (project-default override applied for `reviewer_handle`).
 //        - `composed.chunks` lists a `plan-rules` chunk with plan scope.
 //        - No error-severity diagnostics.
-//   3. `op-list-vars project=testing issue=TST-5` —
+//   3. `op-list-vars project=<project> issue=<issue>` —
 //        - `context.hasContext === true`.
-//        - `vars[]` non-empty and includes an `id` row resolving to "TST-5".
+//        - `vars[]` non-empty and includes an `id` row resolving to the issue.
+//
+// Issue ID and project are read from Projects/_scratch/smoke-config.json (written
+// by build-seeds.mjs during the seed/workflow-modules build) so this file never
+// hardcodes the issue number. On the current ladder: issue=TST-5, project=testing.
 //
 // On any assertion failure, prints a concise FAIL summary with the offending
 // payload excerpt and exits non-zero so callers can chain this from CI / a
@@ -37,8 +41,30 @@ import { OP_TEST_VAULT, assertOpTestVaultOpen, fail, runObsidian } from "./lib/o
 
 const SCRATCH = join(OP_TEST_VAULT, "Projects/_scratch/op-last-response.md");
 
-const ISSUE = "TST-5";
-const PROJECT = "testing";
+// Read the issue ID and project from the smoke-config written by build-seeds
+// during the seed/workflow-modules seed build. This keeps the harness free of
+// hardcoded issue IDs — if future seeds reshuffle the issue counter, only
+// build-seeds.mjs (and its guard) needs updating, not this file.
+const SMOKE_CONFIG_PATH = join(OP_TEST_VAULT, "Projects/_scratch/smoke-config.json");
+if (!existsSync(SMOKE_CONFIG_PATH)) {
+  fail(
+    `smoke-config.json not found at ${SMOKE_CONFIG_PATH}.\n` +
+      "Run `node scripts/reset-test-vault.mjs workflow-modules` to restore the seed " +
+      "(or `node scripts/build-seeds.mjs` if the seed ladder hasn't been built yet).",
+  );
+}
+let smokeConfig;
+try {
+  smokeConfig = JSON.parse(readFileSync(SMOKE_CONFIG_PATH, "utf8"));
+} catch (e) {
+  fail(`Failed to parse smoke-config.json: ${e.message}`);
+}
+if (!smokeConfig.issue || !smokeConfig.project) {
+  fail(`smoke-config.json is missing required fields (issue, project): ${JSON.stringify(smokeConfig)}`);
+}
+
+const ISSUE = smokeConfig.issue;
+const PROJECT = smokeConfig.project;
 const AGENT = "claude";
 
 assertOpTestVaultOpen();
@@ -62,11 +88,19 @@ expect(
   kickoff.composed?.text?.includes("Always create an isolated worktree"),
   kickoff,
 );
+// composed.text is the final rendered prompt body — not a diagnostic block.
+// @op-test-project must appear (Project-default layer wins over Module-default)
+// and @module-default must be absent (the name=VALUE default was superseded).
+// These are split into two assertions so a failure identifies which half broke.
 expect(
-  "kickoff: project-default reviewer_handle override is rendered (not the module default)",
-  kickoff.composed?.text?.includes("@op-test-project") &&
-    !kickoff.composed?.text?.includes("@module-default"),
-  kickoff,
+  "kickoff: project-default reviewer_handle (@op-test-project) present in composed body",
+  kickoff.composed?.text?.includes("@op-test-project"),
+  kickoff.composed?.text,
+);
+expect(
+  "kickoff: module-default reviewer_handle (@module-default) absent from composed body",
+  !kickoff.composed?.text?.includes("@module-default"),
+  kickoff.composed?.text,
 );
 expect(
   "kickoff: composed.chunks lists the branching module at kickoff scope",
@@ -108,6 +142,15 @@ expect(
 
 // ---- 3. op-list-vars project=testing issue=TST-5 --------------------------
 const listVars = listVarsForIssue(PROJECT, ISSUE);
+// Fail loudly if op-list-vars returned a top-level error (e.g. project slug
+// mismatch, handler throw) rather than silently passing the structural checks
+// below with undefined context fields.
+if (listVars.error) {
+  fail(
+    `op-list-vars project=${PROJECT} issue=${ISSUE} returned an error: ${listVars.error}\n` +
+      "Check that the issue's project slug matches the project argument passed to op-list-vars.",
+  );
+}
 expect("list-vars: context.hasContext === true", listVars.context?.hasContext === true, listVars);
 expect("list-vars: context.issueId === TST-5", listVars.context?.issueId === ISSUE, listVars);
 expect(

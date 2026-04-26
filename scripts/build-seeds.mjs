@@ -229,10 +229,21 @@ build("seed/workflow-modules", () => {
     fail(
       `seed/workflow-modules: expected op-new to return TST-5 (cumulative ladder includes TST-1..4 from seed/mid-flow), got ${tst5.issueId}. ` +
         "If a new seed has been inserted between seed/mid-flow and seed/workflow-modules that adds testing-project issues, " +
-        "the smoke harness's hardcoded ISSUE = 'TST-5' must move in lockstep.",
+        "update the smoke-config.json write below and re-run.",
     );
   }
   setIssueAgent(tst5.path, "claude");
+
+  // Write a machine-readable config so the smoke harness doesn't hardcode the
+  // issue ID. The file is committed into the seed, so `reset-test-vault
+  // workflow-modules` always lands this exact JSON on disk before the harness
+  // reads it. If a future seed reshuffles issue numbering the build guard above
+  // catches it at seed-build time, and only this single JSON value needs
+  // updating — the harness itself stays free of hardcoded IDs.
+  writeVaultFile(
+    "Projects/_scratch/smoke-config.json",
+    JSON.stringify({ issue: tst5.issueId, project: "testing" }, null, 2) + "\n",
+  );
 });
 
 console.log("\nseed ladder built and tagged. Verify with `git -C <op-test> tag -l seed/*`.");
