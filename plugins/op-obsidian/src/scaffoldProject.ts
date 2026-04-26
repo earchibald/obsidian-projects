@@ -18,6 +18,12 @@ export interface ScaffoldProjectResult {
   projectFolder: string;
   basePath: string;
   statusPath: string;
+  /** OP-188: every new project lands with a default `WORKFLOW.md` that ships
+   *  the canonical evaluate → plan → implement → review → finalize sequence,
+   *  matching the pre-OP-188 hardcoded `flowOrchestrator` matrix. The file is
+   *  self-contained (no `extends:`) so the project doesn't depend on a global
+   *  `_op-workflow.md` the plugin doesn't auto-install. */
+  workflowPath: string;
   seed?: CreateIssueResult;
 }
 
@@ -69,6 +75,14 @@ export async function scaffoldProject(
   const statusPath = normalizePath(`${projectFolder}/STATUS.md`);
   await app.vault.create(statusPath, renderStatus(slug, prefix, repoPath));
 
+  // OP-188: seed the default workflow file so the orchestrator's
+  // workflow-file walker (flowOrchestrator.ts) finds a canonical step list
+  // for this project the first time auto-advance fires. Self-contained
+  // (no `extends:`) — keeps new projects working without depending on a
+  // global `_op-workflow.md` that the plugin doesn't auto-install.
+  const workflowPath = normalizePath(`${projectFolder}/WORKFLOW.md`);
+  await app.vault.create(workflowPath, renderDefaultWorkflow(slug));
+
   let seed: CreateIssueResult | undefined;
   const seedTitle = input.seedTitle?.trim();
   if (seedTitle) {
@@ -83,7 +97,7 @@ export async function scaffoldProject(
     });
   }
 
-  return { slug, prefix, projectFolder, basePath, statusPath, seed };
+  return { slug, prefix, projectFolder, basePath, statusPath, workflowPath, seed };
 }
 
 async function retryCreateSeed(
@@ -138,6 +152,49 @@ function renderStatus(slug: string, prefix: string, repoPath?: string): string {
 
 function renderBase(slug: string): string {
   return DEFAULT_BASE_TEMPLATE.replaceAll("<slug>", slug);
+}
+
+/**
+ * OP-188: default workflow file for a freshly-scaffolded project. Ships the
+ * canonical 5-step sequence — evaluate → plan → implement → review →
+ * finalize — that the pre-OP-188 `flowOrchestrator` hardcoded matrix
+ * encoded. Empty `modules: []` per step: this issue's scope is the
+ * orchestration sequence, not the module library.
+ *
+ * `default_agent: claude` and `default_model: opus` mirror the project's
+ * pre-modules defaults (see `agentProfiles.ts`). Projects that prefer a
+ * different agent or model set can edit this file via `op-edit-workflow`.
+ */
+function renderDefaultWorkflow(slug: string): string {
+  return [
+    "---",
+    "type: workflow",
+    "schema: 1",
+    `project: ${slug}`,
+    "default_agent: claude",
+    "default_model: opus",
+    "steps:",
+    "  - step: evaluate",
+    "    modules: []",
+    "  - step: plan",
+    "    modules: []",
+    "  - step: implement",
+    "    modules: []",
+    "  - step: review",
+    "    modules: []",
+    "  - step: finalize",
+    "    modules: []",
+    "---",
+    "",
+    `# ${slug} — workflow`,
+    "",
+    "Default 5-step sequence shipped at scaffold time. Edit this file to add",
+    "modules to a step (`modules: [<id>]`), override the agent or model on a",
+    "specific step, or insert custom steps. Auto-advance walks `steps:` in",
+    "order; complexity decides whether `evaluate` skips `plan` (`simple` →",
+    "evaluate jumps to `implement`; `complex` → evaluate → plan).",
+    "",
+  ].join("\n");
 }
 
 const DEFAULT_BASE_TEMPLATE = `filters:

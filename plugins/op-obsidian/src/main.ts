@@ -2591,6 +2591,7 @@ export default class OpPlugin extends Plugin {
       projectFolder: res.projectFolder,
       basePath: res.basePath,
       statusPath: res.statusPath,
+      workflowPath: res.workflowPath,
       seedIssueId: res.seed?.id,
       seedPath: res.seed?.path,
     };
@@ -2608,6 +2609,7 @@ export default class OpPlugin extends Plugin {
         projectFolder: res.projectFolder,
         basePath: res.basePath,
         statusPath: res.statusPath,
+        workflowPath: res.workflowPath,
         seedIssueId: res.seed?.id,
         seedPath: res.seed?.path,
       });
@@ -3960,7 +3962,13 @@ export default class OpPlugin extends Plugin {
     exitStatus: FlowExitStatus,
   ): Promise<FlowAdvanceOutput | null> {
     const { flow, complexity } = this.readFlowState(entry.path);
-    const decision = flowAdvanceDecision({ flow, complexity, exitStatus });
+    // OP-188: load the project's workflow file so flowAdvanceDecision can
+    // walk its `steps:` list. `loadWorkflowFile` returns `null` for missing
+    // files and `isLegacy: true` for synthesised legacy shapes — both cases
+    // route through the orchestrator's hardcoded-matrix fallback so
+    // pre-modules projects keep auto-advancing until OP-189 migrates them.
+    const { workflow } = await loadWorkflowFile(this.app, entry.project);
+    const decision = flowAdvanceDecision({ workflow, flow, complexity, exitStatus });
     if (!decision) return null;
     await setFlow(this.app, entry, { flow: decision.nextFlow });
     // Yield once so the metadataCache `changed` event has a chance to fan
