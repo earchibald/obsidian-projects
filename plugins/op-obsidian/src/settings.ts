@@ -1,4 +1,10 @@
-import { App, Modal, PluginSettingTab, Setting } from "obsidian";
+import {
+  App,
+  Modal,
+  PluginSettingTab,
+  Setting,
+  prepareFuzzySearch,
+} from "obsidian";
 import { notify } from "./notificationLog";
 import {
   applyPreset,
@@ -21,6 +27,7 @@ import { validateOverlay } from "./overlayValidate";
 import { detectTmux } from "./tmuxDetect";
 import { userError } from "./userError";
 import { execFileSync } from "child_process";
+import { README_PATH } from "./firstRunReadme";
 import {
   EXTRA_PREAMBLE_MAX,
   type SidebarTab,
@@ -28,6 +35,7 @@ import {
   type OpSettings,
   DEFAULT_SETTINGS,
   mergeSettings,
+  matchSettingRow,
 } from "./settingsPure";
 
 export {
@@ -47,165 +55,345 @@ export type {
   OpSettings,
 } from "./settingsPure";
 
+/**
+ * OP-164: Two-tier settings layout (Daily / Advanced) with fuzzy search,
+ * per-section JS-driven collapsibles, and targeted re-renders. The settings
+ * file is decomposed into one renderSection*(containerEl) method per H2 so
+ * mutating a single setting only repaints its own subtree.
+ */
+type SectionId =
+  // Daily
+  | "agent"
+  | "terminalApp"
+  | "sidebarTab"
+  | "onboarding"
+  | "hotkeyPreset"
+  // Advanced
+  | "injection"
+  | "workingDirs"
+  | "orchestrator"
+  | "profileOverlays"
+  | "worktreeEnforcement"
+  | "flowChaining"
+  | "github"
+  | "developer";
+
+/** Subset of SectionId covering only the collapsible Advanced subsections. */
+type AdvancedSectionId = (typeof ADVANCED_SECTIONS)[number]["id"];
+
+const ADVANCED_SECTIONS: ReadonlyArray<{
+  id: SectionId;
+  title: string;
+  blurb: string;
+}> = [
+  {
+    id: "injection",
+    title: "Injection",
+    blurb:
+      "Controls what context the launched agent sees: issue body, linked TASKS, recent commits, project WORKFLOW.md, and a freeform preamble.",
+  },
+  {
+    id: "workingDirs",
+    title: "Working directories & project order",
+    blurb:
+      "Per-project repo paths used when launching agents (overridden by repo_path: in STATUS.md), and the order projects appear in pickers.",
+  },
+  {
+    id: "orchestrator",
+    title: "iTerm layout orchestrator",
+    blurb:
+      "Optional layout engine that tiles agent panes into a grid inside the current iTerm window. Off by default. macOS + iTerm only.",
+  },
+  {
+    id: "profileOverlays",
+    title: "Profile overlays (JSON per agent)",
+    blurb:
+      "JSON patches merged on top of the built-in agent profile. Allowed keys: binary, launchFlags, promptPreamble, skillTrigger, label.",
+  },
+  {
+    id: "worktreeEnforcement",
+    title: "Agent worktree enforcement",
+    blurb:
+      "Opt-in PreToolUse hook (Claude Code + Gemini) that blocks Edit/Write on the main checkout for op-launched sessions.",
+  },
+  {
+    id: "flowChaining",
+    title: "Flow chaining",
+    blurb:
+      "Drives stage-to-stage progression: evaluate → planning → implementation → review → finalize. Off by default — opt in to auto-advance.",
+  },
+  {
+    id: "github",
+    title: "GitHub integration",
+    blurb:
+      "Auto-create a GitHub issue on op-new and auto-close it on op-resolve. Requires the gh CLI installed and authenticated.",
+  },
+  {
+    id: "developer",
+    title: "Developer commands",
+    blurb:
+      "Surfaces op-dev:* debugging commands (dump-store, rebuild-store, install-agent-hooks, debug agent launch) in the command palette.",
+  },
+];
+
 export class OpSettingsTab extends PluginSettingTab {
+  /**
+   * Map of SectionId → the wrapper element that renderSection*(el) populates.
+   * rerenderSection(id) empties the wrapper and re-runs the render fn so a
+   * mutation only repaints its own subtree, never the whole 700px tab.
+   */
+  private sectionEls = new Map<SectionId, HTMLElement>();
+
+  /** Live fuzzy-search query (trimmed in matchSettingRow). */
+  private filterQuery = "";
+
+  /** Debounce timers for inline validators (overlay textareas, tmux path). */
+  private debounceTimers = new Map<string, number>();
+
+  /**
+   * In-flight drag flag for the project-order list. While true, the
+   * Working-directories collapsible refuses to collapse mid-drag (collapsing
+   * would zero out drag-target getBoundingClientRect()s — the original
+   * drag-inside-details bug OP-164 calls out).
+   */
+  private dragInFlight = false;
+
   constructor(app: App, private plugin: OpPlugin) {
     super(app, plugin);
   }
 
-  private renderProjectOrder(containerEl: HTMLElement): void {
-    const s = this.plugin.settings;
-    const projects = applyProjectOrder(listProjects(this.app), s.projectOrder);
-
-    if (projects.length === 0) {
-      containerEl.createEl("p", {
-        text: "No projects discovered yet. Scaffold one with /op:scaffold.",
-        cls: "op-project-order__empty",
-      });
-      return;
-    }
-
-    const list = containerEl.createEl("ul", { cls: "op-project-order__list" });
-    let dragSlug: string | null = null;
-
-    const persistFromDom = async (): Promise<void> => {
-      const next: string[] = [];
-      list.querySelectorAll<HTMLLIElement>(".op-project-order__item").forEach((li) => {
-        const slug = li.dataset.slug;
-        if (slug) next.push(slug);
-      });
-      // Preserve any slugs the user has ordered for projects that aren't
-      // currently discovered (e.g. STATUS.md temporarily missing) so a
-      // transient absence doesn't wipe their curated position.
-      const visible = new Set(next);
-      for (const slug of s.projectOrder) {
-        if (!visible.has(slug)) next.push(slug);
-      }
-      s.projectOrder = next;
-      await this.plugin.saveSettings();
-    };
-
-    const clearDropAffordance = (): void => {
-      list.querySelectorAll(".is-drop-before, .is-drop-after").forEach((el) => {
-        el.classList.remove("is-drop-before", "is-drop-after");
-      });
-    };
-
-    for (const p of projects) {
-      const li = list.createEl("li", { cls: "op-project-order__item" });
-      li.dataset.slug = p.slug;
-      li.draggable = true;
-      li.createEl("span", { cls: "op-project-order__handle", text: "⋮⋮" });
-      li.createEl("span", { cls: "op-project-order__slug", text: p.slug });
-      if (p.prefix) {
-        li.createEl("span", { cls: "op-project-order__prefix", text: p.prefix });
-      }
-
-      li.addEventListener("dragstart", (ev) => {
-        dragSlug = p.slug;
-        li.classList.add("is-dragging");
-        if (ev.dataTransfer) {
-          ev.dataTransfer.effectAllowed = "move";
-          ev.dataTransfer.setData("text/plain", p.slug);
-        }
-      });
-      li.addEventListener("dragend", () => {
-        dragSlug = null;
-        li.classList.remove("is-dragging");
-        clearDropAffordance();
-      });
-      li.addEventListener("dragover", (ev) => {
-        if (!dragSlug || dragSlug === p.slug) return;
-        ev.preventDefault();
-        if (ev.dataTransfer) ev.dataTransfer.dropEffect = "move";
-        const rect = li.getBoundingClientRect();
-        const before = ev.clientY < rect.top + rect.height / 2;
-        clearDropAffordance();
-        li.classList.add(before ? "is-drop-before" : "is-drop-after");
-      });
-      li.addEventListener("dragleave", () => {
-        li.classList.remove("is-drop-before", "is-drop-after");
-      });
-      li.addEventListener("drop", async (ev) => {
-        ev.preventDefault();
-        if (!dragSlug || dragSlug === p.slug) {
-          clearDropAffordance();
-          return;
-        }
-        const src = list.querySelector<HTMLLIElement>(
-          `.op-project-order__item[data-slug="${CSS.escape(dragSlug)}"]`,
-        );
-        if (!src) {
-          clearDropAffordance();
-          return;
-        }
-        const rect = li.getBoundingClientRect();
-        const before = ev.clientY < rect.top + rect.height / 2;
-        if (before) list.insertBefore(src, li);
-        else list.insertBefore(src, li.nextSibling);
-        clearDropAffordance();
-        await persistFromDom();
-      });
-    }
-
-    new Setting(containerEl)
-      .setName("Reset to alphabetical")
-      .setDesc("Clears your custom order so projects sort alphabetically again.")
-      .addButton((b) =>
-        b.setButtonText("Reset").onClick(async () => {
-          s.projectOrder = [];
-          await this.plugin.saveSettings();
-          this.display();
-        }),
-      );
-  }
+  // ─── Lifecycle ──────────────────────────────────────────────────────────
 
   display(): void {
     const { containerEl } = this;
     containerEl.empty();
+    containerEl.addClass("op-settings");
+    this.sectionEls.clear();
+
+    this.renderSearch(containerEl);
+
+    // Daily — top-level, no group header (the Daily settings are themselves
+    // headerless rows so the most-used controls land above the fold).
+    const daily = containerEl.createDiv({ cls: "op-settings__group op-settings__group--daily" });
+    daily.createEl("h2", { text: "Daily" });
+    this.mountSection(daily, "agent", (el) => this.renderDailyAgent(el));
+    this.mountSection(daily, "terminalApp", (el) => this.renderDailyTerminal(el));
+    this.mountSection(daily, "sidebarTab", (el) => this.renderDailySidebar(el));
+    this.mountSection(daily, "onboarding", (el) => this.renderDailyOnboarding(el));
+    this.mountSection(daily, "hotkeyPreset", (el) => this.renderDailyHotkey(el));
+
+    // Advanced — single H2 with each subsection in its own collapsible
+    // (collapsed by default). Drag-safe: the collapsibles use JS-controlled
+    // display:none/block, NOT native <details>, so getBoundingClientRect()
+    // still returns real numbers when the body is hidden the moment the user
+    // expands it (we don't compute rects until visible anyway, but the
+    // primitive's contract is to never zero-out child rects).
+    containerEl.createEl("h2", { text: "Advanced" });
+    containerEl.createEl("p", {
+      cls: "setting-item-description op-settings__advanced-blurb",
+      text:
+        "Less-common controls. Each subsection collapses independently; expand only the ones you need.",
+    });
+    const advanced = containerEl.createDiv({ cls: "op-settings__group op-settings__group--advanced" });
+    for (const section of ADVANCED_SECTIONS) {
+      const collapsible = new OpCollapsible(advanced, section.title, {
+        startOpen: false,
+        canCollapse: () => !this.dragInFlight,
+      });
+      // "What is this?" expandable directly under the H2 — short blurb that
+      // de-densifies setDesc strings without losing the glossary context.
+      addHelpExpandable(collapsible.body, "What is this?", section.blurb);
+      this.mountSection(collapsible.body, section.id, (el) => this.renderAdvancedSection(section.id, el));
+      // Tag the wrapper for the smoke-test recipe (CLAUDE.md): tests can
+      // querySelector('[data-op-section="workingDirs"]') and click the
+      // header to expand before counting drag rows.
+      collapsible.root.dataset.opSection = section.id;
+    }
+
+    // Glossary — fallback collapsible at the bottom. The full reference
+    // remains here for users who want one place with all the jargon. The
+    // per-section blurbs above are short summaries; this is the long form.
+    this.renderGlossary(containerEl);
+
+    // Re-apply any active filter after a full redraw (e.g. plugin reload
+    // while the search box still had text — currently impossible because
+    // display() is called fresh, but keep the call so future code paths
+    // calling display() mid-session still respect filterQuery).
+    if (this.filterQuery) this.applyFilter();
+  }
+
+  // ─── Section mounting / targeted re-render ──────────────────────────────
+
+  /** Create a wrapper element for the section, register it, and render. */
+  private mountSection(
+    parentEl: HTMLElement,
+    id: SectionId,
+    render: (el: HTMLElement) => void,
+  ): void {
+    const wrapper = parentEl.createDiv({ cls: "op-settings__section" });
+    wrapper.dataset.sectionId = id;
+    this.sectionEls.set(id, wrapper);
+    render(wrapper);
+  }
+
+  /**
+   * Re-render just one section. Replaces `this.display()` calls that
+   * previously repainted the whole tab when, e.g., a working-dir mapping
+   * was added or the project order reset.
+   */
+  private rerenderSection(id: SectionId): void {
+    const wrapper = this.sectionEls.get(id);
+    if (!wrapper) return;
+    wrapper.empty();
+    this.dispatchRender(id, wrapper);
+    if (this.filterQuery) this.applyFilter();
+  }
+
+  private dispatchRender(id: SectionId, el: HTMLElement): void {
+    switch (id) {
+      // Daily
+      case "agent":
+        return this.renderDailyAgent(el);
+      case "terminalApp":
+        return this.renderDailyTerminal(el);
+      case "sidebarTab":
+        return this.renderDailySidebar(el);
+      case "onboarding":
+        return this.renderDailyOnboarding(el);
+      case "hotkeyPreset":
+        return this.renderDailyHotkey(el);
+      // Advanced
+      case "injection":
+      case "workingDirs":
+      case "orchestrator":
+      case "profileOverlays":
+      case "worktreeEnforcement":
+      case "flowChaining":
+      case "github":
+      case "developer":
+        return this.renderAdvancedSection(id, el);
+      default: {
+        // Compile-time exhaustiveness: TypeScript errors here when a new
+        // SectionId value is added without a matching case above.
+        const _exhaustive: never = id;
+        return _exhaustive;
+      }
+    }
+  }
+
+  private renderAdvancedSection(id: AdvancedSectionId, el: HTMLElement): void {
+    switch (id) {
+      case "injection":
+        return this.renderInjection(el);
+      case "workingDirs":
+        return this.renderWorkingDirsAndProjectOrder(el);
+      case "orchestrator":
+        return this.renderOrchestrator(el);
+      case "profileOverlays":
+        return this.renderProfileOverlays(el);
+      case "worktreeEnforcement":
+        return this.renderWorktreeEnforcement(el);
+      case "flowChaining":
+        return this.renderFlowChaining(el);
+      case "github":
+        return this.renderGithub(el);
+      case "developer":
+        return this.renderDeveloper(el);
+      default: {
+        const _exhaustive: never = id;
+        return _exhaustive;
+      }
+    }
+  }
+
+  // ─── Search ─────────────────────────────────────────────────────────────
+
+  private renderSearch(containerEl: HTMLElement): void {
+    const wrap = containerEl.createDiv({ cls: "op-settings__search-wrap" });
+    const input = wrap.createEl("input", {
+      cls: "op-settings__search",
+      attr: {
+        type: "text",
+        placeholder: "Search settings…",
+        spellcheck: "false",
+      },
+    });
+    input.value = this.filterQuery;
+    input.addEventListener("input", () => {
+      this.filterQuery = input.value;
+      this.applyFilter();
+    });
+  }
+
+  /**
+   * Hide individual `.setting-item` rows whose name+desc don't match the
+   * fuzzy query, then hide section wrappers whose visible row count drops
+   * to zero. Empty query restores everything. Mirrors the sidebar's
+   * filterEntries shape.
+   */
+  private applyFilter(): void {
+    const q = this.filterQuery.trim();
+    const containerEl = this.containerEl;
+    const matcher = q ? prepareFuzzySearch(q) : null;
+    const rows = containerEl.querySelectorAll<HTMLElement>(".setting-item");
+    rows.forEach((row) => {
+      if (!matcher) {
+        row.style.removeProperty("display");
+        return;
+      }
+      const name = row.querySelector(".setting-item-name")?.textContent ?? "";
+      const desc = row.querySelector(".setting-item-description")?.textContent ?? "";
+      const ok = matchSettingRow(name, desc, q, () => matcher);
+      row.style.display = ok ? "" : "none";
+    });
+    // Auto-expand Advanced collapsibles that have visible matches; hide
+    // collapsible wrappers whose visible row count is zero so the user
+    // doesn't see a dozen empty headers when searching.
+    containerEl.querySelectorAll<HTMLElement>(".op-collapsible").forEach((wrapper) => {
+      // aria-expanded lives on the header (the role="button" element), so
+      // sync it there — not on the wrapper — to stay consistent with the
+      // OpCollapsible constructor and setOpen().
+      const header = wrapper.querySelector<HTMLElement>(".op-collapsible__header");
+      if (!matcher) {
+        wrapper.style.removeProperty("display");
+        // Collapse collapsibles that were auto-expanded by search (i.e. not
+        // manually opened by the user) so clearing the query restores the
+        // original all-collapsed state.
+        if (wrapper.dataset.opAutoExpanded) {
+          delete wrapper.dataset.opAutoExpanded;
+          wrapper.classList.remove("is-open");
+          header?.setAttribute("aria-expanded", "false");
+        }
+        return;
+      }
+      const visibleRows = wrapper.querySelectorAll<HTMLElement>(
+        ".setting-item",
+      );
+      let anyVisible = false;
+      visibleRows.forEach((r) => {
+        if (r.style.display !== "none") anyVisible = true;
+      });
+      wrapper.style.display = anyVisible ? "" : "none";
+      if (anyVisible && !wrapper.classList.contains("is-open")) {
+        // Auto-open so the matches are visible without a manual click.
+        // Mark as auto-expanded so clearing the filter can restore the
+        // collapsed state. (User-opened collapsibles lack this marker.)
+        wrapper.classList.add("is-open");
+        header?.setAttribute("aria-expanded", "true");
+        wrapper.dataset.opAutoExpanded = "1";
+      }
+    });
+  }
+
+  // ─── Daily section renderers ────────────────────────────────────────────
+
+  private renderDailyAgent(containerEl: HTMLElement): void {
     const s = this.plugin.settings;
-
-    // Glossary — one place to define the jargon the individual settings
-    // descriptions refer to (tmux, iTerm control mode, orchestrator, overlay,
-    // worktree). Individual descriptions stay short and link back here in
-    // spirit; this block is the source of truth for the terminology.
-    const glossary = containerEl.createEl("details");
-    glossary.createEl("summary", { text: "Glossary — tmux, orchestrator, overlay, worktree" });
-    const gl = glossary.createEl("div", { cls: "setting-item-description" });
-    const addTerm = (term: string, body: string): void => {
-      const p = gl.createEl("p");
-      p.createEl("strong", { text: `${term} — ` });
-      p.appendText(body);
-    };
-    addTerm(
-      "tmux",
-      "Terminal multiplexer. op runs every agent inside a single shared tmux session (`op-agents`), with one window per issue id. Agents survive closing the terminal; reattach with `tmux attach -t op-agents`.",
-    );
-    addTerm(
-      "iTerm control mode (`tmux -CC`)",
-      "iTerm-specific integration where tmux drives native iTerm tabs/panes instead of rendering its own UI. op uses this when the terminal is set to iTerm.",
-    );
-    addTerm(
-      "Orchestrator",
-      "Optional layout engine that tiles agent panes into a grid inside the current iTerm window (macOS + iTerm only). Overflow spills to a new iTerm window. Off by default.",
-    );
-    addTerm(
-      "Profile overlay",
-      "Per-agent JSON patch merged on top of the built-in agent profile. Keys: `binary`, `launchFlags` (string[]), `promptPreamble`, `skillTrigger`, `label`. Unknown keys are flagged but saved.",
-    );
-    addTerm(
-      "Working directory",
-      "Absolute path to the code repo an agent is launched into. Resolved in order: the issue's project `repo_path:` frontmatter, then the slug → path map below, then an interactive modal prompt.",
-    );
-    addTerm(
-      "Worktree enforcement",
-      "An opt-in PreToolUse hook (Claude Code + Gemini only) that blocks Edit/Write on the main checkout for op-launched agents. Agents must `git worktree add` or export `OP_ALLOW_MAIN_EDIT=1` to override.",
-    );
-
-    containerEl.createEl("h2", { text: "Agents" });
-
     new Setting(containerEl)
       .setName("Default agent")
-      .setDesc("Agent launched by “op: open agent for issue” when no override is given — e.g. claude, gemini, codex. The picker only appears when this agent isn't detected on PATH, or “Always prompt for agent” is on.")
+      .setDesc(
+        "Agent launched by “op: open agent for issue” when no override is given — e.g. claude, gemini, codex. The picker only appears when this agent isn't detected on PATH, or “Always prompt for agent” is on.",
+      )
       .addDropdown((d) => {
         for (const id of AGENT_IDS) d.addOption(id, id);
         d.setValue(s.defaultAgent).onChange(async (v) => {
@@ -213,84 +401,91 @@ export class OpSettingsTab extends PluginSettingTab {
           await this.plugin.saveSettings();
         });
       });
+  }
 
+  private renderDailyTerminal(containerEl: HTMLElement): void {
+    const s = this.plugin.settings;
     new Setting(containerEl)
-      .setName("Always prompt for agent")
-      .setDesc("Show the picker modal every time, even when a default is set.")
-      .addToggle((t) =>
-        t.setValue(s.alwaysPick).onChange(async (v) => {
-          s.alwaysPick = v;
-          await this.plugin.saveSettings();
-        }),
-      );
-
-    new Setting(containerEl)
-      .setName("Detection")
-      .setDesc(detectionSummary(this.plugin))
-      .addButton((b) =>
-        b.setButtonText("Re-probe").onClick(async () => {
-          this.plugin.detector.invalidate();
-          await this.plugin.detector.refresh();
-          notify("op: agent detection refreshed");
-          this.display();
-        }),
-      );
-
-    containerEl.createEl("h3", { text: "Profile overlays (JSON per agent)" });
-    containerEl.createEl("p", {
-      text: "Overlays are a JSON patch merged on top of the built-in profile for each agent. See Glossary → Profile overlay. Allowed keys: `binary` (string — absolute path or PATH lookup), `launchFlags` (string[] appended to the command line), `promptPreamble` (string prepended to every prompt), `skillTrigger` (string — first line of the prompt), `label` (string for the sidebar badge). Example: `{ \"binary\": \"/opt/homebrew/bin/claude\", \"launchFlags\": [\"--dangerously-skip-permissions\"] }`.",
-      cls: "setting-item-description",
-    });
-    for (const id of AGENT_IDS) {
-      new Setting(containerEl)
-        .setName(`${id} overlay`)
-        .addTextArea((t) => {
-          const existing = s.agentOverlays[id];
-          t.setValue(existing ? JSON.stringify(existing, null, 2) : "");
-          t.inputEl.rows = 5;
-          t.inputEl.style.width = "100%";
-          t.inputEl.addEventListener("blur", async () => {
-            const raw = t.getValue().trim();
-            if (!raw) {
-              delete s.agentOverlays[id];
-              await this.plugin.saveSettings();
-              return;
-            }
-            let parsed: unknown;
-            try {
-              parsed = JSON.parse(raw);
-            } catch (err: any) {
-              userError(
-                `${id} overlay: invalid JSON — ${err?.message ?? err}`,
-                "Fix the JSON in the textarea and click away to retry; the overlay was not saved.",
-              );
-              return;
-            }
-            const result = validateOverlay(parsed);
-            if (!result.ok || !result.overlay) {
-              userError(
-                `${id} overlay: ${result.errors.join("; ")}`,
-                "Allowed keys: binary, launchFlags (string[]), promptPreamble, skillTrigger, label.",
-              );
-              return;
-            }
-            if (result.warnings.length) {
-              userError(
-                `${id} overlay saved with warnings: ${result.warnings.join("; ")}`,
-                "Unknown keys were dropped. Double-check the key names in the description above.",
-              );
-            }
-            s.agentOverlays[id] = result.overlay;
+      .setName("Terminal app")
+      .setDesc(
+        "All agents share a single tmux session (`op-agents`), one window per issue (window name = issue id). Agents survive the terminal closing — reattach with `tmux attach -t op-agents`. iTerm uses tmux control mode (`tmux -CC`); Terminal.app uses plain tmux.",
+      )
+      .addDropdown((d) =>
+        d
+          .addOption("Terminal", "Terminal")
+          .addOption("iTerm", "iTerm")
+          .setValue(s.terminal)
+          .onChange(async (v) => {
+            s.terminal = v as "Terminal" | "iTerm";
             await this.plugin.saveSettings();
-          });
-        });
-    }
+          }),
+      );
+  }
 
-    containerEl.createEl("h2", { text: "Injection" });
+  private renderDailySidebar(containerEl: HTMLElement): void {
+    const s = this.plugin.settings;
+    new Setting(containerEl)
+      .setName("Sidebar default tab")
+      .setDesc("Tab shown when the op sidebar opens.")
+      .addDropdown((d) =>
+        d
+          .addOption("issues", "Issues")
+          .addOption("in-flight", "In flight")
+          .addOption("resolved", "Recently resolved")
+          .setValue(s.view.defaultTab)
+          .onChange(async (v) => {
+            s.view.defaultTab = v as SidebarTab;
+            await this.plugin.saveSettings();
+          }),
+      );
+  }
+
+  private renderDailyOnboarding(containerEl: HTMLElement): void {
+    new Setting(containerEl)
+      .setName("Onboarding README")
+      .setDesc(
+        `Open the op onboarding README — a short tour of the most-used commands and workflows. Located at \`${README_PATH}\`. Deletes don't come back automatically; use the Start tour command from the palette to re-scaffold a demo project.`,
+      )
+      .addButton((b) =>
+        b.setButtonText("Open README").setCta().onClick(async () => {
+          const file = this.app.vault.getAbstractFileByPath(README_PATH);
+          if (!file) {
+            notify(`op: README not found at ${README_PATH}. Run “op: start guided tour” to re-scaffold.`);
+            return;
+          }
+          await this.app.workspace.openLinkText(README_PATH, "");
+        }),
+      );
+  }
+
+  private renderDailyHotkey(containerEl: HTMLElement): void {
+    new Setting(containerEl)
+      .setName("Apply op default hotkey preset")
+      .setDesc(
+        "Binds the op commands to ⌘⇧* / ⌘⌥* shortcuts. Best-effort: any binding whose key is already taken is skipped. Reversible from the results modal during this session.",
+      )
+      .addButton((b) =>
+        b
+          .setButtonText("Apply preset")
+          .setCta()
+          .onClick(() => {
+            const preset = defaultPreset();
+            const result = applyPreset(this.app, preset);
+            new HotkeyPresetResultsModal(this.app, preset, result).open();
+          }),
+      );
+  }
+
+  // ─── Advanced section renderers ─────────────────────────────────────────
+
+  private renderInjection(containerEl: HTMLElement): void {
+    const s = this.plugin.settings;
 
     new Setting(containerEl)
       .setName("Inject issue body")
-      .setDesc("Append the issue note's body (after frontmatter) to the launched prompt so the agent sees the scope without having to read the note.")
+      .setDesc(
+        "Append the issue note's body (after frontmatter) to the launched prompt so the agent sees the scope without having to read the note.",
+      )
       .addToggle((t) =>
         t.setValue(s.injection.injectBody).onChange(async (v) => {
           s.injection.injectBody = v;
@@ -302,15 +497,13 @@ export class OpSettingsTab extends PluginSettingTab {
       .setName("Max body characters")
       .setDesc("Truncate the injected body to this many characters. Default 8000 ≈ ~2000 tokens.")
       .addText((t) =>
-        t
-          .setValue(String(s.injection.maxBodyChars))
-          .onChange(async (v) => {
-            const n = parseInt(v, 10);
-            if (Number.isFinite(n) && n > 0) {
-              s.injection.maxBodyChars = n;
-              await this.plugin.saveSettings();
-            }
-          }),
+        t.setValue(String(s.injection.maxBodyChars)).onChange(async (v) => {
+          const n = parseInt(v, 10);
+          if (Number.isFinite(n) && n > 0) {
+            s.injection.maxBodyChars = n;
+            await this.plugin.saveSettings();
+          }
+        }),
       );
 
     new Setting(containerEl)
@@ -325,7 +518,9 @@ export class OpSettingsTab extends PluginSettingTab {
 
     new Setting(containerEl)
       .setName("Recent commits to include")
-      .setDesc("Number of recent entries from the issue's `commits:` frontmatter list to append to the prompt. 0 disables.")
+      .setDesc(
+        "Number of recent entries from the issue's `commits:` frontmatter list to append to the prompt. 0 disables.",
+      )
       .addText((t) =>
         t.setValue(String(s.injection.includeRecentCommits)).onChange(async (v) => {
           const n = parseInt(v, 10);
@@ -388,7 +583,16 @@ export class OpSettingsTab extends PluginSettingTab {
       });
     });
 
-    containerEl.createEl("h2", { text: "Working directories" });
+    // Sidebar density / hover-preview controls live next to Injection's
+    // "view" sister settings — they remain in the Daily Sidebar tab dropdown
+    // for default tab + here for the more advanced tweaks. Keep them here
+    // (under Injection? no — they're view-related); these moved into a
+    // dedicated "Sidebar advanced" subgroup.
+  }
+
+  private renderWorkingDirsAndProjectOrder(containerEl: HTMLElement): void {
+    const s = this.plugin.settings;
+
     containerEl.createEl("p", {
       text: "Per-project repository paths. Overridden by repo_path in STATUS.md frontmatter.",
       cls: "setting-item-description",
@@ -411,7 +615,7 @@ export class OpSettingsTab extends PluginSettingTab {
         b.setButtonText("Remove").onClick(async () => {
           delete s.workingDirs[slug];
           await this.plugin.saveSettings();
-          this.display();
+          this.rerenderSection("workingDirs");
         }),
       );
     }
@@ -439,7 +643,7 @@ export class OpSettingsTab extends PluginSettingTab {
           }
           s.workingDirs[slug] = p;
           await this.plugin.saveSettings();
-          this.display();
+          this.rerenderSection("workingDirs");
         }),
       );
 
@@ -482,106 +686,153 @@ export class OpSettingsTab extends PluginSettingTab {
           s.workingDirs = next;
           await this.plugin.saveSettings();
           if (warnings.length) notify(`workingDirs saved. Warnings: ${warnings.join("; ")}`);
-          this.display();
+          this.rerenderSection("workingDirs");
         });
       });
 
-    containerEl.createEl("h2", { text: "Project order" });
+    // Project order — folded into the same section so the user sees the same
+    // project list and same concerns in one place. The orphan
+    // "Reset to alphabetical" button used to dangle outside the H2; it now
+    // re-renders just the project-order subtree, not the whole tab.
+    const orderHeader = containerEl.createDiv({ cls: "op-settings__subhead" });
+    orderHeader.createEl("h3", { text: "Project order" });
     containerEl.createEl("p", {
-      text: "Drag to reorder how projects appear in command pickers (e.g. “op: New issue”). Newly-discovered projects sort alphabetically below the curated list. Reset to alphabetical clears your custom order.",
+      text:
+        "Drag to reorder how projects appear in command pickers (e.g. “op: New issue”). Newly-discovered projects sort alphabetically below the curated list.",
       cls: "setting-item-description",
     });
-    this.renderProjectOrder(containerEl);
+    const orderHost = containerEl.createDiv({ cls: "op-settings__project-order-host" });
+    this.renderProjectOrder(orderHost);
+  }
 
-    containerEl.createEl("h2", { text: "Terminal" });
-    new Setting(containerEl)
-      .setName("Terminal app")
-      .setDesc(
-        "All agents share a single tmux session (`op-agents`), one window per issue (window name = issue id). Agents survive the terminal closing — reattach with `tmux attach -t op-agents`. Re-launching an agent whose window already exists selects that window instead of creating a duplicate. iTerm uses tmux control mode (`tmux -CC`); Terminal.app uses plain tmux.",
-      )
-      .addDropdown((d) =>
-        d
-          .addOption("Terminal", "Terminal")
-          .addOption("iTerm", "iTerm")
-          .setValue(s.terminal)
-          .onChange(async (v) => {
-            s.terminal = v as "Terminal" | "iTerm";
-            await this.plugin.saveSettings();
-          }),
-      );
+  /**
+   * Drag-reorderable project list. Lives inside the Working-directories
+   * collapsible (OP-164 §4) — the parent `OpCollapsible` refuses to
+   * collapse while `dragInFlight` is true so getBoundingClientRect()
+   * never goes to zero mid-drag (the original drag-in-details bug).
+   */
+  private renderProjectOrder(containerEl: HTMLElement): void {
+    const s = this.plugin.settings;
+    const projects = applyProjectOrder(listProjects(this.app), s.projectOrder);
 
-    const tmuxStatus = (p: string) =>
-      existsSync(p) ? `✓ exists: ${p}` : `⚠ not found: ${p}`;
-    const tmuxSetting = new Setting(containerEl)
-      .setName("tmux binary")
-      .setDesc(
-        `Absolute path to the tmux executable. Obsidian's PATH omits /opt/homebrew/bin, so bare \`tmux\` fails on Apple Silicon brew installs. ${tmuxStatus(s.tmuxBinary)}`,
-      );
-    tmuxSetting.addText((t) =>
-      t.setValue(s.tmuxBinary).onChange(async (v) => {
-        const trimmed = v.trim();
-        if (trimmed) {
-          s.tmuxBinary = trimmed;
-          await this.plugin.saveSettings();
-          tmuxSetting.setDesc(
-            `Absolute path to the tmux executable. Obsidian's PATH omits /opt/homebrew/bin, so bare \`tmux\` fails on Apple Silicon brew installs. ${tmuxStatus(trimmed)}`,
-          );
+    if (projects.length === 0) {
+      containerEl.createEl("p", {
+        text: "No projects discovered yet. Scaffold one with /op:scaffold.",
+        cls: "op-project-order__empty",
+      });
+      return;
+    }
+
+    const list = containerEl.createEl("ul", { cls: "op-project-order__list" });
+    let dragSlug: string | null = null;
+
+    const persistFromDom = async (): Promise<void> => {
+      const next: string[] = [];
+      list.querySelectorAll<HTMLLIElement>(".op-project-order__item").forEach((li) => {
+        const slug = li.dataset.slug;
+        if (slug) next.push(slug);
+      });
+      // Preserve any slugs the user has ordered for projects that aren't
+      // currently discovered (e.g. STATUS.md temporarily missing) so a
+      // transient absence doesn't wipe their curated position.
+      const visible = new Set(next);
+      for (const slug of s.projectOrder) {
+        if (!visible.has(slug)) next.push(slug);
+      }
+      s.projectOrder = next;
+      await this.plugin.saveSettings();
+    };
+
+    const clearDropAffordance = (): void => {
+      list.querySelectorAll(".is-drop-before, .is-drop-after").forEach((el) => {
+        el.classList.remove("is-drop-before", "is-drop-after");
+      });
+    };
+
+    for (const p of projects) {
+      const li = list.createEl("li", { cls: "op-project-order__item" });
+      li.dataset.slug = p.slug;
+      li.draggable = true;
+      li.createEl("span", { cls: "op-project-order__handle", text: "⋮⋮" });
+      li.createEl("span", { cls: "op-project-order__slug", text: p.slug });
+      if (p.prefix) {
+        li.createEl("span", { cls: "op-project-order__prefix", text: p.prefix });
+      }
+
+      li.addEventListener("dragstart", (ev) => {
+        dragSlug = p.slug;
+        this.dragInFlight = true;
+        li.classList.add("is-dragging");
+        if (ev.dataTransfer) {
+          ev.dataTransfer.effectAllowed = "move";
+          ev.dataTransfer.setData("text/plain", p.slug);
         }
-      }),
-    );
-    tmuxSetting.addButton((b) =>
-      b.setButtonText("Test").onClick(() => {
-        const p = s.tmuxBinary;
-        if (!p) {
-          userError("op: no tmux binary configured", "Enter an absolute path, or click Auto-detect.");
+        // Safety net: browsers reliably fire `dragend` on Escape (HTML spec),
+        // but register a one-shot document capture listener so a browser quirk
+        // that skips `dragend` on the source element can never leave
+        // `dragInFlight` stuck at `true` and permanently lock the collapsible.
+        document.addEventListener("dragend", () => { this.dragInFlight = false; }, { capture: true, once: true });
+      });
+      li.addEventListener("dragend", () => {
+        dragSlug = null;
+        this.dragInFlight = false;
+        li.classList.remove("is-dragging");
+        clearDropAffordance();
+        // The document safety-net listener is `once:true` so it self-removes
+        // after the first dragend (which is this one in the normal path).
+      });
+      li.addEventListener("dragover", (ev) => {
+        if (!dragSlug || dragSlug === p.slug) return;
+        ev.preventDefault();
+        if (ev.dataTransfer) ev.dataTransfer.dropEffect = "move";
+        const rect = li.getBoundingClientRect();
+        const before = ev.clientY < rect.top + rect.height / 2;
+        clearDropAffordance();
+        li.classList.add(before ? "is-drop-before" : "is-drop-after");
+      });
+      li.addEventListener("dragleave", () => {
+        li.classList.remove("is-drop-before", "is-drop-after");
+      });
+      li.addEventListener("drop", async (ev) => {
+        ev.preventDefault();
+        if (!dragSlug || dragSlug === p.slug) {
+          clearDropAffordance();
           return;
         }
-        if (!existsSync(p)) {
-          userError(
-            `op: tmux binary not found at ${p}`,
-            "Check the path, install tmux (e.g. `brew install tmux`), or click Auto-detect.",
-          );
+        const src = list.querySelector<HTMLLIElement>(
+          `.op-project-order__item[data-slug="${CSS.escape(dragSlug)}"]`,
+        );
+        if (!src) {
+          clearDropAffordance();
           return;
         }
-        try {
-          const out = execFileSync(p, ["-V"], { encoding: "utf8", timeout: 3000 }).trim();
-          notify(`op: tmux OK — ${out}`, 6000);
-        } catch (err: any) {
-          userError(
-            `op: tmux at ${p} failed to run — ${err?.message ?? err}`,
-            "The file exists but doesn't execute. Verify permissions or re-install tmux.",
-          );
-        }
-      }),
-    );
-    tmuxSetting.addButton((b) =>
-      b.setButtonText("Auto-detect").onClick(async () => {
-        const found = detectTmux();
-        if (found.path) {
-          s.tmuxBinary = found.path;
-          await this.plugin.saveSettings();
-          notify(`op: tmux found at ${found.path}`);
-          this.display();
-        } else {
-          notify(`op: tmux not found in any of: ${found.tried.join(", ")}`);
-        }
-      }),
-    );
+        const rect = li.getBoundingClientRect();
+        const before = ev.clientY < rect.top + rect.height / 2;
+        if (before) list.insertBefore(src, li);
+        else list.insertBefore(src, li.nextSibling);
+        clearDropAffordance();
+        await persistFromDom();
+      });
+    }
 
     new Setting(containerEl)
-      .setName("iTerm window placement")
-      .setDesc("Where to open the agent when Terminal app is iTerm.")
-      .addDropdown((d) =>
-        d
-          .addOption("new-tab", "New tab in front window")
-          .addOption("new-window", "New window")
-          .setValue(s.iTermPlacement)
-          .onChange(async (v) => {
-            s.iTermPlacement = v as ITermPlacement;
-            await this.plugin.saveSettings();
-          }),
+      .setName("Reset to alphabetical")
+      .setDesc("Clears your custom order so projects sort alphabetically again.")
+      .addButton((b) =>
+        b.setButtonText("Reset").onClick(async () => {
+          s.projectOrder = [];
+          await this.plugin.saveSettings();
+          this.rerenderSection("workingDirs");
+        }),
       );
+  }
 
+  private renderOrchestrator(containerEl: HTMLElement): void {
+    const s = this.plugin.settings;
+
+    // OP-155 §4 Step 1 — non-activating iTerm launch toggle. Lives in the
+    // orchestrator/terminal-launching section because it governs how the
+    // terminal app comes up.
     new Setting(containerEl)
       .setName("Launch agent without stealing focus")
       .setDesc(
@@ -593,12 +844,6 @@ export class OpSettingsTab extends PluginSettingTab {
           await this.plugin.saveSettings();
         }),
       );
-
-    containerEl.createEl("h2", { text: "iTerm layout orchestrator" });
-    containerEl.createEl("p", {
-      text: "When enabled, op lays out agent panes in the current iTerm window per the chosen layout. Overflow spills to a new iTerm window backed by a fresh tmux session. macOS + iTerm only.",
-      cls: "setting-item-description",
-    });
 
     new Setting(containerEl)
       .setName("Enable orchestrator")
@@ -658,23 +903,109 @@ export class OpSettingsTab extends PluginSettingTab {
         }),
       );
 
-    containerEl.createEl("h2", { text: "Sidebar view" });
+    // Terminal-flavor controls (tmux binary, iTerm placement) sit alongside
+    // the orchestrator since they all govern terminal launching.
+    const tmuxStatus = (p: string) =>
+      existsSync(p) ? `✓ exists: ${p}` : `⚠ not found: ${p}`;
+    const tmuxSetting = new Setting(containerEl)
+      .setName("tmux binary")
+      .setDesc(
+        `Absolute path to the tmux executable. Obsidian's PATH omits /opt/homebrew/bin, so bare \`tmux\` fails on Apple Silicon brew installs. ${tmuxStatus(s.tmuxBinary)}`,
+      );
+    let tmuxStatusEl: HTMLElement;
+    tmuxSetting.addText((t) => {
+      // Inline ✓/✗ status pill rendered beneath the input — updated on input
+      // (debounced) + blur. The setDesc text still mirrors the saved state.
+      t.setValue(s.tmuxBinary);
+      const refresh = (raw: string) => {
+        const trimmed = raw.trim();
+        if (!trimmed) {
+          tmuxStatusEl.textContent = "⚠ empty";
+          tmuxStatusEl.className = "op-tmux-status is-warn";
+          return;
+        }
+        if (existsSync(trimmed)) {
+          tmuxStatusEl.textContent = `✓ exists`;
+          tmuxStatusEl.className = "op-tmux-status is-ok";
+        } else {
+          tmuxStatusEl.textContent = `✗ not found`;
+          tmuxStatusEl.className = "op-tmux-status is-error";
+        }
+      };
+      t.inputEl.addEventListener("input", () => {
+        this.debounce("tmuxPath", 150, () => refresh(t.getValue()));
+      });
+      t.inputEl.addEventListener("blur", async () => {
+        const trimmed = t.getValue().trim();
+        if (trimmed) {
+          s.tmuxBinary = trimmed;
+          await this.plugin.saveSettings();
+          tmuxSetting.setDesc(
+            `Absolute path to the tmux executable. Obsidian's PATH omits /opt/homebrew/bin, so bare \`tmux\` fails on Apple Silicon brew installs. ${tmuxStatus(trimmed)}`,
+          );
+        }
+        refresh(t.getValue());
+      });
+      // Defer status-element creation until after the input is mounted so
+      // it sits below the row's controls.
+      queueMicrotask(() => refresh(t.getValue()));
+    });
+    tmuxStatusEl = tmuxSetting.settingEl.createDiv({ cls: "op-tmux-status" });
+    tmuxSetting.addButton((b) =>
+      b.setButtonText("Test").onClick(() => {
+        const p = s.tmuxBinary;
+        if (!p) {
+          userError("op: no tmux binary configured", "Enter an absolute path, or click Auto-detect.");
+          return;
+        }
+        if (!existsSync(p)) {
+          userError(
+            `op: tmux binary not found at ${p}`,
+            "Check the path, install tmux (e.g. `brew install tmux`), or click Auto-detect.",
+          );
+          return;
+        }
+        try {
+          const out = execFileSync(p, ["-V"], { encoding: "utf8", timeout: 3000 }).trim();
+          notify(`op: tmux OK — ${out}`, 6000);
+        } catch (err: any) {
+          userError(
+            `op: tmux at ${p} failed to run — ${err?.message ?? err}`,
+            "The file exists but doesn't execute. Verify permissions or re-install tmux.",
+          );
+        }
+      }),
+    );
+    tmuxSetting.addButton((b) =>
+      b.setButtonText("Auto-detect").onClick(async () => {
+        const found = detectTmux();
+        if (found.path) {
+          s.tmuxBinary = found.path;
+          await this.plugin.saveSettings();
+          notify(`op: tmux found at ${found.path}`);
+          this.rerenderSection("orchestrator");
+        } else {
+          notify(`op: tmux not found in any of: ${found.tried.join(", ")}`);
+        }
+      }),
+    );
 
     new Setting(containerEl)
-      .setName("Default tab")
-      .setDesc("Tab shown when the op sidebar opens.")
+      .setName("iTerm window placement")
+      .setDesc("Where to open the agent when Terminal app is iTerm.")
       .addDropdown((d) =>
         d
-          .addOption("issues", "Issues")
-          .addOption("in-flight", "In flight")
-          .addOption("resolved", "Recently resolved")
-          .setValue(s.view.defaultTab)
+          .addOption("new-tab", "New tab in front window")
+          .addOption("new-window", "New window")
+          .setValue(s.iTermPlacement)
           .onChange(async (v) => {
-            s.view.defaultTab = v as SidebarTab;
+            s.iTermPlacement = v as ITermPlacement;
             await this.plugin.saveSettings();
           }),
       );
 
+    // Sidebar advanced controls — recently resolved limit, open on startup,
+    // density, hover preview — fit alongside other view-flavor controls.
     new Setting(containerEl)
       .setName("Recently resolved limit")
       .setDesc("Max issues shown in the Recently resolved tab.")
@@ -689,7 +1020,7 @@ export class OpSettingsTab extends PluginSettingTab {
       );
 
     new Setting(containerEl)
-      .setName("Open on startup")
+      .setName("Open sidebar on startup")
       .setDesc("Reveal the op sidebar automatically when Obsidian starts.")
       .addToggle((t) =>
         t.setValue(s.view.openOnStartup).onChange(async (v) => {
@@ -751,42 +1082,135 @@ export class OpSettingsTab extends PluginSettingTab {
           }
         }),
       );
+  }
 
-    containerEl.createEl("h2", { text: "GitHub integration" });
-    containerEl.createEl("p", {
-      text: "Requires the `gh` CLI installed and authenticated. `gh` is run in the project's repo (repo_path in STATUS.md or the working-dir setting above).",
-      cls: "setting-item-description",
-    });
+  private renderProfileOverlays(containerEl: HTMLElement): void {
+    const s = this.plugin.settings;
 
     new Setting(containerEl)
-      .setName("Auto-create GitHub issue on new op issue")
-      .setDesc("When creating an op issue, if no GitHub URL is provided, run `gh issue create` and link the returned URL.")
+      .setName("Always prompt for agent")
+      .setDesc("Show the picker modal every time, even when a default is set.")
       .addToggle((t) =>
-        t.setValue(s.github.autoCreateGithubIssue).onChange(async (v) => {
-          s.github.autoCreateGithubIssue = v;
+        t.setValue(s.alwaysPick).onChange(async (v) => {
+          s.alwaysPick = v;
           await this.plugin.saveSettings();
         }),
       );
 
     new Setting(containerEl)
-      .setName("Close linked GitHub issue on resolve")
-      .setDesc("When resolving an op issue with a github_issue: URL, run `gh issue close` on it.")
-      .addToggle((t) =>
-        t.setValue(s.github.closeGithubIssueOnResolve).onChange(async (v) => {
-          s.github.closeGithubIssueOnResolve = v;
-          await this.plugin.saveSettings();
+      .setName("Detection")
+      .setDesc(detectionSummary(this.plugin))
+      .addButton((b) =>
+        b.setButtonText("Re-probe").onClick(async () => {
+          this.plugin.detector.invalidate();
+          await this.plugin.detector.refresh();
+          notify("op: agent detection refreshed");
+          this.rerenderSection("profileOverlays");
         }),
       );
 
-    containerEl.createEl("h2", { text: "Agent worktree enforcement" });
     containerEl.createEl("p", {
-      text: "When enabled, installs a PreToolUse hook (Claude Code + Gemini CLI) that blocks Edit/Write/MultiEdit/NotebookEdit on the main checkout for op-launched agent sessions. The agent must either `git worktree add` or export OP_ALLOW_MAIN_EDIT=1 for the edit. Copilot CLI has no pre-tool gate — the guard is skipped there. Changes take effect on the next agent session.",
+      text:
+        "Overlays are a JSON patch merged on top of the built-in profile for each agent. Allowed keys: `binary` (string — absolute path or PATH lookup), `launchFlags` (string[] appended to the command line), `promptPreamble` (string prepended to every prompt), `skillTrigger` (string — first line of the prompt), `label` (string for the sidebar badge). Example: `{ \"binary\": \"/opt/homebrew/bin/claude\", \"launchFlags\": [\"--dangerously-skip-permissions\"] }`.",
       cls: "setting-item-description",
     });
 
+    for (const id of AGENT_IDS) {
+      const setting = new Setting(containerEl).setName(`${id} overlay`);
+      let banner: HTMLElement;
+      setting.addTextArea((t) => {
+        const existing = s.agentOverlays[id];
+        t.setValue(existing ? JSON.stringify(existing, null, 2) : "");
+        t.inputEl.rows = 5;
+        t.inputEl.style.width = "100%";
+
+        // Inline validation banner — re-evaluated on input (debounced) and
+        // on blur. Pre-OP-164, validateOverlay findings only surfaced as a
+        // userError() Notice on save; surfacing them inline turns the
+        // textarea into an immediate-feedback editor.
+        const validate = (raw: string): { kind: "ok" | "error" | "warn" | "empty"; msg: string } => {
+          const trimmed = raw.trim();
+          if (!trimmed) return { kind: "empty", msg: "" };
+          let parsed: unknown;
+          try {
+            parsed = JSON.parse(trimmed);
+          } catch (err: any) {
+            return { kind: "error", msg: `Invalid JSON: ${err?.message ?? err}` };
+          }
+          const result = validateOverlay(parsed);
+          if (!result.ok || !result.overlay) {
+            return { kind: "error", msg: result.errors.join("; ") };
+          }
+          if (result.warnings.length) {
+            return { kind: "warn", msg: `Saved with warnings: ${result.warnings.join("; ")}` };
+          }
+          return { kind: "ok", msg: "Valid overlay" };
+        };
+        const refresh = (raw: string): void => {
+          const r = validate(raw);
+          if (r.kind === "empty") {
+            banner.textContent = "";
+            banner.className = "op-overlay-validation";
+            return;
+          }
+          banner.textContent =
+            r.kind === "ok" ? `✓ ${r.msg}` : r.kind === "warn" ? `⚠ ${r.msg}` : `✗ ${r.msg}`;
+          banner.className = `op-overlay-validation is-${r.kind}`;
+        };
+        t.inputEl.addEventListener("input", () => {
+          this.debounce(`overlay:${id}`, 150, () => refresh(t.getValue()));
+        });
+        t.inputEl.addEventListener("blur", async () => {
+          const raw = t.getValue().trim();
+          refresh(raw);
+          if (!raw) {
+            delete s.agentOverlays[id];
+            await this.plugin.saveSettings();
+            return;
+          }
+          let parsed: unknown;
+          try {
+            parsed = JSON.parse(raw);
+          } catch (err: any) {
+            // userError fires the Notice for visibility; banner already shows
+            // the inline message.
+            userError(
+              `${id} overlay: invalid JSON — ${err?.message ?? err}`,
+              "Fix the JSON in the textarea and click away to retry; the overlay was not saved.",
+            );
+            return;
+          }
+          const result = validateOverlay(parsed);
+          if (!result.ok || !result.overlay) {
+            userError(
+              `${id} overlay: ${result.errors.join("; ")}`,
+              "Allowed keys: binary, launchFlags (string[]), promptPreamble, skillTrigger, label.",
+            );
+            return;
+          }
+          if (result.warnings.length) {
+            userError(
+              `${id} overlay saved with warnings: ${result.warnings.join("; ")}`,
+              "Unknown keys were dropped. Double-check the key names in the description above.",
+            );
+          }
+          s.agentOverlays[id] = result.overlay;
+          await this.plugin.saveSettings();
+        });
+        // Mount the banner after the input so it sits visually below.
+        queueMicrotask(() => refresh(t.getValue()));
+      });
+      banner = setting.settingEl.createDiv({ cls: "op-overlay-validation" });
+    }
+  }
+
+  private renderWorktreeEnforcement(containerEl: HTMLElement): void {
+    const s = this.plugin.settings;
     new Setting(containerEl)
       .setName("Enforce worktree for delegated agents")
-      .setDesc("Block edits on the main checkout for op-launched sessions. Opt-in until observed clean.")
+      .setDesc(
+        "Block edits on the main checkout for op-launched sessions. PreToolUse hook (Claude Code + Gemini); Copilot CLI is skipped (no pre-tool gate). Changes take effect on the next agent session. Override per-session with OP_ALLOW_MAIN_EDIT=1.",
+      )
       .addToggle((t) =>
         t.setValue(s.agents.enforceWorktree).onChange(async (v) => {
           s.agents.enforceWorktree = v;
@@ -794,16 +1218,15 @@ export class OpSettingsTab extends PluginSettingTab {
           await this.plugin.reinstallAgentHooks();
         }),
       );
+  }
 
-    containerEl.createEl("h2", { text: "Flow chaining" });
-    containerEl.createEl("p", {
-      text: "Drives automatic stage-to-stage progression: evaluate → planning|implementation, planning → implementation, implementation → review, review → finalization. The SessionEnd hook fires when an agent exits cleanly; if Auto-advance is on, op writes the next `flow:` value to the issue note and launches the next agent. Otherwise the new flow stays pinned and the user resumes manually via `op-launch-next-stage`.",
-      cls: "setting-item-description",
-    });
-
+  private renderFlowChaining(containerEl: HTMLElement): void {
+    const s = this.plugin.settings;
     new Setting(containerEl)
       .setName("Auto-advance flow on SessionEnd")
-      .setDesc("When an agent exits cleanly, automatically launch the next stage per the flow transition matrix. Off by default — the new `flow:` value is still set, but the user runs `op-launch-next-stage` to relaunch.")
+      .setDesc(
+        "When an agent exits cleanly, automatically launch the next stage per the flow transition matrix. Off by default — the new `flow:` value is still set, but the user runs `op-launch-next-stage` to relaunch.",
+      )
       .addToggle((t) =>
         t.setValue(s.flow.autoAdvance).onChange(async (v) => {
           s.flow.autoAdvance = v;
@@ -813,7 +1236,9 @@ export class OpSettingsTab extends PluginSettingTab {
 
     new Setting(containerEl)
       .setName("Allow finalize agent to merge PR")
-      .setDesc("Read by the finalize-mode preamble. When off, the agent stops before `gh pr merge` and asks for human confirmation. When on, the agent may merge directly. Off by default — destructive op gated behind explicit opt-in.")
+      .setDesc(
+        "Read by the finalize-mode preamble. When off, the agent stops before `gh pr merge` and asks for human confirmation. When on, the agent may merge directly. Off by default — destructive op gated behind explicit opt-in.",
+      )
       .addToggle((t) =>
         t.setValue(s.flow.autoMerge).onChange(async (v) => {
           s.flow.autoMerge = v;
@@ -833,32 +1258,47 @@ export class OpSettingsTab extends PluginSettingTab {
           }
         }),
       );
+  }
 
-    containerEl.createEl("h2", { text: "Hotkey preset" });
-    containerEl.createEl("p", {
-      text:
-        "One-click install of the op default keyboard shortcuts. Best-effort: any binding whose key is already taken by another command is skipped, and the results modal lists what landed and what didn't. Click Apply to mutate; nothing happens automatically.",
-      cls: "setting-item-description",
-    });
-
+  private renderGithub(containerEl: HTMLElement): void {
+    const s = this.plugin.settings;
     new Setting(containerEl)
-      .setName("Apply op default hotkey preset")
+      .setName("Auto-create GitHub issue on new op issue")
       .setDesc(
-        "Binds the 10 op commands to ⌘⇧* / ⌘⌥* shortcuts. Reversible from the results modal during this session.",
+        "When creating an op issue, if no GitHub URL is provided, run `gh issue create` and link the returned URL.",
       )
-      .addButton((b) =>
-        b
-          .setButtonText("Apply preset")
-          .setCta()
-          .onClick(() => {
-            const preset = defaultPreset();
-            const result = applyPreset(this.app, preset);
-            new HotkeyPresetResultsModal(this.app, preset, result).open();
-          }),
+      .addToggle((t) =>
+        t.setValue(s.github.autoCreateGithubIssue).onChange(async (v) => {
+          s.github.autoCreateGithubIssue = v;
+          await this.plugin.saveSettings();
+        }),
       );
 
-    containerEl.createEl("h2", { text: "Advanced" });
+    new Setting(containerEl)
+      .setName("Close linked GitHub issue on resolve")
+      .setDesc("When resolving an op issue with a github_issue: URL, run `gh issue close` on it.")
+      .addToggle((t) =>
+        t.setValue(s.github.closeGithubIssueOnResolve).onChange(async (v) => {
+          s.github.closeGithubIssueOnResolve = v;
+          await this.plugin.saveSettings();
+        }),
+      );
 
+    new Setting(containerEl)
+      .setName("Disable inline GitHub status")
+      .setDesc(
+        "Omit the PR and GitHub-issue segments from the note-level status strip (the lazy `gh` fetch never fires). The commit segment still renders. Useful for users without `gh` configured or in air-gapped environments.",
+      )
+      .addToggle((t) =>
+        t.setValue(s.view.disableInlineGithubStatus).onChange(async (v) => {
+          s.view.disableInlineGithubStatus = v;
+          await this.plugin.saveSettings();
+        }),
+      );
+  }
+
+  private renderDeveloper(containerEl: HTMLElement): void {
+    const s = this.plugin.settings;
     new Setting(containerEl)
       .setName("Show developer commands in palette")
       .setDesc(
@@ -868,11 +1308,65 @@ export class OpSettingsTab extends PluginSettingTab {
         t.setValue(s.developer.showDevCommands).onChange(async (v) => {
           s.developer.showDevCommands = v;
           await this.plugin.saveSettings();
-          notify("Reload the plugin to apply — Settings → Community plugins → op-obsidian → toggle off then on.", 8000);
+          notify(
+            "Reload the plugin to apply — Settings → Community plugins → op-obsidian → toggle off then on.",
+            8000,
+          );
         }),
       );
   }
+
+  private renderGlossary(containerEl: HTMLElement): void {
+    // Native <details> is fine here — no drag targets inside, just text.
+    const glossary = containerEl.createEl("details", { cls: "op-glossary" });
+    glossary.createEl("summary", { text: "Glossary — tmux, orchestrator, overlay, worktree" });
+    const gl = glossary.createEl("div", { cls: "setting-item-description" });
+    const addTerm = (term: string, body: string): void => {
+      const p = gl.createEl("p");
+      p.createEl("strong", { text: `${term} — ` });
+      p.appendText(body);
+    };
+    addTerm(
+      "tmux",
+      "Terminal multiplexer. op runs every agent inside a single shared tmux session (`op-agents`), with one window per issue id. Agents survive closing the terminal; reattach with `tmux attach -t op-agents`.",
+    );
+    addTerm(
+      "iTerm control mode (`tmux -CC`)",
+      "iTerm-specific integration where tmux drives native iTerm tabs/panes instead of rendering its own UI. op uses this when the terminal is set to iTerm.",
+    );
+    addTerm(
+      "Orchestrator",
+      "Optional layout engine that tiles agent panes into a grid inside the current iTerm window (macOS + iTerm only). Overflow spills to a new iTerm window. Off by default.",
+    );
+    addTerm(
+      "Profile overlay",
+      "Per-agent JSON patch merged on top of the built-in agent profile. Keys: `binary`, `launchFlags` (string[]), `promptPreamble`, `skillTrigger`, `label`. Unknown keys are flagged but saved.",
+    );
+    addTerm(
+      "Working directory",
+      "Absolute path to the code repo an agent is launched into. Resolved in order: the issue's project `repo_path:` frontmatter, then the slug → path map below, then an interactive modal prompt.",
+    );
+    addTerm(
+      "Worktree enforcement",
+      "An opt-in PreToolUse hook (Claude Code + Gemini only) that blocks Edit/Write on the main checkout for op-launched agents. Agents must `git worktree add` or export `OP_ALLOW_MAIN_EDIT=1` to override.",
+    );
+  }
+
+  // ─── Utilities ──────────────────────────────────────────────────────────
+
+  /** Trailing-edge debounce — overwrites the timer for `key`. */
+  private debounce(key: string, ms: number, fn: () => void): void {
+    const existing = this.debounceTimers.get(key);
+    if (existing !== undefined) window.clearTimeout(existing);
+    const handle = window.setTimeout(() => {
+      this.debounceTimers.delete(key);
+      fn();
+    }, ms);
+    this.debounceTimers.set(key, handle);
+  }
 }
+
+// ─── Helpers (module-scoped) ──────────────────────────────────────────────
 
 function describeWorkingDir(p: string): string {
   if (!p) return "(empty)";
@@ -896,6 +1390,117 @@ function formatHotkey(h: Hotkey): string {
   const keyGlyph = h.key === "Enter" ? "↵" : h.key;
   return mods.map((m) => glyphs[m] ?? m).join("") + keyGlyph;
 }
+
+function detectionSummary(plugin: OpPlugin): string {
+  const d = plugin.detector.get();
+  if (!d) return "Not probed yet. Click Re-probe to run detection.";
+  return AGENT_IDS.map((id) => `${id}: ${d[id].installed ? d[id].path ?? "found" : "not found"}`).join(" · ");
+}
+
+/**
+ * Render an inline "What is this?" expandable directly under a section
+ * header. JS-controlled (not native <details>) so the click target sits
+ * adjacent to the section title and there's no nesting-of-details
+ * accessibility hazard. Body is a single string — keep it short (1–2
+ * sentences); the long-form glossary at the bottom of the tab is the
+ * authoritative reference.
+ *
+ * Keyboard-accessible: head has `role="button"` / `tabindex="0"` and
+ * responds to Enter and Space, matching the ARIA Button pattern.
+ */
+function addHelpExpandable(parentEl: HTMLElement, title: string, body: string): void {
+  const wrap = parentEl.createDiv({ cls: "op-help-expandable" });
+  const head = wrap.createDiv({ cls: "op-help-expandable__head" });
+  head.setAttribute("role", "button");
+  head.setAttribute("tabindex", "0");
+  head.setAttribute("aria-expanded", "false");
+  head.createSpan({ text: "›", cls: "op-help-expandable__caret" });
+  head.createSpan({ text: title, cls: "op-help-expandable__title" });
+  // Body visibility is CSS-driven (.op-help-expandable.is-open > .op-help-expandable__body),
+  // consistent with OpCollapsible — no inline display manipulation needed.
+  wrap.createDiv({
+    cls: "op-help-expandable__body setting-item-description",
+    text: body,
+  });
+  const toggle = (): void => {
+    const open = wrap.classList.toggle("is-open");
+    head.setAttribute("aria-expanded", String(open));
+  };
+  head.addEventListener("click", toggle);
+  head.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" || e.key === " ") {
+      e.preventDefault();
+      toggle();
+    }
+  });
+}
+
+// ─── OpCollapsible ────────────────────────────────────────────────────────
+
+interface OpCollapsibleOpts {
+  startOpen?: boolean;
+  /** Predicate consulted before collapsing. Drag-in-progress returns false
+   * so collapsing during a drop doesn't zero out child rects. */
+  canCollapse?: () => boolean;
+}
+
+/**
+ * JS-controlled collapsible wrapper. NOT a native <details> — inside a
+ * closed <details>, getBoundingClientRect() on rendered children returns
+ * all-zeros, which breaks the project-order drag-reorder logic. This
+ * primitive uses only a CSS class (`is-open`) to control visibility so
+ * child rects remain valid the moment the body is visible, and refuses to
+ * collapse mid-drag via `canCollapse`.
+ *
+ * Keyboard-accessible: header has `role="button"` / `tabindex="0"` and
+ * responds to Enter and Space, matching the ARIA Button pattern.
+ */
+export class OpCollapsible {
+  readonly root: HTMLElement;
+  readonly header: HTMLElement;
+  readonly body: HTMLElement;
+  private opts: OpCollapsibleOpts;
+
+  constructor(parentEl: HTMLElement, title: string, opts: OpCollapsibleOpts = {}) {
+    this.opts = opts;
+    this.root = parentEl.createDiv({ cls: "op-collapsible" });
+    this.header = this.root.createDiv({ cls: "op-collapsible__header" });
+    this.header.setAttribute("role", "button");
+    this.header.setAttribute("tabindex", "0");
+    this.header.createSpan({ cls: "op-collapsible__caret", text: "›" });
+    this.header.createSpan({ cls: "op-collapsible__title", text: title });
+    this.body = this.root.createDiv({ cls: "op-collapsible__body" });
+    this.setOpen(opts.startOpen === true);
+
+    const toggle = (): void => {
+      if (this.isOpen()) {
+        if (opts.canCollapse && !opts.canCollapse()) return;
+        this.setOpen(false);
+      } else {
+        this.setOpen(true);
+      }
+    };
+    this.header.addEventListener("click", toggle);
+    this.header.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" || e.key === " ") {
+        e.preventDefault();
+        toggle();
+      }
+    });
+  }
+
+  isOpen(): boolean {
+    return this.root.classList.contains("is-open");
+  }
+
+  setOpen(open: boolean): void {
+    this.root.classList.toggle("is-open", open);
+    // aria-expanded lives on the header (the interactive element).
+    this.header.setAttribute("aria-expanded", String(open));
+  }
+}
+
+// ─── Hotkey preset results modal (preserved verbatim) ─────────────────────
 
 /**
  * Results modal for the "Apply op default hotkey preset" button. Lists what
@@ -1031,10 +1636,4 @@ export class HotkeyPresetResultsModal extends Modal {
   onClose(): void {
     this.contentEl.empty();
   }
-}
-
-function detectionSummary(plugin: OpPlugin): string {
-  const d = plugin.detector.get();
-  if (!d) return "Not probed yet. Click Re-probe to run detection.";
-  return AGENT_IDS.map((id) => `${id}: ${d[id].installed ? d[id].path ?? "found" : "not found"}`).join(" · ");
 }

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { DEFAULT_SETTINGS, mergeSettings } from "./settingsPure";
+import { DEFAULT_SETTINGS, mergeSettings, matchSettingRow } from "./settingsPure";
 import { emptyRegistry, mergeRegistry, type RegistryData } from "./layout/registry";
 
 describe("mergeSettings", () => {
@@ -255,5 +255,48 @@ describe("mergeSettings", () => {
     expect(mergeSettings({ defaultAgent: "claude" }).firstRunCompleted).toBe(true);
     expect(mergeSettings({ workingDirs: { "my-project": "/code/my-project" } }).firstRunCompleted).toBe(true);
     expect(mergeSettings({ view: { defaultTab: "issues" } }).firstRunCompleted).toBe(true);
+  });
+});
+
+describe("matchSettingRow", () => {
+  // Substring matcher stub — returns the matched range (truthy) when query is
+  // contained in the text, else null. Mirrors prepareFuzzySearch's "match
+  // object or null" contract well enough for the predicate's null-check.
+  const stubMatcher = (query: string) => (text: string) => {
+    const i = text.toLowerCase().indexOf(query.toLowerCase());
+    return i === -1 ? null : { score: -i, matches: [[i, i + query.length]] };
+  };
+
+  it("returns true for empty/whitespace queries (no filtering)", () => {
+    expect(matchSettingRow("Default agent", "Agent launched by op", "", stubMatcher)).toBe(true);
+    expect(matchSettingRow("Default agent", "desc", "   ", stubMatcher)).toBe(true);
+    expect(matchSettingRow("", "", "", stubMatcher)).toBe(true);
+  });
+
+  it("matches against name + desc concatenated", () => {
+    // Token only in name
+    expect(matchSettingRow("Sidebar density", "Compact tightens padding", "density", stubMatcher)).toBe(true);
+    // Token only in desc
+    expect(matchSettingRow("Sidebar density", "Compact tightens padding", "padding", stubMatcher)).toBe(true);
+    // Token in neither
+    expect(matchSettingRow("Sidebar density", "Compact tightens padding", "tmux", stubMatcher)).toBe(false);
+  });
+
+  it("returns false when query is non-empty but haystack is empty", () => {
+    expect(matchSettingRow("", "", "anything", stubMatcher)).toBe(false);
+  });
+
+  it("treats null and undefined match results as non-matches", () => {
+    const nullMatcher = () => () => null;
+    const undefMatcher = () => () => undefined;
+    expect(matchSettingRow("name", "desc", "x", nullMatcher)).toBe(false);
+    expect(matchSettingRow("name", "desc", "x", undefMatcher)).toBe(false);
+  });
+
+  it("treats any non-null/undefined match result as a match", () => {
+    const truthyMatcher = () => () => ({ score: 0 });
+    const zeroScoreMatcher = () => () => ({ score: 0, matches: [] });
+    expect(matchSettingRow("name", "desc", "x", truthyMatcher)).toBe(true);
+    expect(matchSettingRow("name", "desc", "x", zeroScoreMatcher)).toBe(true);
   });
 });
