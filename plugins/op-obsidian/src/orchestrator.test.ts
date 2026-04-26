@@ -137,6 +137,25 @@ describe("buildViewScript", () => {
     expect(out).not.toContain("set-titles-string");
   });
 
+  it("strips control characters (ESC, BEL) from issueTitle in OSC 2 payload", () => {
+    const out = buildViewScript({
+      ...baseArgs,
+      issueTitle: "evil\x1b]0;injected\x07title",
+    });
+    // ESC (\x1b) and BEL (\x07) must not appear in the OSC 2 payload
+    expect(out).not.toMatch(/printf '\\033\]2;[^']*[\x00-\x1f\x7f]/);
+    // The safe content (with control chars stripped) should be present
+    expect(out).toContain(`printf '\\033]2;%s\\007' 'evil]0;injectedtitle'`);
+  });
+
+  it("strips control characters (ESC, BEL) from issueId in OSC 1 payload", () => {
+    const out = buildViewScript({
+      ...baseArgs,
+      issueId: "OP\x1b-172",
+    });
+    expect(out).toContain(`printf '\\033]1;%s\\007' 'OP-172'`);
+  });
+
   it("creates the per-pane grouped session and attaches with select-window", () => {
     const out = buildViewScript(baseArgs);
     expect(out).toContain(

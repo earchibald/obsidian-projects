@@ -314,9 +314,9 @@ export function buildViewScript({
   const sess = shSingleQuote(tmuxSession);
   const groupSess = shSingleQuote(`view-${issueId}`);
   const win = shSingleQuote(tmuxWindow);
-  const tabName = shSingleQuote(issueId);
+  const tabName = shSingleQuote(oscSafe(issueId));
   const windowTitle = shSingleQuote(
-    issueTitle && issueTitle.length > 0 ? issueTitle : issueId,
+    oscSafe(issueTitle && issueTitle.length > 0 ? issueTitle : issueId),
   );
   const lines = [
     "#!/bin/bash",
@@ -426,6 +426,13 @@ function pruneWindow(reg: RegistryData, windowId: string): void {
 
 function shSingleQuote(s: string): string {
   return `'${s.replace(/'/g, `'\\''`)}'`;
+}
+
+// Strip ASCII C0/C1 control characters so that injected ESC (\x1b) or BEL
+// (\x07) in untrusted strings (frontmatter id/title) cannot prematurely
+// terminate or inject into an OSC sequence payload.
+function oscSafe(s: string): string {
+  return s.replace(/[\x00-\x1f\x7f]/g, "");
 }
 
 // iTerm's `create window with default profile command "..."` takes a bash
