@@ -245,6 +245,14 @@ export default class OpPlugin extends Plugin {
   liveTmuxWindowsCache: Set<string> | null = null;
   private chipLivenessTimer: number | undefined;
 
+  /** OP-232: re-entrancy guard for `runOpenDashboardCommand`. The SPA may
+   *  dispatch `obsidian://op-dashboard-refresh-token` multiple times during
+   *  a WebSocket reconnect; the user may also fire the palette command
+   *  twice in quick succession. Without this guard each invocation would
+   *  open its own Setup modal or browser tab. Idempotency is required by
+   *  OP-217 spec pressure-test #6 and is not bypass-eligible. */
+  private dashboardCommandInFlight = false;
+
   /** Persist the current {@link settings} object to `data.json`. */
   async saveSettings(): Promise<void> {
     await this.saveData(this.settings);
@@ -4807,6 +4815,22 @@ export default class OpPlugin extends Plugin {
    *     one — self-healing).
    */
   private async runOpenDashboardCommand(): Promise<void> {
+    // OP-232: re-entrancy guard. The SPA dispatches refresh-token URI on
+    // every WS reconnect attempt — without this guard each call would race
+    // its own gate probe and stack a Setup modal (or open a duplicate
+    // browser tab) on top of the previous one. The flag flips back in the
+    // `finally` so a second invocation after the first completes still
+    // works. See `dashboardCommandInFlight` field comment for spec rationale.
+    if (this.dashboardCommandInFlight) return;
+    this.dashboardCommandInFlight = true;
+    try {
+      await this.runOpenDashboardCommandInner();
+    } finally {
+      this.dashboardCommandInFlight = false;
+    }
+  }
+
+  private async runOpenDashboardCommandInner(): Promise<void> {
     const port = this.settings.dashboard.port;
     const target = this.settings.dashboard.target;
 
