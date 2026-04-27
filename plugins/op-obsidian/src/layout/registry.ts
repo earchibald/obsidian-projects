@@ -122,7 +122,7 @@ function isAgentMetadata(v: unknown): v is AgentMetadata {
   const a = v as AgentMetadata;
   if (typeof a.startTime !== "number" || !Number.isFinite(a.startTime)) return false;
   if (a.model !== undefined && typeof a.model !== "string") return false;
-  if (a.contextWindowSize !== undefined && typeof a.contextWindowSize !== "number") return false;
+  if (a.contextWindowSize !== undefined && (typeof a.contextWindowSize !== "number" || !Number.isFinite(a.contextWindowSize))) return false;
   if (a.workdir !== undefined && typeof a.workdir !== "string") return false;
   return true;
 }

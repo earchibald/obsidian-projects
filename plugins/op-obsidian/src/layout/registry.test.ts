@@ -203,4 +203,32 @@ describe("registry — AgentMetadata (OP-234)", () => {
     const out = mergeRegistry(malformed);
     expect(out.surfaces["OP-8"].agent).toBeUndefined();
   });
+
+  it("drops the agent block when contextWindowSize is NaN or Infinity", () => {
+    const malformed = {
+      surfaces: {
+        "OP-9": {
+          sessionId: "s9",
+          windowId: "w1",
+          cellIndex: 0,
+          layoutId: "2x2",
+          tmuxWindow: "OP-9",
+          agent: { startTime: 1, contextWindowSize: NaN },
+        },
+        "OP-10": {
+          sessionId: "s10",
+          windowId: "w1",
+          cellIndex: 1,
+          layoutId: "2x2",
+          tmuxWindow: "OP-10",
+          agent: { startTime: 2, contextWindowSize: Infinity },
+        },
+      },
+      windows: {},
+      windowOrder: [],
+    };
+    const out = mergeRegistry(malformed);
+    expect(out.surfaces["OP-9"].agent).toBeUndefined();
+    expect(out.surfaces["OP-10"].agent).toBeUndefined();
+  });
 });
