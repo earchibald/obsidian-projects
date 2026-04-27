@@ -49,6 +49,7 @@ import {
   type SidebarTab,
   type SidebarDensity,
   type OpSettings,
+  type WorkflowMode,
   DEFAULT_SETTINGS,
   mergeSettings,
   matchSettingRow,
@@ -526,6 +527,13 @@ export class OpSettingsTab extends PluginSettingTab {
   // ─── Workflows section renderer (OP-201) ────────────────────────────────
 
   private renderWorkflows(containerEl: HTMLElement): void {
+    // OP-219: workflowMode dropdown — the master toggle gating whether the
+    // module engine drives injection at all. Rendered first so it's visible
+    // before any module-specific UI; on change re-renders the whole section
+    // so the "Workflow modules disabled" callouts in the launch preview /
+    // module list reflect the new mode immediately.
+    this.renderWorkflowModeRow(containerEl);
+
     const result = loadModules(this.app);
     const { modules, diagnostics } = result;
 
@@ -558,6 +566,29 @@ export class OpSettingsTab extends PluginSettingTab {
       "Tokens you can reference in a module body via {{name}}. These are computed per-launch from the issue, the agent profile, and the launch context — they sit at Launch override (the highest precedence). User-declared {{vars.<name>}} are a separate namespace declared in a module's `vars:` block.",
     );
     this.renderAvailableVariables(varsCollapsible.body);
+  }
+
+  private renderWorkflowModeRow(parentEl: HTMLElement): void {
+    const s = this.plugin.settings;
+    const row = new Setting(parentEl)
+      .setName("Workflow mode")
+      .setDesc(
+        "Master toggle for prompt composition. Modules: the launcher composes the prompt from workflow-module files in this vault (post-OP-208 default). Legacy: the launcher inlines the project's WORKFLOW.md as-is and ignores any modules. Existing installs that explicitly set this stay on whatever they had — the OP-208 cutover only flipped the default for installs that never wrote a value.",
+      )
+      .addDropdown((dd) => {
+        dd.addOption("modules", "Modules (default)");
+        dd.addOption("legacy", "Legacy (inline WORKFLOW.md)");
+        dd.setValue(s.workflowMode);
+        dd.onChange(async (value) => {
+          s.workflowMode = value as WorkflowMode;
+          await this.plugin.saveSettings();
+          // Re-render the whole section so the empty-state copy, module
+          // list, and preview disclosures pick up the new mode without a
+          // settings-tab close/reopen.
+          this.rerenderSection("workflows");
+        });
+      });
+    row.settingEl.dataset.opRow = "workflowMode";
   }
 
   private renderWorkflowsEmptyState(parentEl: HTMLElement): void {

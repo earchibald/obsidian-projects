@@ -16,35 +16,33 @@ re-explanation.
   walkthrough below, we'll use a placeholder slug `myproject`).
 - An issue in that project — any open issue will do.
 
-## 1. Switch to modules mode (30 seconds)
+## 1. Confirm modules mode (10 seconds)
 
-`workflowMode` is a per-vault setting. There's no UI toggle yet (one is
-tracked under the OP-186 settings work) — until then, flip it by hand
-in the plugin's `data.json`:
+`workflowMode` is a per-vault setting controlled from **Settings → Obsidian
+Projects (op) → Workflows → Workflow mode**. Two values:
 
-1. Quit Obsidian (or fully disable the op-obsidian plugin) before
-   editing — the running plugin holds a copy of the settings in memory
-   and will overwrite manual edits on the next save.
-2. Open `<your-vault>/.obsidian/plugins/op-obsidian/data.json` in any
-   text editor.
-3. Find the top-level `"workflowMode"` key (it defaults to `"legacy"`).
-   Change its value to `"modules"`. Save.
-4. Re-open the vault (or re-enable the plugin).
+- **Modules (default)** — the launcher composes the prompt from
+  workflow-module files in this vault. This is the post-OP-208 default
+  for fresh installs.
+- **Legacy (inline WORKFLOW.md)** — the launcher inlines the project's
+  `WORKFLOW.md` as opaque prose and ignores any modules you create.
 
-If `workflowMode` is missing entirely, your install pre-dates OP-198 —
-add `"workflowMode": "modules"` as a new top-level entry in the JSON
-object.
+Open the dropdown and confirm it reads **Modules (default)**. If your
+install is older than the OP-208 cutover and the prior value was
+`"legacy"`, the migration preserved it — pick **Modules (default)** now
+to follow this walkthrough. The change is saved immediately; no restart.
 
-Verify with the developer console (Cmd-Option-I in Obsidian, Console
-tab):
+If you'd rather verify from the developer console (Cmd-Option-I in
+Obsidian, Console tab):
 
 ```js
 app.plugins.plugins["op-obsidian"].settings.workflowMode
 // → "modules"
 ```
 
-Until this flip, the launch modal uses the legacy injection blob and
-ignores any module files you create.
+Under Legacy mode the launch modal uses the WORKFLOW.md injection blob
+and ignores any module files you create — you'll see a "Workflow modules
+disabled" callout in the launch preview if you forget to flip it.
 
 ## 2. Author a global workflow file (90 seconds)
 
