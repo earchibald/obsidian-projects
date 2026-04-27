@@ -14,12 +14,17 @@ on launch and on every restart.
 
 - macOS (the daemon exits cleanly on other platforms)
 - Python 3.11+ (uses `dataclasses` defaults, structural typing, modern asyncio)
-- `aiohttp` — hard dep, needed for HTTP + WebSocket
-- `iterm2` — optional; the daemon falls back to tmux-only mode without it
+- `aiohttp >= 3.9, < 4` — hard dep, needed for HTTP + WebSocket
+- `iterm2 >= 2.1` — optional; the daemon falls back to tmux-only mode without it
 
 ```bash
-pip3 install aiohttp iterm2
+pip3 install 'aiohttp>=3.9,<4' 'iterm2>=2.1'
 ```
+
+Both versions are pinned because the daemon ships into the user's
+`AutoLaunch` directory — a major-version bump in either dep can silently
+break every dashboard install. OP-232's Setup modal will surface the
+version constraint when its `import` probe finds a mismatch.
 
 The Setup modal will surface `pip3 install` instructions when these are
 missing.

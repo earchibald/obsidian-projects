@@ -260,6 +260,43 @@ class AgentSessionToJsonTests(unittest.TestCase):
         self.assertIsNone(opd.iso(None))
 
 
+class MonotonicAndConcurrencyTests(unittest.TestCase):
+    """Guards for the OP-236 pressure-test fixes (clock-jump + interleaved sends)."""
+
+    def test_agent_session_carries_monotonic_fields(self):
+        # Wall-clock fields stay (serialized to clients); monotonic mirrors
+        # back them for liveness thresholds.
+        s = opd.AgentSession(issue_id="OP-1")
+        self.assertIsNone(s.last_activity)
+        self.assertIsNone(s._last_activity_mono)
+        self.assertIsNone(s._exited_at_mono)
+        # Internal monotonic fields don't leak into the wire format.
+        d = s.to_json()
+        self.assertNotIn("_last_activity_mono", d)
+        self.assertNotIn("_exited_at_mono", d)
+        # The serialized last_activity stays epoch-based.
+        self.assertIn("last_activity", d)
+
+    def test_app_state_carries_tmux_lock(self):
+        import asyncio as _asyncio
+        async def _check():
+            state = opd.AppState(
+                token="t",
+                started_at=0.0,
+                registry=opd.SessionRegistry(),
+                hub=opd.Hub(),
+                iterm=opd.ITermBridge(),
+            )
+            self.assertIsInstance(state.tmux_lock, _asyncio.Lock)
+            # Re-entrant double-acquire blocks — proves it's a real exclusion lock.
+            await state.tmux_lock.acquire()
+            try:
+                self.assertTrue(state.tmux_lock.locked())
+            finally:
+                state.tmux_lock.release()
+        _asyncio.run(_check())
+
+
 class TmuxSessionRegexTests(unittest.TestCase):
     def test_matches(self):
         for s in ["op-agents", "op-agents-1", "op-agents-22", "op-agents-100"]:

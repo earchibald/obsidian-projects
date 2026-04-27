@@ -124,14 +124,18 @@ class AgentSession:
     model: Optional[str] = None
     context_pct: Optional[int] = None
     state: str = "idle"
-    last_activity: Optional[float] = None  # epoch s
+    last_activity: Optional[float] = None  # epoch s — for client serialization
     last_capture: str = ""
-    started_at: Optional[float] = None     # epoch s
+    started_at: Optional[float] = None     # epoch s — for client serialization
     workdir: Optional[str] = None
     stale: bool = False
     # Internal — not serialized:
     _last_capture_hash: int = 0
-    _exited_at: Optional[float] = None
+    # Monotonic timestamps — used for liveness thresholds. Survives wall-clock
+    # jumps (NTP, manual clock changes) that would otherwise produce negative
+    # ages and pin classify_state() at "running" forever.
+    _last_activity_mono: Optional[float] = None
+    _exited_at_mono: Optional[float] = None
 
     def to_json(self) -> dict:
         return {
@@ -537,6 +541,14 @@ class AppState:
     iterm: ITermBridge
     poll_task: Optional[asyncio.Task] = None
     shutdown_event: asyncio.Event = field(default_factory=asyncio.Event)
+    # Serializes mutating tmux operations (send-keys / kill-window) across
+    # all clients. Two browser tabs sending to the same window simultaneously
+    # would otherwise interleave at command granularity (e.g. tmux receives
+    # "foo", "bar", Enter, Enter instead of "foo\n" then "bar\n"). Capture
+    # operations are read-only and stay unlocked. Lock granularity is
+    # global because tmux's own command processing serializes anyway and
+    # the daemon is dev-tooling — N=1..10 agents, throughput is fine.
+    tmux_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
 
 
 # ---- Static index ----------------------------------------------------------
@@ -681,22 +693,25 @@ async def dispatch(state: AppState, ws, raw: str) -> None:
 async def handle_send(state: AppState, sess: AgentSession, text: str) -> None:
     if not text or not sess.tmux_target:
         return
-    await send_text(sess.tmux_target, text)
-    # Two-Enter quirk (per project memory): capture 100 ms later; if the
-    # input box still echoes the line and there's no spinner, send a single
-    # additional Enter. Single-shot, no loop.
-    await asyncio.sleep(0.1)
-    after = await capture_pane(sess.tmux_target, lines=10)
-    has_spinner = any(c in after for c in SPINNER_CHARS)
-    if (not has_spinner) and text in after:
-        await send_enter(sess.tmux_target)
+    # Hold the tmux lock across the entire send + capture + optional-second-Enter
+    # sequence so two clients sending simultaneously don't interleave keys at
+    # command granularity. capture-pane between the writes IS the consistency
+    # check the two-Enter quirk relies on — splitting the lock would defeat it.
+    async with state.tmux_lock:
+        await send_text(sess.tmux_target, text)
+        await asyncio.sleep(0.1)
+        after = await capture_pane(sess.tmux_target, lines=10)
+        has_spinner = any(c in after for c in SPINNER_CHARS)
+        if (not has_spinner) and text in after:
+            await send_enter(sess.tmux_target)
     await refresh_one(state, sess)
 
 
 async def handle_quit(state: AppState, sess: AgentSession) -> None:
     if not sess.tmux_target:
         return
-    await send_quit(sess.tmux_target)
+    async with state.tmux_lock:
+        await send_quit(sess.tmux_target)
     await refresh_one(state, sess)
 
 
@@ -736,6 +751,7 @@ async def reconcile(state: AppState) -> Tuple[List[AgentSession], List[AgentSess
     added: List[AgentSession] = []
     updated: List[AgentSession] = []
     now = time.time()
+    now_mono = time.monotonic()
 
     issue_to_target: Dict[str, str] = {}
     for session_name, window_name in tmux_rows:
@@ -785,14 +801,15 @@ async def reconcile(state: AppState) -> Tuple[List[AgentSession], List[AgentSess
                 state="exited",
             )
             sess.started_at = now
-            sess._exited_at = now
+            sess._exited_at_mono = now_mono
             state.registry.upsert(sess)
             added.append(sess)
         else:
             sess.iterm_session_id = uuid
             sess.stale = True
             sess.state = "exited"
-            sess._exited_at = sess._exited_at or now
+            if sess._exited_at_mono is None:
+                sess._exited_at_mono = now_mono
             updated.append(sess)
 
     # Remove tmux+iterm-orphaned sessions after grace window.
@@ -801,12 +818,12 @@ async def reconcile(state: AppState) -> Tuple[List[AgentSession], List[AgentSess
         gone_from_tmux = issue_id not in issue_to_target
         gone_from_iterm = issue_id not in iterm_map
         if gone_from_tmux and gone_from_iterm:
-            if sess._exited_at is None:
-                sess._exited_at = now
+            if sess._exited_at_mono is None:
+                sess._exited_at_mono = now_mono
                 sess.state = "exited"
                 if sess not in updated:
                     updated.append(sess)
-            elif now - sess._exited_at > EXITED_GRACE_S:
+            elif now_mono - sess._exited_at_mono > EXITED_GRACE_S:
                 state.registry.remove(issue_id)
                 removed.append(issue_id)
 
@@ -820,11 +837,16 @@ async def refresh_one(state: AppState, sess: AgentSession) -> None:
     capture = await capture_pane(sess.tmux_target)
     capture_hash = hash(capture)
     now = time.time()
+    now_mono = time.monotonic()
     if capture_hash != sess._last_capture_hash and capture:
-        sess.last_activity = now
+        sess.last_activity = now            # for client serialization
+        sess._last_activity_mono = now_mono  # for liveness threshold
         sess._last_capture_hash = capture_hash
     sess.last_capture = "\n".join(capture.splitlines()[-CAPTURE_DISPLAY_LINES:])
-    last_age = (now - sess.last_activity) if sess.last_activity else 9999.0
+    # Compute idle/running threshold against monotonic so a wall-clock jump
+    # (NTP, manual clock change) can't pin a session at "running" forever
+    # via a negative delta.
+    last_age = (now_mono - sess._last_activity_mono) if sess._last_activity_mono else 9999.0
     classifier = AGENT_CLASSIFIERS.get(sess.agent_id, CLAUDE_CLASSIFIER)
     sess.state = classify_state(capture, last_age, classifier)
     sess.context_pct = extract_context_pct(capture, classifier)
