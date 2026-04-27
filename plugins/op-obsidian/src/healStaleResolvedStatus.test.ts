@@ -111,6 +111,59 @@ describe("healStaleResolvedStatus", () => {
     expect(liveFile.fm.status).toBe("in-progress");
   });
 
+  it("strips zombie agent / agent_session / launch_vars while healing status", async () => {
+    const drift = entry({
+      id: "OP-197",
+      path: "Projects/p/RESOLVED ISSUES/OP-197.md",
+      status: "in-progress" as IssueStatus,
+      resolvedFolder: true,
+    });
+    const file: FakeFile = {
+      path: drift.path,
+      fm: {
+        id: "OP-197",
+        status: "in-progress",
+        resolved: "2026-04-26",
+        agent: "claude",
+        agent_session: "tmux:abc",
+        launch_vars: { x: 1 },
+        // Anything else (custom user fields) must survive untouched.
+        custom_field: "keep me",
+      },
+    };
+    const app = makeApp([file]);
+    const store = makeStore([drift]);
+
+    await healStaleResolvedStatus(app, store);
+
+    expect(file.fm.status).toBe("resolved");
+    expect(file.fm.resolved).toBe("2026-04-26");
+    expect(file.fm.agent).toBeUndefined();
+    expect(file.fm.agent_session).toBeUndefined();
+    expect(file.fm.launch_vars).toBeUndefined();
+    expect(file.fm.custom_field).toBe("keep me");
+  });
+
+  it("does NOT invent a `resolved:` date when missing — leaves it absent", async () => {
+    const drift = entry({
+      id: "OP-198",
+      path: "Projects/p/RESOLVED ISSUES/OP-198.md",
+      status: "in-progress" as IssueStatus,
+      resolvedFolder: true,
+    });
+    const file: FakeFile = {
+      path: drift.path,
+      fm: { id: "OP-198", status: "in-progress" },
+    };
+    const app = makeApp([file]);
+    const store = makeStore([drift]);
+
+    await healStaleResolvedStatus(app, store);
+
+    expect(file.fm.status).toBe("resolved");
+    expect("resolved" in file.fm).toBe(false);
+  });
+
   it("treats resolvedFolder + wontfix as terminal — no rewrite", async () => {
     const wf = entry({
       id: "OP-300",

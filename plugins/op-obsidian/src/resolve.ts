@@ -143,17 +143,32 @@ export async function runResolve(
   // the source path for belt-and-suspenders.
   await app.fileManager.renameFile(file, targetPath);
 
-  await app.fileManager.processFrontMatter(file, (fm) => {
-    fm.status = targetStatus;
-    fm.resolved = today;
-    if (!agentKept) {
-      delete fm.agent;
-      delete fm.agent_session;
-    }
-    // OP-204 (3d): clear `launch_vars:` so a re-opened resolved issue does
-    // not inherit stale Launch overrides from its previous lifecycle.
-    delete fm.launch_vars;
-  });
+  // OP-221 follow-up (gemini review #2): if processFrontMatter throws
+  // (malformed YAML, sync-engine lock), we MUST still trash linked tasks
+  // and run the gh-close hook. Swallowing here is intentional — the heal
+  // pass on next plugin load (`healStaleResolvedStatus`) will catch any
+  // file that ended up moved with stale status.
+  let frontmatterWriteFailed: string | undefined;
+  try {
+    await app.fileManager.processFrontMatter(file, (fm) => {
+      fm.status = targetStatus;
+      fm.resolved = today;
+      if (!agentKept) {
+        delete fm.agent;
+        delete fm.agent_session;
+      }
+      // OP-204 (3d): clear `launch_vars:` so a re-opened resolved issue does
+      // not inherit stale Launch overrides from its previous lifecycle.
+      delete fm.launch_vars;
+    });
+  } catch (err: any) {
+    frontmatterWriteFailed = err?.message ?? String(err);
+    console.error(
+      "[op-obsidian] resolve: processFrontMatter failed after rename — heal pass will reconcile on next load",
+      targetPath,
+      frontmatterWriteFailed,
+    );
+  }
 
   const trashed: string[] = [];
   for (const t of tasks) {

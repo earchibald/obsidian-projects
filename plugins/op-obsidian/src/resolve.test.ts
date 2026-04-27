@@ -217,3 +217,65 @@ describe("runResolve — agent-badge persistence (OP-156 §5)", () => {
     expect(recorded.renamedTo).toBe("Projects/demo/RESOLVED ISSUES/OP-1 t.md");
   });
 });
+
+// OP-221 (gemini review #2): if processFrontMatter throws AFTER the rename
+// has already moved the file, the function must still trash linked tasks
+// and return — leaving the moved file in a stale-status state that the
+// startup heal pass will reconcile on the next plugin load.
+describe("runResolve — graceful failure when frontmatter write throws", () => {
+  it("still trashes linked tasks when processFrontMatter throws after rename", async () => {
+    const e = issue();
+    const file = new FakeTFile(e.path);
+    const taskTrashed: string[] = [];
+
+    const taskFile = new FakeTFile("Projects/demo/TASKS/OP-1.1 work.md");
+    const store: any = {
+      byPath: (p: string) => (p === e.path ? e : undefined),
+      tasks: () => [
+        {
+          path: taskFile.path,
+          type: "task",
+          id: "OP-1.1",
+          project: "demo",
+          status: "in-progress",
+          issueLink: "OP-1",
+          title: "OP-1.1 work",
+        },
+      ],
+      issues: () => [e],
+    };
+
+    const consoleErr = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    const app: any = {
+      vault: {
+        getAbstractFileByPath: (p: string) =>
+          p === e.path ? file : p === taskFile.path ? taskFile : null,
+        adapter: { exists: async () => true },
+        createFolder: async () => {},
+        trash: async (f: any) => {
+          taskTrashed.push(f.path);
+        },
+      },
+      fileManager: {
+        processFrontMatter: async () => {
+          throw new Error("simulated yaml parse failure");
+        },
+        renameFile: async () => {},
+      },
+    };
+
+    const res = await runResolve(app, store, { path: e.path, confirmed: true });
+
+    expect(res.ok).toBe(true);
+    expect(res.movedTo).toBe("Projects/demo/RESOLVED ISSUES/OP-1 t.md");
+    expect(res.trashed).toEqual([taskFile.path]);
+    expect(taskTrashed).toEqual([taskFile.path]);
+    expect(consoleErr).toHaveBeenCalledWith(
+      expect.stringContaining("processFrontMatter failed after rename"),
+      "Projects/demo/RESOLVED ISSUES/OP-1 t.md",
+      expect.stringContaining("simulated yaml parse failure"),
+    );
+    consoleErr.mockRestore();
+  });
+});

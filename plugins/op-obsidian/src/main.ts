@@ -404,22 +404,40 @@ export default class OpPlugin extends Plugin {
       // race left an issue in `RESOLVED ISSUES/` with a non-terminal
       // `status:`. Idempotent — no-op on a clean vault. The fix in
       // `resolve.ts` (rename → write) prevents new drift; this pass heals
-      // the historical state.
-      void healStaleResolvedStatus(this.app, this.store)
-        .then((res) => {
-          if (res.fixed.length > 0) {
-            console.info(
-              `[op-obsidian] healed ${res.fixed.length} stale-status issue(s) in RESOLVED ISSUES/`,
-              res.fixed,
-            );
-          }
-          if (res.errors.length > 0) {
-            console.warn("[op-obsidian] healStaleResolvedStatus errors", res.errors);
-          }
-        })
-        .catch((err) => {
-          console.error("[op-obsidian] healStaleResolvedStatus threw", err);
-        });
+      // historical state. Gemini review #1: the IssueStore rebuilds inside
+      // its own onLayoutReady callback (synchronous iteration over
+      // metadataCache), so we must run AFTER the store has hydrated AND
+      // after the metadata cache has finished its initial resolve — bind
+      // the trigger to `metadataCache.on("resolved")` and gate it with a
+      // single-fire flag so subsequent `resolved` events (fired on every
+      // file edit) don't re-run the pass.
+      let healFired = false;
+      const fireHeal = () => {
+        if (healFired) return;
+        healFired = true;
+        void healStaleResolvedStatus(this.app, this.store)
+          .then((res) => {
+            if (res.fixed.length > 0) {
+              console.info(
+                `[op-obsidian] healed ${res.fixed.length} stale-status issue(s) in RESOLVED ISSUES/`,
+                res.fixed,
+              );
+            }
+            if (res.errors.length > 0) {
+              console.warn("[op-obsidian] healStaleResolvedStatus errors", res.errors);
+            }
+          })
+          .catch((err) => {
+            console.error("[op-obsidian] healStaleResolvedStatus threw", err);
+          });
+      };
+      // Run on the next `metadataCache.resolved` event, OR after a
+      // generous fallback timer if the cache is already settled and
+      // won't fire again on this load (avoids hanging the heal forever
+      // on a vault with no pending parse work).
+      const ref = this.app.metadataCache.on("resolved", fireHeal);
+      this.registerEvent(ref);
+      window.setTimeout(fireHeal, 1500);
     });
 
     // OP-151 (§2) + OP-162 (§11): note-level decoration infra. The

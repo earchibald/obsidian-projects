@@ -39,6 +39,15 @@ export async function healStaleResolvedStatus(
     try {
       await app.fileManager.processFrontMatter(file, (fm) => {
         fm.status = "resolved";
+        // Mirror runResolve's frontmatter cleanup: a drifted file may also
+        // carry zombie `agent:` / `agent_session:` / `launch_vars:` entries
+        // that the original resolve flow would have removed but that the
+        // race left in place. Clearing them here keeps the healed file in
+        // a state indistinguishable from a clean resolve. We do NOT touch
+        // `resolved:` — if it's missing, we can't infer a correct date.
+        delete fm.agent;
+        delete fm.agent_session;
+        delete fm.launch_vars;
       });
       fixed.push({ path: e.path, from: e.status });
     } catch (err: any) {
