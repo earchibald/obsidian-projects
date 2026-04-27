@@ -2,9 +2,25 @@ import { describe, it, expect } from "vitest";
 import {
   SHARED_TMUX_SESSION,
   buildITermAttachCommand,
+  buildInnerScript,
   buildPrepScript,
   tmuxWindowName,
+  type LaunchArgs,
 } from "./terminalLaunch";
+
+function makeArgs(overrides: Partial<LaunchArgs> = {}): LaunchArgs {
+  return {
+    cwd: "/repo",
+    binary: "/usr/local/bin/claude",
+    launchFlags: [],
+    prompt: "do the thing",
+    terminalApp: "iTerm",
+    iTermPlacement: "new-tab",
+    tmuxBinary: "/opt/homebrew/bin/tmux",
+    agentId: "claude",
+    ...overrides,
+  };
+}
 
 describe("SHARED_TMUX_SESSION", () => {
   it("is the fixed session name op-agents", () => {
@@ -105,6 +121,61 @@ describe("tmuxWindowName migration regression (old inline chain vs slugify prese
   it("very long input passes through without truncation (no maxLen in this preset)", () => {
     const long = "a".repeat(200);
     expect(tmuxWindowName(long)).toBe(long);
+  });
+});
+
+describe("buildInnerScript — OSC 1337 SetUserVar=op_issue (OP-233)", () => {
+  it("emits OSC 1337 SetUserVar with base64-encoded issue id when issueId is set", () => {
+    const s = buildInnerScript({
+      args: makeArgs({ issueId: "OP-233" }),
+      promptPath: "/tmp/op-agent-xyz/prompt.txt",
+    });
+    // Buffer.from("OP-233", "utf8").toString("base64") === "T1AtMjMz"
+    expect(s).toContain(
+      `printf '\\033]1337;SetUserVar=op_issue=%s\\007' 'T1AtMjMz'`,
+    );
+  });
+
+  it("encodes a different issue id correctly", () => {
+    const s = buildInnerScript({
+      args: makeArgs({ issueId: "TST-5" }),
+      promptPath: "/tmp/op-agent-xyz/prompt.txt",
+    });
+    // Buffer.from("TST-5", "utf8").toString("base64") === "VFNULTU="
+    expect(s).toContain(
+      `printf '\\033]1337;SetUserVar=op_issue=%s\\007' 'VFNULTU='`,
+    );
+  });
+
+  it("does not emit OSC 1337 when issueId is unset (entry-less launches stay untagged)", () => {
+    const s = buildInnerScript({
+      args: makeArgs({ issueId: undefined, windowName: "op-workflow-foo" }),
+      promptPath: "/tmp/op-agent-xyz/prompt.txt",
+    });
+    expect(s).not.toContain("SetUserVar=op_issue");
+    expect(s).not.toContain("\\033]1337");
+  });
+
+  it("places the OSC emit before exec'ing the agent binary", () => {
+    const s = buildInnerScript({
+      args: makeArgs({ issueId: "OP-233" }),
+      promptPath: "/tmp/op-agent-xyz/prompt.txt",
+    });
+    const oscIdx = s.indexOf("SetUserVar=op_issue");
+    const execIdx = s.indexOf("exec '/usr/local/bin/claude'");
+    expect(oscIdx).toBeGreaterThan(0);
+    expect(execIdx).toBeGreaterThan(oscIdx);
+  });
+
+  it("places the OSC emit before exec in debug mode too", () => {
+    const s = buildInnerScript({
+      args: makeArgs({ issueId: "OP-233", debug: true }),
+      promptPath: "/tmp/op-agent-xyz/prompt.txt",
+    });
+    const oscIdx = s.indexOf("SetUserVar=op_issue");
+    const execIdx = s.indexOf("exec '/usr/local/bin/claude'");
+    expect(oscIdx).toBeGreaterThan(0);
+    expect(execIdx).toBeGreaterThan(oscIdx);
   });
 });
 
