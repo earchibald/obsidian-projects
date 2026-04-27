@@ -271,11 +271,21 @@ describe("runResolve — graceful failure when frontmatter write throws", () => 
     expect(res.movedTo).toBe("Projects/demo/RESOLVED ISSUES/OP-1 t.md");
     expect(res.trashed).toEqual([taskFile.path]);
     expect(taskTrashed).toEqual([taskFile.path]);
+    // OP-221 (gemini #3, 2nd pass): partial-failure must be visible to caller.
+    expect(res.frontmatterWriteError).toContain("simulated yaml parse failure");
     expect(consoleErr).toHaveBeenCalledWith(
       expect.stringContaining("processFrontMatter failed after rename"),
       "Projects/demo/RESOLVED ISSUES/OP-1 t.md",
       expect.stringContaining("simulated yaml parse failure"),
     );
     consoleErr.mockRestore();
+  });
+
+  it("leaves frontmatterWriteError undefined on a clean resolve", async () => {
+    const e = issue();
+    const { store, app } = makeFakes(e, { status: "in-progress" });
+    const res = await runResolve(app, store, { path: e.path, confirmed: true });
+    expect(res.ok).toBe(true);
+    expect(res.frontmatterWriteError).toBeUndefined();
   });
 });

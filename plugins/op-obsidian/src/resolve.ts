@@ -58,6 +58,15 @@ export interface ResolveResult {
    * ran (no agent set on the issue, or the legacy no-probe path).
    */
   agentProbeOk?: boolean;
+  /**
+   * OP-221 (gemini review #3, 2nd pass): when `processFrontMatter` throws
+   * AFTER the rename has already moved the file, runResolve catches the
+   * error, continues with task trashing + gh-close, and surfaces the
+   * failure here so the caller can warn the user. The startup heal pass
+   * (`healStaleResolvedStatus`) reconciles the moved file's stale status
+   * + missing `resolved:` on next plugin load.
+   */
+  frontmatterWriteError?: string;
 }
 
 export async function runResolve(
@@ -201,6 +210,7 @@ export async function runResolve(
     githubCloseError,
     agentKept,
     agentProbeOk,
+    frontmatterWriteError: frontmatterWriteFailed,
   };
 }
 

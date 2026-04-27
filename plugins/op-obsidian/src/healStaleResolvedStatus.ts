@@ -43,11 +43,19 @@ export async function healStaleResolvedStatus(
         // carry zombie `agent:` / `agent_session:` / `launch_vars:` entries
         // that the original resolve flow would have removed but that the
         // race left in place. Clearing them here keeps the healed file in
-        // a state indistinguishable from a clean resolve. We do NOT touch
-        // `resolved:` — if it's missing, we can't infer a correct date.
+        // a state indistinguishable from a clean resolve.
         delete fm.agent;
         delete fm.agent_session;
         delete fm.launch_vars;
+        // Gemini review #2 (2nd pass): if `resolved:` is missing too
+        // (resolve.ts catch-path scenario where processFrontMatter threw
+        // before either field was written), set today as a best-effort
+        // fallback. It may be off by hours/days from the actual rename
+        // time, but a missing date breaks downstream sort/filter/query
+        // semantics; today's date is recoverable, absence is not.
+        if (typeof fm.resolved !== "string" || fm.resolved.length === 0) {
+          fm.resolved = new Date().toISOString().slice(0, 10);
+        }
       });
       fixed.push({ path: e.path, from: e.status });
     } catch (err: any) {

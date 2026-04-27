@@ -144,7 +144,7 @@ describe("healStaleResolvedStatus", () => {
     expect(file.fm.custom_field).toBe("keep me");
   });
 
-  it("does NOT invent a `resolved:` date when missing — leaves it absent", async () => {
+  it("backfills `resolved:` to today when missing (catch-path scenario)", async () => {
     const drift = entry({
       id: "OP-198",
       path: "Projects/p/RESOLVED ISSUES/OP-198.md",
@@ -161,7 +161,27 @@ describe("healStaleResolvedStatus", () => {
     await healStaleResolvedStatus(app, store);
 
     expect(file.fm.status).toBe("resolved");
-    expect("resolved" in file.fm).toBe(false);
+    expect(file.fm.resolved).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+  });
+
+  it("preserves an existing `resolved:` date — does not overwrite", async () => {
+    const drift = entry({
+      id: "OP-199",
+      path: "Projects/p/RESOLVED ISSUES/OP-199.md",
+      status: "in-progress" as IssueStatus,
+      resolvedFolder: true,
+    });
+    const file: FakeFile = {
+      path: drift.path,
+      fm: { id: "OP-199", status: "in-progress", resolved: "2025-01-15" },
+    };
+    const app = makeApp([file]);
+    const store = makeStore([drift]);
+
+    await healStaleResolvedStatus(app, store);
+
+    expect(file.fm.status).toBe("resolved");
+    expect(file.fm.resolved).toBe("2025-01-15");
   });
 
   it("treats resolvedFolder + wontfix as terminal — no rewrite", async () => {
