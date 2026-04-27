@@ -428,3 +428,89 @@ describe("client activate flag (OP-155 Step 1)", () => {
     );
   });
 });
+
+// OP-232: openBrowserTab is a best-effort path with a documented fallback —
+// the test covers the contract on the success path (CreateTabRequest carries
+// browser-flavored profile properties; result is `ok: true`) and the
+// failure paths (no active window → `ok: false, reason="no active iTerm window"`;
+// non-OK status → `ok: false, reason` includes the iTerm status).
+describe("client.openBrowserTab (OP-232)", () => {
+  it("returns ok:false when no iTerm window is key", async () => {
+    await withMultiTransport(
+      // FocusResponse with no BECAME_KEY notification → activeWindowId returns undefined.
+      { focusResponse: { notifications: [] } },
+      async () => {
+        const { openBrowserTab } = await import("./client");
+        const res = await openBrowserTab("http://127.0.0.1:49217/?token=tok");
+        expect(res.ok).toBe(false);
+        expect(res.reason).toBe("no active iTerm window");
+      },
+    );
+  });
+
+  it("returns ok:true and overlays browser-tab profile properties on success", async () => {
+    // multiTransport replies with the same body to every request; structure
+    // it so both focusRequest and createTabRequest come back successful.
+    await withMultiTransport(
+      {
+        focusResponse: {
+          notifications: [
+            {
+              window: {
+                windowStatus:
+                  iterm2.FocusChangedNotification.Window.WindowStatus.TERMINAL_WINDOW_BECAME_KEY,
+                windowId: "w-key",
+              },
+            },
+          ],
+        },
+        createTabResponse: {
+          status: iterm2.CreateTabResponse.Status.OK,
+          windowId: "w-key",
+          sessionId: "s-browser",
+        },
+      },
+      async (messages) => {
+        const { openBrowserTab } = await import("./client");
+        const res = await openBrowserTab("http://127.0.0.1:49217/?token=tok");
+        expect(res.ok).toBe(true);
+
+        const created = messages.find((m) => m.createTabRequest);
+        expect(created).toBeDefined();
+        const props = created?.createTabRequest?.customProfileProperties ?? [];
+        const byKey = Object.fromEntries(props.map((p) => [p.key, p.jsonValue]));
+        expect(byKey["Profile Type"]).toBe(JSON.stringify("Browser"));
+        expect(byKey["URL"]).toBe(JSON.stringify("http://127.0.0.1:49217/?token=tok"));
+        expect(byKey["Initial URL"]).toBe(JSON.stringify("http://127.0.0.1:49217/?token=tok"));
+        expect(byKey["Custom Command"]).toBe(JSON.stringify("No"));
+      },
+    );
+  });
+
+  it("returns ok:false with a human-readable reason on non-OK CreateTab status", async () => {
+    await withMultiTransport(
+      {
+        focusResponse: {
+          notifications: [
+            {
+              window: {
+                windowStatus:
+                  iterm2.FocusChangedNotification.Window.WindowStatus.TERMINAL_WINDOW_BECAME_KEY,
+                windowId: "w-key",
+              },
+            },
+          ],
+        },
+        createTabResponse: {
+          status: iterm2.CreateTabResponse.Status.INVALID_PROFILE_NAME,
+        },
+      },
+      async () => {
+        const { openBrowserTab } = await import("./client");
+        const res = await openBrowserTab("http://127.0.0.1:49217/?token=tok");
+        expect(res.ok).toBe(false);
+        expect(res.reason).toMatch(/iTerm createTab status=/);
+      },
+    );
+  });
+});
