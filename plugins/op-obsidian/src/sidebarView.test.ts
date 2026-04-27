@@ -203,6 +203,65 @@ describe("pickIssuesForTab", () => {
     } as any);
     expect(out.map((e) => e.id)).toEqual(["OP-6", "OP-5", "OP-4"]);
   });
+
+  // OP-221: an issue that lives in RESOLVED ISSUES/ but whose `status:`
+  // frontmatter never flipped to a terminal value (the OP-197 data state)
+  // must not appear in the In flight tab — the folder is the source of
+  // truth, not the status field.
+  describe("OP-221: resolvedFolder beats stale status", () => {
+    const driftNoAgent = entry({
+      id: "OP-197",
+      status: "in-progress",
+      resolvedFolder: true,
+      resolved: "2026-04-26",
+    });
+    const driftAliveAgent = entry({
+      id: "OP-198",
+      status: "in-progress",
+      resolvedFolder: true,
+      agent: "claude",
+      resolved: "2026-04-26",
+    });
+    const driftDeadAgent = entry({
+      id: "OP-199",
+      status: "in-progress",
+      resolvedFolder: true,
+      agent: "claude",
+      resolved: "2026-04-26",
+    });
+
+    it("hides folder-resolved rows in In flight even when status is stale and no agent", () => {
+      const out = pickIssuesForTab([inProg, driftNoAgent], "in-flight" as any, {
+        liveTmuxWindows: new Set<string>(),
+        recentResolvedLimit: 20,
+      } as any);
+      expect(out.map((e) => e.id).sort()).toEqual(["OP-2"]);
+    });
+
+    it("keeps folder-resolved rows with stale status when their tmux window is live (OP-156 §5)", () => {
+      const out = pickIssuesForTab([inProg, driftAliveAgent, driftDeadAgent], "in-flight" as any, {
+        liveTmuxWindows: new Set(["OP-198"]),
+        recentResolvedLimit: 20,
+      } as any);
+      expect(out.map((e) => e.id).sort()).toEqual(["OP-198", "OP-2"]);
+    });
+
+    it("keeps folder-resolved rows with stale status when probe is unknown", () => {
+      const out = pickIssuesForTab([driftAliveAgent], "in-flight" as any, {
+        liveTmuxWindows: undefined,
+        recentResolvedLimit: 20,
+      } as any);
+      expect(out.map((e) => e.id)).toEqual(["OP-198"]);
+    });
+
+    it("includes folder-resolved rows with stale status in the Resolved tab (folder is source of truth)", () => {
+      const out = pickIssuesForTab([driftNoAgent], "resolved" as any, {
+        liveTmuxWindows: new Set<string>(),
+        recentResolvedLimit: 20,
+      } as any);
+      expect(out.map((e) => e.id)).toEqual(["OP-197"]);
+    });
+  });
 });
 
 describe("shouldShowProjectChip", () => {

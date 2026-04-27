@@ -1,7 +1,7 @@
 {
   "name": "op",
   "description": "Obsidian Projects workflow — schema, slash commands, and agent skill for running a Jira-lite issue tracker inside an Obsidian vault.",
-  "version": "0.78.1",
+  "version": "0.78.2",
   "author": {
     "name": "Eugene Archibald"
   },

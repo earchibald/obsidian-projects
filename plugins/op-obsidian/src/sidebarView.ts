@@ -962,6 +962,10 @@ function isResolved(e: IssueEntry): boolean {
  *                   tmux window is still live (per OP-156 §5). Unknown-tmux
  *                   (`undefined`/`null`) does not hide rows — same rule as
  *                   {@link OpSidebarView.isAgentBadgeStale}.
+ *                   The folder-resolved check runs BEFORE the status check so a
+ *                   row that lives in `RESOLVED ISSUES/` but still carries a
+ *                   non-terminal `status:` (data drift like OP-197) is treated
+ *                   as resolved — the folder is the source of truth here.
  *  - `resolved`   → resolved/wontfix, sorted by resolved-date desc, sliced to
  *                   `opts.recentResolvedLimit`.
  */
@@ -976,12 +980,13 @@ export function pickIssuesForTab(
   if (tab === "in-flight") {
     return issues
       .filter((e) => {
-        if (e.status === "in-progress" || e.status === "blocked") return true;
-        if (!e.agent) return false;
         if (isResolved(e)) {
+          if (!e.agent) return false;
           if (!opts.liveTmuxWindows) return true;
           return opts.liveTmuxWindows.has(tmuxWindowName(e.id));
         }
+        if (e.status === "in-progress" || e.status === "blocked") return true;
+        if (!e.agent) return false;
         return true;
       })
       .sort(byId);
