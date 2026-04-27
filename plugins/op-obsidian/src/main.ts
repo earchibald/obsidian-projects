@@ -61,6 +61,7 @@ import { resolveRepoPath } from "./repoPath";
 import { writeUriResponse, type UriResponsePayload } from "./uriResponse";
 import { normalizeUriParams, collectRepeated, parseLaunchVarsFromUri } from "./uriParams";
 import { runResolve, type ResolveArgs } from "./resolve";
+import { healStaleResolvedStatus } from "./healStaleResolvedStatus";
 import { shouldAutoResolve } from "./autoResolveOnStatusChange";
 import {
   findIssueById as findIssueByIdPure,
@@ -399,6 +400,26 @@ export default class OpPlugin extends Plugin {
       ).catch((err) => {
         console.error("[op-obsidian] first-run readme scaffold failed", err);
       });
+      // OP-221: clean up legacy data drift where a pre-OP-221 `runResolve`
+      // race left an issue in `RESOLVED ISSUES/` with a non-terminal
+      // `status:`. Idempotent — no-op on a clean vault. The fix in
+      // `resolve.ts` (rename → write) prevents new drift; this pass heals
+      // the historical state.
+      void healStaleResolvedStatus(this.app, this.store)
+        .then((res) => {
+          if (res.fixed.length > 0) {
+            console.info(
+              `[op-obsidian] healed ${res.fixed.length} stale-status issue(s) in RESOLVED ISSUES/`,
+              res.fixed,
+            );
+          }
+          if (res.errors.length > 0) {
+            console.warn("[op-obsidian] healStaleResolvedStatus errors", res.errors);
+          }
+        })
+        .catch((err) => {
+          console.error("[op-obsidian] healStaleResolvedStatus threw", err);
+        });
     });
 
     // OP-151 (§2) + OP-162 (§11): note-level decoration infra. The

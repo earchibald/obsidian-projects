@@ -126,6 +126,23 @@ export async function runResolve(
   }
 
   const today = new Date().toISOString().slice(0, 10);
+
+  // OP-221: rename FIRST, then write frontmatter on the moved file. The
+  // previous order (processFrontMatter then renameFile) opened a window
+  // where the rename could drop the status update — when the issue file
+  // had an open editor view with a dirty buffer (or any pending writer
+  // racing with us), Obsidian's rename machinery could re-flush the
+  // stale buffer to the new path, reverting the status write but leaving
+  // `resolved:` intact (the OP-197 drift state). Doing the write AFTER
+  // the rename means our processFrontMatter is unconditionally the last
+  // word on the moved file's frontmatter.
+  //
+  // Safe wrt event handlers: the auto-resolve guard short-circuits on
+  // `entry.resolvedFolder` (autoResolveOnStatusChange.ts L31), and the
+  // gh-close listener is idempotent. `inFlightResolvePaths` still tracks
+  // the source path for belt-and-suspenders.
+  await app.fileManager.renameFile(file, targetPath);
+
   await app.fileManager.processFrontMatter(file, (fm) => {
     fm.status = targetStatus;
     fm.resolved = today;
@@ -137,8 +154,6 @@ export async function runResolve(
     // not inherit stale Launch overrides from its previous lifecycle.
     delete fm.launch_vars;
   });
-
-  await app.fileManager.renameFile(file, targetPath);
 
   const trashed: string[] = [];
   for (const t of tasks) {

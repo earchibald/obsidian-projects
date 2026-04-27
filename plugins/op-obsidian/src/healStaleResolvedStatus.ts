@@ -1,0 +1,49 @@
+import { App, TFile } from "obsidian";
+import type { IssueStore } from "./issueStore";
+import type { IssueStatus } from "./types";
+
+const TERMINAL: ReadonlySet<IssueStatus> = new Set<IssueStatus>(["resolved", "wontfix"]);
+
+export interface HealResult {
+  scanned: number;
+  fixed: { path: string; from: IssueStatus }[];
+  errors: { path: string; error: string }[];
+}
+
+/**
+ * OP-221: scan all issues; for any whose file lives in `RESOLVED ISSUES/`
+ * but whose `status:` frontmatter is non-terminal, rewrite
+ * `status: resolved`.
+ *
+ * Fixes the data-drift state observed in the wild on OP-197 (file moved to
+ * RESOLVED ISSUES/, `resolved:` written, but `status:` left as `in-progress`)
+ * caused by a race between `processFrontMatter` and `renameFile` in the
+ * pre-OP-221 ordering of `runResolve`. The race itself is fixed in
+ * `resolve.ts` (rename → write); this pass cleans up legacy drift on first
+ * load. Idempotent — re-running on a clean vault is a no-op.
+ */
+export async function healStaleResolvedStatus(
+  app: App,
+  store: IssueStore,
+): Promise<HealResult> {
+  const issues = store.issues();
+  const drift = issues.filter((e) => e.resolvedFolder && !TERMINAL.has(e.status));
+  const fixed: HealResult["fixed"] = [];
+  const errors: HealResult["errors"] = [];
+  for (const e of drift) {
+    const file = app.vault.getAbstractFileByPath(e.path);
+    if (!(file instanceof TFile)) {
+      errors.push({ path: e.path, error: "file not found in vault" });
+      continue;
+    }
+    try {
+      await app.fileManager.processFrontMatter(file, (fm) => {
+        fm.status = "resolved";
+      });
+      fixed.push({ path: e.path, from: e.status });
+    } catch (err: any) {
+      errors.push({ path: e.path, error: err?.message ?? String(err) });
+    }
+  }
+  return { scanned: issues.length, fixed, errors };
+}
