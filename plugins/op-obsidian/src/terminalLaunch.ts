@@ -214,48 +214,10 @@ async function writeLaunchScripts({
 
   await fs.writeFile(promptPath, args.prompt, { mode: 0o600 });
 
-  const flagsShell = args.launchFlags.map(shSingleQuote).join(" ");
-  const cwdShell = shSingleQuote(args.cwd);
-  const binShell = shSingleQuote(args.binary);
-  const promptShell = shSingleQuote(promptPath);
   const tmuxShell = shSingleQuote(args.tmuxBinary);
   const sessShell = shSingleQuote(session);
 
-  // Inner: cd + read prompt from side-file (bash 3.2 heredoc-in-$() bug
-  // otherwise, see OP-25) + exec the agent binary.
-  //
-  // Obsidian's launch PATH omits /opt/homebrew/bin and ~/.local/bin, so
-  // `claude`'s statusLine (commonly `npx -y ccstatusline@latest`) silently
-  // fails to resolve in spawned agent windows. Prepend the usual user-shell
-  // dirs so statusline and other CLI tools behave as in a normal terminal.
-  // See OP-41.
-  const agentIdShell = shSingleQuote(args.agentId);
-  const innerLines = [
-    "#!/bin/bash",
-    "set -e",
-    `cd ${cwdShell}`,
-    `export PATH="/opt/homebrew/bin:/usr/local/bin:$HOME/.local/bin:$HOME/bin:$PATH"`,
-  ];
-  if (args.issueId) {
-    innerLines.push(`export OP_ISSUE_ID=${shSingleQuote(args.issueId)}`);
-  }
-  innerLines.push(`export OP_AGENT_ID=${agentIdShell}`);
-  if (args.debug) {
-    // Launch the agent binary interactively with no initial prompt so
-    // the launch flow (PATH, env, tmux window) can be exercised end-to-end
-    // while a human drives the session.
-    innerLines.push(
-      `echo "[op] debug agent launch — no prompt (issue=${args.issueId ?? "<none>"} agent=${args.agentId})"`,
-      `exec ${binShell} ${flagsShell}`,
-    );
-  } else {
-    innerLines.push(
-      `PROMPT=$(<${promptShell})`,
-      `exec ${binShell} ${flagsShell} "$PROMPT"`,
-    );
-  }
-  innerLines.push("");
-  const inner = innerLines.join("\n");
+  const inner = buildInnerScript({ args, promptPath });
   await fs.writeFile(innerPath, inner, { mode: 0o755 });
 
   // Outer (Terminal.app only): ensure session/window exists, then attach.
@@ -275,6 +237,70 @@ async function writeLaunchScripts({
   await fs.writeFile(outerPath, outer, { mode: 0o755 });
 
   return { innerPath, outerPath };
+}
+
+interface InnerScriptArgs {
+  args: LaunchArgs;
+  promptPath: string;
+}
+
+// Build the inner agent script that runs inside the tmux pane: cd, env
+// exports, optional iTerm session-tag emit (OP-233), then exec the agent
+// binary. Pure string-building — no fs — so it's exercised by unit tests
+// without touching disk.
+export function buildInnerScript({ args, promptPath }: InnerScriptArgs): string {
+  const flagsShell = args.launchFlags.map(shSingleQuote).join(" ");
+  const cwdShell = shSingleQuote(args.cwd);
+  const binShell = shSingleQuote(args.binary);
+  const promptShell = shSingleQuote(promptPath);
+  const agentIdShell = shSingleQuote(args.agentId);
+
+  // Inner: cd + read prompt from side-file (bash 3.2 heredoc-in-$() bug
+  // otherwise, see OP-25) + exec the agent binary.
+  //
+  // Obsidian's launch PATH omits /opt/homebrew/bin and ~/.local/bin, so
+  // `claude`'s statusLine (commonly `npx -y ccstatusline@latest`) silently
+  // fails to resolve in spawned agent windows. Prepend the usual user-shell
+  // dirs so statusline and other CLI tools behave as in a normal terminal.
+  // See OP-41.
+  const innerLines = [
+    "#!/bin/bash",
+    "set -e",
+    `cd ${cwdShell}`,
+    `export PATH="/opt/homebrew/bin:/usr/local/bin:$HOME/.local/bin:$HOME/bin:$PATH"`,
+  ];
+  if (args.issueId) {
+    innerLines.push(`export OP_ISSUE_ID=${shSingleQuote(args.issueId)}`);
+  }
+  innerLines.push(`export OP_AGENT_ID=${agentIdShell}`);
+  // OP-233: tag the iTerm session with `user.op_issue` so op-dashboard
+  // (OP-230) can correlate iTerm sessions to op issues. We compute the
+  // base64 at script-build time (Node Buffer) so the runtime script doesn't
+  // depend on `base64` being on PATH and to avoid platform-specific line
+  // wrapping. `\007` (BEL) terminates the OSC; `\033` is ESC. Under tmux
+  // -CC iTerm parses pane bytes directly, so we don't wrap in a tmux
+  // passthrough sequence — that wrap would also need allow-passthrough.
+  // Terminal.app silently ignores OSC 1337, so the emit is harmless there.
+  if (args.issueId) {
+    const b64 = Buffer.from(args.issueId, "utf8").toString("base64");
+    innerLines.push(`printf '\\033]1337;SetUserVar=op_issue=%s\\007' ${shSingleQuote(b64)}`);
+  }
+  if (args.debug) {
+    // Launch the agent binary interactively with no initial prompt so
+    // the launch flow (PATH, env, tmux window) can be exercised end-to-end
+    // while a human drives the session.
+    innerLines.push(
+      `echo "[op] debug agent launch — no prompt (issue=${args.issueId ?? "<none>"} agent=${args.agentId})"`,
+      `exec ${binShell} ${flagsShell}`,
+    );
+  } else {
+    innerLines.push(
+      `PROMPT=$(<${promptShell})`,
+      `exec ${binShell} ${flagsShell} "$PROMPT"`,
+    );
+  }
+  innerLines.push("");
+  return innerLines.join("\n");
 }
 
 interface PrepArgs {
