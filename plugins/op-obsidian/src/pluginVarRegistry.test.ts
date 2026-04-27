@@ -130,6 +130,16 @@ describe("PLUGIN_VAR_REGISTRY", () => {
       expect(PLUGIN_VAR_REGISTRY.slug.compute(ctx)).toBeUndefined();
     });
 
+    it("returns undefined for a whitespace-only title (spaces collapse to empty slug)", () => {
+      const ctx = { ...FIXTURE_CTX, title: "   " };
+      expect(PLUGIN_VAR_REGISTRY.slug.compute(ctx)).toBeUndefined();
+    });
+
+    it("returns undefined for an empty-string title", () => {
+      const ctx = { ...FIXTURE_CTX, title: "" };
+      expect(PLUGIN_VAR_REGISTRY.slug.compute(ctx)).toBeUndefined();
+    });
+
     it("returns undefined when title is missing from a Partial ctx", () => {
       // Mirrors the existing `parent`-slot-absent test: undefined vs. empty has
       // a meaning here. Caller didn't supply the field at all.

@@ -90,6 +90,18 @@ describe("slugify", () => {
       expect(slugify("alphabet-soup", { maxLen: 9 })).toBe("alphabet");
     });
 
+    it("cap = 0 collapses any non-empty input to empty (fallback fires if set)", () => {
+      expect(slugify("hello", { maxLen: 0 })).toBe("");
+      expect(slugify("hello", { maxLen: 0, fallback: "x" })).toBe("x");
+    });
+
+    it("cap = 1 flat-truncates to the first character (no dash in a 1-char slice)", () => {
+      expect(slugify("hello", { maxLen: 1 })).toBe("h");
+      // A post-collapse string starting with a letter can't start with `-`, so
+      // the flat-truncation path is always taken at cap=1.
+      expect(slugify("a-b-c", { maxLen: 1 })).toBe("a");
+    });
+
     it("very long input is capped and lands on a `-` boundary", () => {
       const long = "Add slug plugin var and extract shared slugify util and other goodies";
       const out = slugify(long, { caseFold: true, maxLen: 40 });
@@ -130,6 +142,36 @@ describe("slugify", () => {
 
     it("tolerates leading whitespace before the prefix", () => {
       expect(slugify("  3: Hello", { caseFold: true, stripLeadingTaskPrefix: true })).toBe("hello");
+    });
+
+    it("does NOT strip a leading `: hello` that has no digits before the colon", () => {
+      // Regex requires \d+ at start; a bare colon prefix does not match.
+      // The colon is slugified away normally, so the result is the same as
+      // without stripping — but the important contract is that the regex
+      // didn't fire on a non-digit-prefixed colon.
+      expect(slugify(": hello", { caseFold: true, stripLeadingTaskPrefix: true })).toBe("hello");
+      expect(slugify(": hello", { caseFold: true, stripLeadingTaskPrefix: false })).toBe("hello");
+    });
+
+    it("does NOT strip `1.5: x` — a dot between the digit and colon is not in the pattern", () => {
+      // `\d+[a-z]?\s*:` cannot match `1.5:` because after `1` the next char
+      // is `.` (not a letter or `:`) so the optional `[a-z]?` skips it and
+      // `\s*:` requires `:` immediately — but `.` is there instead.
+      expect(slugify("1.5: x", { caseFold: true, stripLeadingTaskPrefix: true })).toBe("1-5-x");
+    });
+
+    it("strips only the first `NN:` segment from a multi-colon title", () => {
+      // The regex is anchored (^) and has no `g` flag — one application only.
+      // `1: 2: 3` → strip `1: ` → `2: 3` → slug `2-3`.
+      expect(slugify("1: 2: 3", { caseFold: true, stripLeadingTaskPrefix: true })).toBe("2-3");
+      // Verify without stripping produces the full slug.
+      expect(slugify("1: 2: 3", { caseFold: true, stripLeadingTaskPrefix: false })).toBe("1-2-3");
+    });
+
+    it("strips an oversized numeric-only prefix like `1234567890b:`", () => {
+      // The regex matches any run of digits (\d+) regardless of length, so
+      // very large task numbers are still stripped — intentional.
+      expect(slugify("1234567890b: long", { caseFold: true, stripLeadingTaskPrefix: true })).toBe("long");
     });
   });
 
