@@ -385,14 +385,31 @@ export function buildViewScript({
 }
 
 // Agent inner script: same shape as the pre-orchestrator launch path —
-// cd + PATH + env + exec binary with prompt (or interactive shell in debug
-// mode). Factored here so the tmux window runs it when first created.
+// cd + PATH + env + OP-233 iTerm tag + exec binary with prompt (or
+// interactive shell in debug mode). Factored here so the tmux window runs
+// it when first created.
 async function writeAgentInnerScript(args: OrchestrateArgs): Promise<string> {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), "op-agent-"));
   const innerPath = path.join(dir, "agent.command");
   const promptPath = path.join(dir, "prompt.txt");
   await fs.writeFile(promptPath, args.prompt, { mode: 0o600 });
+  const inner = buildAgentInnerScript({ args, promptPath });
+  await fs.writeFile(innerPath, inner, { mode: 0o755 });
+  return innerPath;
+}
 
+// Pure script-string builder for the orchestrator's per-agent inner script.
+// Exported so the OSC 1337 emit (OP-233) and the env exports can be
+// asserted directly. Mirror to terminalLaunch.ts buildInnerScript — both
+// launch paths must emit identical OSC bytes so OP-230's session-correlation
+// rule is uniform.
+export function buildAgentInnerScript({
+  args,
+  promptPath,
+}: {
+  args: OrchestrateArgs;
+  promptPath: string;
+}): string {
   const flagsShell = args.launchFlags.map(shSingleQuote).join(" ");
   const cwdShell = shSingleQuote(args.cwd);
   const binShell = shSingleQuote(args.binary);
@@ -408,6 +425,14 @@ async function writeAgentInnerScript(args: OrchestrateArgs): Promise<string> {
     `export OP_ISSUE_ID=${issueIdShell}`,
     `export OP_AGENT_ID=${agentIdShell}`,
   ];
+  // OP-233: tag the iTerm session with `user.op_issue` so op-dashboard
+  // (OP-230) can correlate iTerm sessions to op issues. The orchestrator
+  // path always has args.issueId — orchestrator launches are gated on it
+  // upstream (see orchestrateLaunch's caller in terminalLaunch.ts).
+  const b64Issue = Buffer.from(args.issueId, "utf8").toString("base64");
+  lines.push(
+    `printf '\\033]1337;SetUserVar=op_issue=%s\\007' ${shSingleQuote(b64Issue)}`,
+  );
   if (args.debug) {
     lines.push(
       `echo "[op] debug agent launch — interactive shell (issue=${args.issueId} agent=${args.agentId})"`,
@@ -418,8 +443,7 @@ async function writeAgentInnerScript(args: OrchestrateArgs): Promise<string> {
     lines.push(`PROMPT=$(<${promptShell})`, `exec ${binShell} ${flagsShell} "$PROMPT"`);
   }
   lines.push("");
-  await fs.writeFile(innerPath, lines.join("\n"), { mode: 0o755 });
-  return innerPath;
+  return lines.join("\n");
 }
 
 // Probe each tracked session in a window. Clear slots whose iTerm session

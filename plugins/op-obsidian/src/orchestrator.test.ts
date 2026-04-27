@@ -1,11 +1,13 @@
 import { describe, it, expect } from "vitest";
 
 import {
+  buildAgentInnerScript,
   buildViewScript,
   firstEmptyCell,
   labelWithId,
   labelWithParent,
   pruneDeadSessionSlots,
+  type OrchestrateArgs,
 } from "./orchestrator";
 import type { RegistryData, WindowState } from "./layout/registry";
 
@@ -16,6 +18,51 @@ function makeReg(win: WindowState, surfaces: RegistryData["surfaces"] = {}): Reg
     windowOrder: [win.windowId],
   };
 }
+
+function makeOrchArgs(overrides: Partial<OrchestrateArgs> = {}): OrchestrateArgs {
+  return {
+    issueId: "OP-233",
+    agentId: "claude",
+    cwd: "/repo",
+    binary: "/usr/local/bin/claude",
+    launchFlags: [],
+    prompt: "do the thing",
+    tmuxBinary: "/opt/homebrew/bin/tmux",
+    baseTmuxSession: "op-agents",
+    ...overrides,
+  };
+}
+
+describe("buildAgentInnerScript — OSC 1337 SetUserVar=op_issue (OP-233)", () => {
+  it("emits OSC 1337 SetUserVar with base64-encoded issue id between env exports and exec", () => {
+    const s = buildAgentInnerScript({
+      args: makeOrchArgs({ issueId: "OP-233" }),
+      promptPath: "/tmp/op-agent-xyz/prompt.txt",
+    });
+    expect(s).toContain(
+      `printf '\\033]1337;SetUserVar=op_issue=%s\\007' 'T1AtMjMz'`,
+    );
+    const envIdx = s.indexOf("export OP_AGENT_ID=");
+    const oscIdx = s.indexOf("SetUserVar=op_issue");
+    const execIdx = s.indexOf("exec '/usr/local/bin/claude'");
+    expect(oscIdx).toBeGreaterThan(envIdx);
+    expect(execIdx).toBeGreaterThan(oscIdx);
+  });
+
+  it("emits OSC before the debug interactive shell exec too", () => {
+    const s = buildAgentInnerScript({
+      args: makeOrchArgs({ issueId: "TST-5", debug: true }),
+      promptPath: "/tmp/op-agent-xyz/prompt.txt",
+    });
+    expect(s).toContain(
+      `printf '\\033]1337;SetUserVar=op_issue=%s\\007' 'VFNULTU='`,
+    );
+    const oscIdx = s.indexOf("SetUserVar=op_issue");
+    const execIdx = s.indexOf(`exec "$SHELL" -l`);
+    expect(oscIdx).toBeGreaterThan(0);
+    expect(execIdx).toBeGreaterThan(oscIdx);
+  });
+});
 
 describe("firstEmptyCell", () => {
   it("returns the lowest undefined index within the cell count", () => {
