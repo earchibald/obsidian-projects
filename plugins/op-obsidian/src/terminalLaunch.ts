@@ -36,6 +36,10 @@ export interface LaunchArgs {
   // Human-readable title forwarded to the orchestrator for the iTerm
   // session/pane title (e.g. the issue note's file basename).
   issueTitle?: string;
+  // OP-179: parent issue id forwarded to the orchestrator. When set, the
+  // iTerm tab/window/session label gets a ` [Parent: <PARENT-ID>]` suffix so
+  // a child issue's pane is visibly tagged with its umbrella.
+  parentId?: string;
   agentId: string;
   // Override the tmux window name (sanitized to tmux-safe chars). Used by
   // entry-less launches that have no `issueId` — the workflow editor
@@ -91,6 +95,7 @@ export async function launchInTerminal(args: LaunchArgs): Promise<LaunchResult> 
       {
         issueId: args.issueId,
         issueTitle: args.issueTitle,
+        parentId: args.parentId,
         agentId: args.agentId,
         cwd: args.cwd,
         binary: args.binary,

@@ -4,6 +4,7 @@ import {
   buildViewScript,
   firstEmptyCell,
   labelWithId,
+  labelWithParent,
   pruneDeadSessionSlots,
 } from "./orchestrator";
 import type { RegistryData, WindowState } from "./layout/registry";
@@ -277,5 +278,136 @@ describe("labelWithId", () => {
 
   it("returns the title as-is when it equals the issueId", () => {
     expect(labelWithId("OP-177", "OP-177")).toBe("OP-177");
+  });
+});
+
+describe("labelWithParent", () => {
+  it("appends ` [Parent: <PARENT-ID>]` to the label when parentId is set", () => {
+    expect(labelWithParent("OP-179 add parent suffix", "OP-149")).toBe(
+      "OP-179 add parent suffix [Parent: OP-149]",
+    );
+  });
+
+  it("returns the label unchanged when parentId is undefined", () => {
+    expect(labelWithParent("OP-179 add parent suffix", undefined)).toBe(
+      "OP-179 add parent suffix",
+    );
+  });
+
+  it("returns the label unchanged when parentId is empty", () => {
+    expect(labelWithParent("OP-179 add parent suffix", "")).toBe(
+      "OP-179 add parent suffix",
+    );
+  });
+
+  it("composes cleanly with labelWithId for the bare-id fallback case", () => {
+    // Title-less launch: labelWithId(id, undefined) returns the bare id, then
+    // labelWithParent appends the suffix.
+    expect(labelWithParent(labelWithId("OP-179", undefined), "OP-149")).toBe(
+      "OP-179 [Parent: OP-149]",
+    );
+  });
+
+  it("returns the label unchanged when parentId is whitespace-only", () => {
+    // `str()` accepts "   " (length > 0) but `labelWithParent` trims it,
+    // consistent with `readParentId`'s `raw.trim().length > 0` guard.
+    expect(labelWithParent("OP-179 add parent suffix", "   ")).toBe(
+      "OP-179 add parent suffix",
+    );
+  });
+
+  it("trims surrounding whitespace from parentId before appending", () => {
+    // Leading/trailing whitespace on the parentId value is stripped.
+    expect(labelWithParent("OP-179 add parent suffix", "  OP-149  ")).toBe(
+      "OP-179 add parent suffix [Parent: OP-149]",
+    );
+  });
+
+  it("appends the suffix when parentId equals the issueId (self-link; upstream op-set-link rejects this)", () => {
+    // `labelWithParent` has no self-link awareness — that guard lives in
+    // `validateLinkArgs` which throws "Cannot link issue to itself: …" before
+    // the parent can be persisted.  This test documents the pass-through for
+    // completeness (a manually-edited frontmatter could still reach here).
+    expect(labelWithParent("OP-179 title", "OP-179")).toBe(
+      "OP-179 title [Parent: OP-179]",
+    );
+  });
+});
+
+describe("buildViewScript with parentId", () => {
+  const baseArgs = {
+    tmuxBinary: "/opt/homebrew/bin/tmux",
+    tmuxSession: "op-agents-1",
+    tmuxWindow: "OP-179",
+    issueId: "OP-179",
+    issueTitle: "iTerm tab title: append parent suffix",
+  };
+
+  it("appends `[Parent: <PARENT-ID>]` to the OSC 1 (tab/icon) payload when parentId is set", () => {
+    const out = buildViewScript({ ...baseArgs, parentId: "OP-149" });
+    expect(out).toContain(
+      `printf '\\033]1;%s\\007' 'OP-179 iTerm tab title: append parent suffix [Parent: OP-149]'`,
+    );
+  });
+
+  it("appends `[Parent: <PARENT-ID>]` to the OSC 2 (window title) payload when parentId is set", () => {
+    const out = buildViewScript({ ...baseArgs, parentId: "OP-149" });
+    expect(out).toContain(
+      `printf '\\033]2;%s\\007' 'OP-179 iTerm tab title: append parent suffix [Parent: OP-149]'`,
+    );
+  });
+
+  it("omits the parent suffix when parentId is undefined (no breaking change for non-child issues)", () => {
+    const out = buildViewScript(baseArgs);
+    expect(out).toContain(
+      `printf '\\033]1;%s\\007' 'OP-179 iTerm tab title: append parent suffix'`,
+    );
+    expect(out).not.toContain("[Parent:");
+  });
+
+  it("omits the parent suffix when parentId is empty", () => {
+    const out = buildViewScript({ ...baseArgs, parentId: "" });
+    expect(out).not.toContain("[Parent:");
+  });
+
+  it("strips control characters from parentId before the suffix is composed", () => {
+    const out = buildViewScript({ ...baseArgs, parentId: "OP\x1b-149\x07" });
+    expect(out).toContain(
+      `printf '\\033]2;%s\\007' 'OP-179 iTerm tab title: append parent suffix [Parent: OP-149]'`,
+    );
+  });
+
+  it("appends the parent suffix even with the bare-id fallback (no title)", () => {
+    const { issueTitle, ...rest } = baseArgs;
+    const out = buildViewScript({ ...rest, parentId: "OP-149" });
+    expect(out).toContain(`printf '\\033]1;%s\\007' 'OP-179 [Parent: OP-149]'`);
+    expect(out).toContain(`printf '\\033]2;%s\\007' 'OP-179 [Parent: OP-149]'`);
+  });
+
+  it("handles tmux-special char `:` in parentId via shSingleQuote escaping", () => {
+    // `:` is the tmux session:window separator but is safe inside single quotes.
+    const out = buildViewScript({ ...baseArgs, parentId: "OP:149" });
+    expect(out).toContain(`[Parent: OP:149]`);
+    // The whole label is enclosed in single quotes; `:` needs no escaping.
+    expect(out).toContain(`printf '\\033]1;%s\\007' 'OP-179 iTerm tab title: append parent suffix [Parent: OP:149]'`);
+  });
+
+  it("handles single quote in parentId via shSingleQuote escaping", () => {
+    // `shSingleQuote` replaces ' with '\'' so injected single quotes are escaped.
+    const out = buildViewScript({ ...baseArgs, parentId: "OP'149" });
+    // The label string is single-quote-escaped; the parentId apostrophe gets '\''
+    expect(out).toContain(`[Parent: OP'\\''149]`);
+    // No raw unescaped ' adjacent to the %s argument
+    expect(out).not.toMatch(/printf '\\033]1;%s\\007' '[^']*OP'149/);
+  });
+
+  it("OP-178 hook coexists in the same script when parentId is set", () => {
+    // The window-unlinked hook uses tmuxWindow (not the label), so the parent
+    // suffix has no effect on the hook predicate — both OSC payload and hook
+    // must appear together.
+    const out = buildViewScript({ ...baseArgs, parentId: "OP-149" });
+    expect(out).toContain(`[Parent: OP-149]`);
+    expect(out).toContain(`#{==:#{hook_window_name},OP-179}`);
+    expect(out).toContain(`kill-session -t =view-OP-179`);
   });
 });
