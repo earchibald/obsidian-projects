@@ -68,6 +68,46 @@ describe("tmuxWindowName for entry-less launches", () => {
   });
 });
 
+describe("tmuxWindowName migration regression (old inline chain vs slugify preset)", () => {
+  // The original implementation was an inline regex chain:
+  //   issueId.replace(/[^A-Za-z0-9_-]+/g, "-").replace(/-+/g, "-").replace(/^-|-$/g, "") || "agent"
+  // Verify that every stress input produces the exact same output after
+  // migrating to slugify(issueId, { allowUnderscore: true, fallback: "agent" }).
+
+  it("single dash → 'agent' (fallback fires)", () => {
+    expect(tmuxWindowName("-")).toBe("agent");
+  });
+
+  it("multiple consecutive separators are collapsed, then trimmed → fallback", () => {
+    expect(tmuxWindowName("---")).toBe("agent");
+  });
+
+  it("mixed-case, digits, underscore, and dash are preserved unchanged", () => {
+    expect(tmuxWindowName("ABC_123-def")).toBe("ABC_123-def");
+  });
+
+  it("embedded `.` → `-`", () => {
+    expect(tmuxWindowName("OP.37")).toBe("OP-37");
+  });
+
+  it("embedded `+` → `-`", () => {
+    expect(tmuxWindowName("a+b")).toBe("a-b");
+  });
+
+  it("leading dashes are trimmed", () => {
+    expect(tmuxWindowName("---hello")).toBe("hello");
+  });
+
+  it("trailing dashes are trimmed", () => {
+    expect(tmuxWindowName("hello---")).toBe("hello");
+  });
+
+  it("very long input passes through without truncation (no maxLen in this preset)", () => {
+    const long = "a".repeat(200);
+    expect(tmuxWindowName(long)).toBe(long);
+  });
+});
+
 describe("buildITermAttachCommand", () => {
   it("uses the supplied tmux binary and shell-quotes both args", () => {
     const out = buildITermAttachCommand("/opt/homebrew/bin/tmux", "op-agents");

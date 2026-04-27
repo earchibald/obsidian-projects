@@ -38,6 +38,7 @@ generated reference docs) reads from there.
 | :--- | :--- | :--- | :--- |
 | **Issue identity** | `{{id}}` | The issue's canonical id from frontmatter. | `OP-212` |
 |  | `{{title}}` | The issue's title. | `10b: Authoring tutorials with checked-in examples` |
+|  | `{{slug}}` | Branch-safe kebab slug derived from `title` (lowercased, capped at 40 chars on a `-` boundary, leading `NN[a-z]?:` task-prefix stripped). Pair with `{{id}}` for branch suggestions. | `authoring-tutorials-with-checked-in` |
 |  | `{{project}}` | The project slug the issue belongs to. | `obsidian-projects` |
 |  | `{{status}}` | Lifecycle status. | `in-progress` |
 |  | `{{priority}}` | Priority — undefined when not set. | `med` |

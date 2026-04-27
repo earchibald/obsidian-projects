@@ -101,14 +101,21 @@ order: 10
 ---
 
 Always create a feature branch off `main` before making changes. Branch
-names use `<issue-id>-<slug>`. Push commits to that branch only —
-never directly to `main`.
+names use `{{id}}-{{slug}}`. Push commits to that branch only — never
+directly to `main`.
 ```
 
 That's it: three lines of body, six lines of frontmatter. The filename
 basename (`branching.md`) must match the `id:` field
 (`id: branching`) — a mismatch is a `malformed-frontmatter` diagnostic
 and the module is silently dropped.
+
+`{{id}}` and `{{slug}}` are always-on plugin vars: `{{id}}` is the
+issue's canonical id (e.g. `OP-194`); `{{slug}}` is a kebab-cased,
+40-char-capped slug derived from the issue's `title:`. Together they
+produce a branch suggestion the agent can use verbatim. The full
+registry — and the precedence rules for user-declared vars — lives in
+[05-variables-and-templating.md](./05-variables-and-templating.md).
 
 ## 4. See it in the launch preview (60 seconds)
 
@@ -118,22 +125,30 @@ the command palette (⌘P). The launch modal opens.
 Below the **Cancel** / **Launch** buttons, find the **▶ Composed prompt
 preview** disclosure. Click it to expand.
 
-You should see the body of `branching.md` rendered as the kickoff prompt:
+You should see the body of `branching.md` rendered as the kickoff prompt
+**with `{{id}}` and `{{slug}}` substituted** for your current issue. For
+an issue like `OP-194` titled "Add module variables", that renders as:
 
 ```
-▼ Composed prompt preview        187 chars · 1 module · 0 diagnostics
+▼ Composed prompt preview        ~190 chars · 1 module · 0 diagnostics
 
 Always create a feature branch off `main` before making changes. Branch
-names use `<issue-id>-<slug>`. Push commits to that branch only —
-never directly to `main`.
+names use `OP-194-add-module-variables`. Push commits to that branch
+only — never directly to `main`.
 ```
 
 The header line on the right of the disclosure tells you how many
-characters of prompt the composer produced (`187 chars`), how many
-modules contributed (`1 module`), and how many diagnostics fired
-(`0 diagnostics` in the happy path). If the module count is `0 modules`,
-scroll back through this walkthrough — most likely your workflow file's
-`steps:` list doesn't mention `branching` in any kickoff step.
+characters of prompt the composer produced (the count varies with the
+issue's title — this example renders ~190 chars), how many modules
+contributed (`1 module`), and how many diagnostics fired (`0 diagnostics`
+in the happy path). If the module count is `0 modules`, scroll back
+through this walkthrough — most likely your workflow file's `steps:`
+list doesn't mention `branching` in any kickoff step.
+
+If you instead see the literal text `{{id}}-{{slug}}` in the rendered
+preview, the launch context isn't supplying the issue — open the
+launch modal from an issue note (not a project root) so the composer
+has an `IssueEntry` to read `title:` from.
 
 **Click Cancel.** You don't need to launch the agent to verify the
 plumbing.
