@@ -5,7 +5,7 @@ import * as path from "path";
 import { promisify } from "util";
 
 import { LAYOUTS, type LayoutId } from "./layout/layouts";
-import type { RegistryData, SurfaceRef, WindowState } from "./layout/registry";
+import type { AgentMetadata, RegistryData, SurfaceRef, WindowState } from "./layout/registry";
 import { activeWindow, addWindow, assignSurface } from "./layout/registry";
 import type { OpSettings } from "./settingsPure";
 import {
@@ -63,6 +63,13 @@ export interface OrchestrateArgs {
   // (growth into an existing window) does not need additional treatment —
   // `splitSession` does not call ActivateRequest in the first place.
   backgroundLaunch?: boolean;
+  // OP-234: launch-time agent metadata persisted into `SurfaceRef.agent` so
+  // the OP-230 dashboard daemon can pull a snapshot without re-deriving from
+  // scrollback. Both are optional — undefined when no model was resolved
+  // (fallback to the agent CLI's default) or the id is unknown to the
+  // model registry's context-window table.
+  model?: string;
+  contextWindowSize?: number;
 }
 
 export interface OrchestrateResult {
@@ -191,6 +198,7 @@ export async function orchestrateLaunch(
       cellIndex: nextCellIndex,
       layoutId: win.layoutId,
       tmuxWindow: windowName,
+      agent: makeAgentMetadata(args),
     };
     assignSurface(reg, args.issueId, ref);
     await registry.save(reg);
@@ -238,6 +246,7 @@ export async function orchestrateLaunch(
     cellIndex: 0,
     layoutId: ceiling,
     tmuxWindow: windowName,
+    agent: makeAgentMetadata(args),
   };
   assignSurface(reg, args.issueId, ref);
   await registry.save(reg);
@@ -491,6 +500,18 @@ export function firstEmptyCell(
     if (!sessionIds[i]) return i;
   }
   return -1;
+}
+
+// OP-234: assemble the launch-time AgentMetadata block. Only invoked on the
+// fresh-launch paths (split / new-window) — the reattach branch leaves the
+// existing surface's metadata intact because the agent process didn't restart.
+function makeAgentMetadata(args: OrchestrateArgs): AgentMetadata {
+  return {
+    model: args.model,
+    contextWindowSize: args.contextWindowSize,
+    startTime: Date.now(),
+    workdir: args.cwd,
+  };
 }
 
 function pruneWindow(reg: RegistryData, windowId: string): void {

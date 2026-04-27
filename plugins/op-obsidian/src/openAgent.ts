@@ -33,7 +33,7 @@ import {
   openRecoveryDialog,
   type RecoveryDialogOutcome,
 } from "./recoveryDialog";
-import { validateModelName } from "./modelRegistry";
+import { contextWindowFor, validateModelName } from "./modelRegistry";
 
 /** Arguments accepted by {@link openAgent}. */
 export interface OpenAgentArgs {
@@ -278,6 +278,13 @@ export async function openAgent(
     parentId: args.entry.parent ?? readParentId(app, args.entry.path) ?? undefined,
     agentId,
     backgroundLaunch: settings.backgroundLaunch,
+    // OP-234: forward the resolver's canonical model + its registry-known
+    // context-window budget into the orchestrator so the new SurfaceRef.agent
+    // block records them on launch. Both stay undefined when the launch
+    // bypassed the resolver (agentOverride / forcePick / alwaysPick) — the
+    // dashboard renders `model —` / `ctx —` per OP-217 §UI.
+    model: resolved?.canonicalModel,
+    contextWindowSize: contextWindowFor(resolved?.canonicalModel),
     orchestrator: {
       settings,
       registry: {

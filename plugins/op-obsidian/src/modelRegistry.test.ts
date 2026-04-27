@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   MODEL_REGISTRY,
+  contextWindowFor,
   isKnownAgent,
   knownAgents,
   validateModelName,
@@ -169,6 +170,38 @@ describe("validateModelName — input hygiene", () => {
     const r = validateModelName("claude", "ultra", "<defaults>");
     if (r.ok) throw new Error("expected failure");
     expect(r.bad.stepId).toBe("<defaults>");
+  });
+});
+
+describe("contextWindowFor", () => {
+  it("returns 200K for Claude 4.x family canonical ids", () => {
+    expect(contextWindowFor("claude-opus-4-7")).toBe(200_000);
+    expect(contextWindowFor("claude-sonnet-4-6")).toBe(200_000);
+    expect(contextWindowFor("claude-haiku-4-5-20251001")).toBe(200_000);
+  });
+
+  it("returns 1M for Gemini 2.x", () => {
+    expect(contextWindowFor("gemini-2.5-pro")).toBe(1_000_000);
+    expect(contextWindowFor("gemini-2.5-flash")).toBe(1_000_000);
+  });
+
+  it("returns the documented budget for OpenAI/Copilot models", () => {
+    expect(contextWindowFor("gpt-5")).toBe(400_000);
+    expect(contextWindowFor("gpt-4.1")).toBe(1_000_000);
+  });
+
+  it("returns undefined for unknown ids and empty input", () => {
+    expect(contextWindowFor("claude-opus-9-9")).toBeUndefined();
+    expect(contextWindowFor(undefined)).toBeUndefined();
+    expect(contextWindowFor("")).toBeUndefined();
+  });
+
+  it("does NOT resolve aliases — caller must pass canonical ids", () => {
+    // The orchestrator hands `resolved.canonicalModel` here; bare aliases
+    // like "opus" are a contract violation and return undefined rather than
+    // silently resolving. validateModelName is the alias-aware entry point.
+    expect(contextWindowFor("opus")).toBeUndefined();
+    expect(contextWindowFor("sonnet")).toBeUndefined();
   });
 });
 
