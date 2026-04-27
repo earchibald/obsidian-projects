@@ -38,6 +38,30 @@ missing.
 | `~/Library/Application Support/iTerm2/Scripts/AutoLaunch/op-dashboard.config.json` | Optional config. Currently honors `vault_data_paths: [...]` for `data.json` discovery. |
 | `~/Library/Logs/op-dashboard.log` | Rotating log (1 MB × 3 backups). |
 
+## SPA
+
+`client/index.html` is the dashboard UI (shipped by OP-231 — vanilla
+single-file HTML, no build step). The daemon serves it at `/` via
+`web.FileResponse` and falls back to an inline diagnostic placeholder if the
+file is missing in dev/test setups. See the `## UI` section of the OP-217
+spec for the layout contract; the SPA persists `filter` + `sort` in the URL
+hash (`#filter=needs-me&sort=activity`) so reloads — and shared URLs — keep
+the user's view.
+
+To smoke-test the SPA against a local daemon without going through iTerm:
+
+```bash
+python3 plugins/op-obsidian/dashboard/op-dashboard.py --no-iterm --port 49999 &
+curl -s http://127.0.0.1:49999/ | head -3   # should be the SPA <!doctype html>
+TOKEN=$(cat ~/Library/Application\ Support/iTerm2/Scripts/AutoLaunch/op-dashboard.token)
+curl -s "http://127.0.0.1:49999/healthz?token=$TOKEN"
+kill %1
+```
+
+Open `http://127.0.0.1:49999/?token=$TOKEN` in any browser to interact with
+the live UI; that is the same URL the plugin opens via the iTerm browser
+tab driver, so behavior in Safari is the v1 acceptance check.
+
 ## Surface
 
 - `GET /` — serves the SPA from `client/index.html` if present, otherwise a
