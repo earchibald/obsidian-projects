@@ -32,8 +32,24 @@ import {
   type SkippedBinding,
 } from "./hotkeyPreset";
 import { existsSync } from "fs";
+import * as os from "os";
 import * as path from "path";
 import type OpPlugin from "./main";
+import {
+  buildAutoLaunchPaths,
+  buildDashboardUrl,
+  type DashboardTarget as DashboardTargetType,
+} from "./dashboardOpen";
+import { installDaemon as installDashboardDaemon } from "./dashboardSetupModal";
+import {
+  bundledDaemonSource,
+  formatUptime,
+  getDashboardLogPath,
+  probeDaemonStatus,
+  readDashboardToken,
+  revealDashboardLog,
+  type DaemonStatus,
+} from "./dashboardInstall";
 import { applyProjectOrder, listProjects } from "./projects";
 import { AGENT_IDS, type AgentId } from "./agentProfiles";
 import type { ITermPlacement } from "./terminalLaunch";
@@ -50,6 +66,8 @@ import {
   type SidebarDensity,
   type OpSettings,
   type WorkflowMode,
+  DASHBOARD_PORT_MAX,
+  DASHBOARD_PORT_MIN,
   DEFAULT_SETTINGS,
   mergeSettings,
   matchSettingRow,
@@ -69,6 +87,8 @@ export type {
   AgentsSettings,
   DeveloperSettings,
   FlowSettings,
+  DashboardSettings,
+  DashboardTarget,
   OpSettings,
   WorkflowMode,
 } from "./settingsPure";
@@ -96,6 +116,7 @@ type SectionId =
   | "worktreeEnforcement"
   | "flowChaining"
   | "github"
+  | "dashboard"
   | "developer";
 
 /** Subset of SectionId covering only the collapsible Advanced subsections. */
@@ -149,6 +170,12 @@ const ADVANCED_SECTIONS: ReadonlyArray<{
       "Auto-create a GitHub issue on op-new and auto-close it on op-resolve. Requires the gh CLI installed and authenticated.",
   },
   {
+    id: "dashboard",
+    title: "Dashboard",
+    blurb:
+      "Localhost iTerm2 browser-tab dashboard for live observation and steering of launched agents. Configures the OP-230 daemon (port + open-in target) and exposes Install / Restart / Logs / Regenerate-token controls.",
+  },
+  {
     id: "developer",
     title: "Developer commands",
     blurb:
@@ -178,6 +205,15 @@ export class OpSettingsTab extends PluginSettingTab {
    */
   private dragInFlight = false;
 
+  /**
+   * OP-235 review fix #1+#2: scoped to renderDashboard()'s lifetime so its
+   * fire-and-forget probe promises don't paint the badge after the section
+   * has been re-rendered or the tab has been closed. Aborted on each fresh
+   * renderDashboard call and on hide(); callbacks check `signal.aborted`
+   * before mutating DOM so racing probes drop their results.
+   */
+  private dashboardAbort: AbortController | null = null;
+
   constructor(app: App, private plugin: OpPlugin) {
     super(app, plugin);
   }
@@ -186,6 +222,11 @@ export class OpSettingsTab extends PluginSettingTab {
 
   display(): void {
     const { containerEl } = this;
+    // OP-235 review fix #1: cancel any in-flight dashboard probes from a
+    // prior display() so their callbacks don't paint into the about-to-be-
+    // emptied container.
+    this.dashboardAbort?.abort();
+    this.dashboardAbort = null;
     containerEl.empty();
     containerEl.addClass("op-settings");
     this.sectionEls.clear();
@@ -267,6 +308,17 @@ export class OpSettingsTab extends PluginSettingTab {
     if (this.filterQuery) this.applyFilter();
   }
 
+  /**
+   * OP-235 review fix #1: when the Settings tab closes (or the user navigates
+   * away to another tab), abort any in-flight dashboard probes so their
+   * resolved callbacks drop their DOM mutations rather than painting into
+   * detached elements.
+   */
+  hide(): void {
+    this.dashboardAbort?.abort();
+    this.dashboardAbort = null;
+  }
+
   // ─── Section mounting / targeted re-render ──────────────────────────────
 
   /** Create a wrapper element for the section, register it, and render. */
@@ -318,6 +370,7 @@ export class OpSettingsTab extends PluginSettingTab {
       case "worktreeEnforcement":
       case "flowChaining":
       case "github":
+      case "dashboard":
       case "developer":
         return this.renderAdvancedSection(id, el);
       default: {
@@ -345,6 +398,8 @@ export class OpSettingsTab extends PluginSettingTab {
         return this.renderFlowChaining(el);
       case "github":
         return this.renderGithub(el);
+      case "dashboard":
+        return this.renderDashboard(el);
       case "developer":
         return this.renderDeveloper(el);
       default: {
@@ -1669,6 +1724,318 @@ export class OpSettingsTab extends PluginSettingTab {
           await this.plugin.saveSettings();
         }),
       );
+  }
+
+  /**
+   * OP-235: Dashboard subsection (per OP-217 §"New settings subsection").
+   * Five rows — port, target, daemon-status, token, install. Designed to
+   * compose with OP-232's already-landed surface: the "Install daemon"
+   * button calls OP-232's exported `installDaemon(sourcePath, targetPath)`;
+   * the daemon-status row uses a richer `probeDaemonStatus` than the
+   * boolean OP-232 healthz probe so the badge can render uptime/version.
+   *
+   * Daemon-offline degrades gracefully: status shows "◯ not running";
+   * Restart and Regenerate disable. Logs and Install stay enabled — they're
+   * useful precisely when the daemon hasn't started.
+   */
+  private renderDashboard(containerEl: HTMLElement): void {
+    const s = this.plugin.settings;
+    const homedir = os.homedir();
+    const paths = buildAutoLaunchPaths(homedir);
+    const logPath = getDashboardLogPath(homedir);
+
+    // OP-235 review fix #1+#2: scope every async probe to a fresh
+    // AbortController. `display()`, `hide()`, and the start of
+    // `renderDashboard()` itself all abort the prior controller before
+    // wiring a new one, which means even a rapid re-render mid-fetch can't
+    // see two probes' resolutions race onto the same statusBadge.
+    this.dashboardAbort?.abort();
+    const abort = new AbortController();
+    this.dashboardAbort = abort;
+
+    // ── Port ───────────────────────────────────────────────────────────────
+    new Setting(containerEl)
+      .setName("Port")
+      .setDesc(
+        `Localhost port the OP-230 daemon binds to. Default 49217. Allowed range ${DASHBOARD_PORT_MIN}–${DASHBOARD_PORT_MAX}. Restart iTerm2 after changing — the daemon reads this on startup.`,
+      )
+      .addText((t) => {
+        t.inputEl.type = "number";
+        t.inputEl.min = String(DASHBOARD_PORT_MIN);
+        t.inputEl.max = String(DASHBOARD_PORT_MAX);
+        t.setValue(String(s.dashboard.port)).onChange(async (raw) => {
+          const n = parseInt(raw, 10);
+          if (
+            Number.isFinite(n) &&
+            n >= DASHBOARD_PORT_MIN &&
+            n <= DASHBOARD_PORT_MAX
+          ) {
+            s.dashboard.port = n;
+            await this.plugin.saveSettings();
+          }
+        });
+      });
+
+    // ── Open in (radio: system / iTerm browser tab) ───────────────────────
+    const targetSetting = new Setting(containerEl)
+      .setName("Open in")
+      .setDesc(
+        "Where the `op-dashboard` command opens the URL. iTerm browser tab requires the iTerm2 3.6 browser plugin (`brew install --cask itermbrowserplugin`); System browser opens the user's default browser via `window.open()`.",
+      );
+    const radioWrap = targetSetting.controlEl.createDiv({
+      cls: "op-dashboard-radio",
+    });
+    const radioName = "op-dashboard-target";
+    const renderRadio = (value: DashboardTargetType, label: string): void => {
+      const wrap = radioWrap.createEl("label", {
+        cls: "op-dashboard-radio__option",
+      });
+      const input = wrap.createEl("input", {
+        attr: { type: "radio", name: radioName, value },
+      });
+      input.checked = s.dashboard.target === value;
+      input.addEventListener("change", async () => {
+        if (input.checked) {
+          s.dashboard.target = value;
+          await this.plugin.saveSettings();
+        }
+      });
+      wrap.createSpan({ text: ` ${label}` });
+    };
+    renderRadio("system-browser", "System browser");
+    renderRadio("iterm-browser-tab", "iTerm browser tab");
+
+    // ── Daemon status ──────────────────────────────────────────────────────
+    const statusSetting = new Setting(containerEl)
+      .setName("Daemon status")
+      .setDesc("Live probe of GET /healthz on the configured port.");
+    const statusBadge = statusSetting.controlEl.createSpan({
+      cls: "op-dashboard-status",
+      text: "● probing…",
+    });
+    // Both refs live up here so the single `refreshStatus()` defined below
+    // can flip both `disabled` flags from one probe — closes the race the
+    // adversarial review flagged.
+    let restartBtn: HTMLButtonElement | null = null;
+    let regenBtn: HTMLButtonElement | null = null;
+    statusSetting
+      .addButton((b) => {
+        b.setButtonText("Restart")
+          .setTooltip(
+            "POST /restart on the daemon — restarts in place if the daemon supports it.",
+          )
+          .onClick(async () => {
+            const token = readDashboardToken(paths.tokenPath);
+            try {
+              const url = `http://127.0.0.1:${s.dashboard.port}/restart`;
+              const res = await fetch(url, {
+                method: "POST",
+                headers: token ? { "X-Op-Token": token } : {},
+              });
+              if (res.status === 404) {
+                notify(
+                  "Restart endpoint not yet implemented in the daemon. Restart iTerm2 to restart the daemon.",
+                );
+              } else if (!res.ok) {
+                notify(`Restart failed (HTTP ${res.status}).`);
+              } else {
+                notify("Daemon restart requested.");
+              }
+            } catch {
+              notify(
+                "Could not reach the daemon — restart iTerm2 to (re)start it.",
+              );
+            }
+            await refreshStatus();
+          });
+        restartBtn = b.buttonEl;
+      })
+      .addButton((b) =>
+        b
+          .setButtonText("Logs")
+          .setTooltip(`Reveal ${logPath} in Finder.`)
+          .onClick(async () => {
+            try {
+              await revealDashboardLog(logPath);
+            } catch (err) {
+              notify(
+                `Could not reveal log file: ${(err as Error).message}. Path: ${logPath}`,
+              );
+            }
+          }),
+      );
+
+    const refreshStatus = async (): Promise<void> => {
+      const token = readDashboardToken(paths.tokenPath);
+      const status: DaemonStatus = await probeDaemonStatus(
+        s.dashboard.port,
+        token,
+        { signal: abort.signal },
+      );
+      // OP-235 review fix #1+#2: bail before any DOM write if the section
+      // has been re-rendered or the tab has closed since the probe started.
+      // The badge/button references would point at detached elements
+      // otherwise, leaking memory and producing stale UI.
+      if (abort.signal.aborted) return;
+      statusBadge.empty();
+      if (status.authError) {
+        statusBadge.setText("● running (token mismatch)");
+        statusBadge.addClass("op-dashboard-status--warn");
+        statusBadge.removeClass("op-dashboard-status--ok");
+        statusBadge.removeClass("op-dashboard-status--off");
+      } else if (status.running) {
+        const uptime =
+          typeof status.uptimeSec === "number"
+            ? formatUptime(status.uptimeSec)
+            : "—";
+        const ver = status.version ? ` v${status.version}` : "";
+        statusBadge.setText(`● running${ver} · uptime ${uptime}`);
+        statusBadge.addClass("op-dashboard-status--ok");
+        statusBadge.removeClass("op-dashboard-status--warn");
+        statusBadge.removeClass("op-dashboard-status--off");
+      } else {
+        statusBadge.setText("◯ not running");
+        statusBadge.addClass("op-dashboard-status--off");
+        statusBadge.removeClass("op-dashboard-status--ok");
+        statusBadge.removeClass("op-dashboard-status--warn");
+      }
+      // Both buttons disable when the daemon is offline since their POST
+      // endpoints require it. Updating both from the single probe (rather
+      // than firing a second probe further down) closes the race the
+      // adversarial review flagged: two concurrent probes returning out of
+      // order could leave Restart/Regenerate disagreeing about liveness.
+      if (restartBtn) restartBtn.disabled = !status.running;
+      if (regenBtn) regenBtn.disabled = !status.running;
+    };
+
+    // ── Token ──────────────────────────────────────────────────────────────
+    const tokenSetting = new Setting(containerEl)
+      .setName("Token")
+      .setDesc(
+        "Read from the daemon-managed 0600 token file. Regenerate writes a new token via the daemon (invalidates open dashboards with WS close code 4401). Copy URL puts the full http://127.0.0.1:<port>?token=… into the clipboard.",
+      );
+    const tokenInput = tokenSetting.controlEl.createEl("input", {
+      cls: "op-dashboard-token",
+      attr: { type: "password", readonly: "readonly", spellcheck: "false" },
+    });
+    const refreshToken = (): void => {
+      const tok = readDashboardToken(paths.tokenPath);
+      tokenInput.value = tok ?? "";
+      tokenInput.placeholder = tok ? "" : "(daemon not yet started)";
+    };
+    tokenSetting
+      .addButton((b) => {
+        b.setButtonText("Regenerate")
+          .setTooltip("POST /regenerate-token — invalidates open dashboards.")
+          .onClick(async () => {
+            const token = readDashboardToken(paths.tokenPath);
+            try {
+              const url = `http://127.0.0.1:${s.dashboard.port}/regenerate-token`;
+              const res = await fetch(url, {
+                method: "POST",
+                headers: token ? { "X-Op-Token": token } : {},
+              });
+              if (res.status === 404) {
+                notify(
+                  "Regenerate endpoint not yet implemented in the daemon.",
+                );
+              } else if (!res.ok) {
+                notify(`Regenerate failed (HTTP ${res.status}).`);
+              } else {
+                notify(
+                  "Token regenerated. Open dashboards have been invalidated.",
+                );
+              }
+            } catch {
+              notify("Could not reach the daemon to regenerate the token.");
+            }
+            refreshToken();
+          });
+        regenBtn = b.buttonEl;
+      })
+      .addButton((b) =>
+        b
+          .setButtonText("Copy URL")
+          .setTooltip("Copy the dashboard URL (with token) to the clipboard.")
+          .onClick(async () => {
+            const tok = readDashboardToken(paths.tokenPath);
+            const url = tok
+              ? buildDashboardUrl(s.dashboard.port, tok)
+              : `http://127.0.0.1:${s.dashboard.port}/`;
+            try {
+              await navigator.clipboard.writeText(url);
+              notify(
+                tok
+                  ? "Dashboard URL copied to clipboard."
+                  : "URL copied — but no token is available yet (daemon not started).",
+              );
+            } catch {
+              notify(`Clipboard write failed. URL: ${url}`);
+            }
+          }),
+      );
+    refreshToken();
+    // OP-235 review fix #2: a single initial probe drives both Restart and
+    // Regenerate's `disabled` flag through `refreshStatus()`. Earlier drafts
+    // fired a second `probeDaemonStatus` here, which raced against the
+    // status badge's probe and could leave the two controls disagreeing
+    // about liveness.
+    void refreshStatus();
+
+    // ── Install daemon ─────────────────────────────────────────────────────
+    new Setting(containerEl)
+      .setName("Install daemon")
+      .setDesc(
+        "Copy the bundled `op-dashboard.py` (shipped by OP-230) into ~/Library/Application Support/iTerm2/Scripts/AutoLaunch/ — same install path as OP-232's Setup modal. Idempotent. Restart iTerm2 after install/upgrade.",
+      )
+      .addButton((b) =>
+        b
+          .setButtonText("Install / upgrade")
+          .setCta()
+          .onClick(async () => {
+            const sourcePath = this.resolveBundledDashboardSource();
+            if (!sourcePath) {
+              notify(
+                "Could not resolve the bundled daemon path — plugin manifest is missing `dir`. Reinstall the plugin and retry.",
+              );
+              return;
+            }
+            const result = installDashboardDaemon(sourcePath, paths.daemonPath);
+            if (result.ok) {
+              notify(
+                `Installed daemon to ${paths.daemonPath}. Restart iTerm2 to launch it.`,
+              );
+            } else {
+              notify(
+                `Install failed: ${result.reason ?? "unknown error"}. Source: ${sourcePath}.`,
+              );
+            }
+            await refreshStatus();
+          }),
+      );
+  }
+
+  /**
+   * OP-235: resolve the absolute path to the bundled `op-dashboard.py`
+   * shipped under `dashboard/op-dashboard.py` next to `main.js`. Mirrors
+   * the private `resolveBundledDashboardDaemonPath()` already in main.ts —
+   * factored small here rather than promoting the main.ts version to public,
+   * to keep OP-235's diff scoped to the Settings tab.
+   */
+  private resolveBundledDashboardSource(): string | null {
+    const dir = this.plugin.manifest.dir;
+    const adapter = this.app.vault.adapter as unknown as {
+      basePath?: string;
+      getBasePath?: () => string;
+    };
+    const base =
+      typeof adapter.basePath === "string"
+        ? adapter.basePath
+        : typeof adapter.getBasePath === "function"
+        ? adapter.getBasePath()
+        : null;
+    if (!dir || !base) return null;
+    return bundledDaemonSource({ pluginDir: dir, vaultBasePath: base });
   }
 
   private renderDeveloper(containerEl: HTMLElement): void {
