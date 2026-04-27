@@ -59,12 +59,12 @@ export interface ResolveResult {
    */
   agentProbeOk?: boolean;
   /**
-   * OP-221 (gemini review #3, 2nd pass): when `processFrontMatter` throws
-   * AFTER the rename has already moved the file, runResolve catches the
-   * error, continues with task trashing + gh-close, and surfaces the
-   * failure here so the caller can warn the user. The startup heal pass
-   * (`healStaleResolvedStatus`) reconciles the moved file's stale status
-   * + missing `resolved:` on next plugin load.
+   * OP-221: when `processFrontMatter` throws AFTER the rename has already
+   * moved the file, runResolve catches the error, continues with task
+   * trashing + gh-close, and surfaces the failure here so the caller can
+   * warn the user. The startup heal pass (`healStaleResolvedStatus`)
+   * reconciles the moved file's stale status + missing `resolved:` on
+   * next plugin load.
    */
   frontmatterWriteError?: string;
 }
@@ -152,11 +152,11 @@ export async function runResolve(
   // the source path for belt-and-suspenders.
   await app.fileManager.renameFile(file, targetPath);
 
-  // OP-221 follow-up (gemini review #2): if processFrontMatter throws
-  // (malformed YAML, sync-engine lock), we MUST still trash linked tasks
-  // and run the gh-close hook. Swallowing here is intentional — the heal
-  // pass on next plugin load (`healStaleResolvedStatus`) will catch any
-  // file that ended up moved with stale status.
+  // OP-221: if processFrontMatter throws (malformed YAML, sync-engine
+  // lock), we MUST still trash linked tasks and run the gh-close hook.
+  // Swallowing here is intentional — the heal pass on next plugin load
+  // (`healStaleResolvedStatus`) will catch any file that ended up moved
+  // with stale status.
   let frontmatterWriteFailed: string | undefined;
   try {
     await app.fileManager.processFrontMatter(file, (fm) => {

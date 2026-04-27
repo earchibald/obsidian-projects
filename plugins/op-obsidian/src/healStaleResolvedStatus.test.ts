@@ -39,12 +39,16 @@ interface FakeFile {
   path: string;
   fm: Record<string, any>;
   shouldThrow?: boolean;
+  /** Optional mtime (epoch ms) — used by the heal pass to backfill `resolved:`. */
+  mtime?: number;
 }
 
 function makeApp(files: FakeFile[]) {
   const tfiles = new Map<string, any>(
     files.map((f) => {
-      const tf = Object.assign(new FakeTFile(f.path), f);
+      const tf = Object.assign(new FakeTFile(f.path), f, {
+        stat: { mtime: f.mtime ?? 0 },
+      });
       return [f.path, tf];
     }),
   );
@@ -111,7 +115,7 @@ describe("healStaleResolvedStatus", () => {
     expect(liveFile.fm.status).toBe("in-progress");
   });
 
-  it("strips zombie agent / agent_session / launch_vars while healing status", async () => {
+  it("strips launch_vars but PRESERVES agent / agent_session (live-agent safety)", async () => {
     const drift = entry({
       id: "OP-197",
       path: "Projects/p/RESOLVED ISSUES/OP-197.md",
@@ -138,22 +142,47 @@ describe("healStaleResolvedStatus", () => {
 
     expect(file.fm.status).toBe("resolved");
     expect(file.fm.resolved).toBe("2026-04-26");
-    expect(file.fm.agent).toBeUndefined();
-    expect(file.fm.agent_session).toBeUndefined();
+    // Agent metadata preserved — heal does not orphan a possibly-live agent.
+    expect(file.fm.agent).toBe("claude");
+    expect(file.fm.agent_session).toBe("tmux:abc");
+    // launch_vars (pure settings — no live process) is safely cleared.
     expect(file.fm.launch_vars).toBeUndefined();
     expect(file.fm.custom_field).toBe("keep me");
   });
 
-  it("backfills `resolved:` to today when missing (catch-path scenario)", async () => {
+  it("backfills `resolved:` from file.stat.mtime when missing", async () => {
     const drift = entry({
       id: "OP-198",
       path: "Projects/p/RESOLVED ISSUES/OP-198.md",
       status: "in-progress" as IssueStatus,
       resolvedFolder: true,
     });
+    const mtime = Date.UTC(2026, 0, 15, 12, 0, 0); // 2026-01-15
     const file: FakeFile = {
       path: drift.path,
       fm: { id: "OP-198", status: "in-progress" },
+      mtime,
+    };
+    const app = makeApp([file]);
+    const store = makeStore([drift]);
+
+    await healStaleResolvedStatus(app, store);
+
+    expect(file.fm.status).toBe("resolved");
+    expect(file.fm.resolved).toBe("2026-01-15");
+  });
+
+  it("falls back to today's date when mtime is unavailable", async () => {
+    const drift = entry({
+      id: "OP-199",
+      path: "Projects/p/RESOLVED ISSUES/OP-199.md",
+      status: "in-progress" as IssueStatus,
+      resolvedFolder: true,
+    });
+    const file: FakeFile = {
+      path: drift.path,
+      fm: { id: "OP-199", status: "in-progress" },
+      mtime: 0, // unavailable
     };
     const app = makeApp([file]);
     const store = makeStore([drift]);

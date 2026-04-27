@@ -36,25 +36,27 @@ export async function healStaleResolvedStatus(
       errors.push({ path: e.path, error: "file not found in vault" });
       continue;
     }
+    // Backfill `resolved:` with the file's mtime when the field is missing
+    // (catch-path scenario in `runResolve`: rename succeeded but the
+    // frontmatter write threw, so neither `status:` nor `resolved:` was
+    // ever applied). mtime ≈ rename time on the moved file, which is the
+    // closest proxy to the original resolve moment. Falls back to today
+    // if stat is unavailable.
+    const fallbackResolved = isoDate(file.stat?.mtime) ?? today();
+    // `launch_vars:` is pure settings — no live process attached — so
+    // clearing it is safe and matches `runResolve`'s cleanup.
+    // We deliberately do NOT touch `agent:` / `agent_session:` here:
+    // copilot review #4 — a long-running agent attached to a drifted
+    // file would be orphaned by an unconditional clear. The OP-156 §5
+    // keep-alive logic in `runResolve` and the sidebar In flight tab
+    // already handle agent+resolvedFolder cases correctly; users can
+    // detach a stale agent via the existing command.
     try {
       await app.fileManager.processFrontMatter(file, (fm) => {
         fm.status = "resolved";
-        // Mirror runResolve's frontmatter cleanup: a drifted file may also
-        // carry zombie `agent:` / `agent_session:` / `launch_vars:` entries
-        // that the original resolve flow would have removed but that the
-        // race left in place. Clearing them here keeps the healed file in
-        // a state indistinguishable from a clean resolve.
-        delete fm.agent;
-        delete fm.agent_session;
         delete fm.launch_vars;
-        // Gemini review #2 (2nd pass): if `resolved:` is missing too
-        // (resolve.ts catch-path scenario where processFrontMatter threw
-        // before either field was written), set today as a best-effort
-        // fallback. It may be off by hours/days from the actual rename
-        // time, but a missing date breaks downstream sort/filter/query
-        // semantics; today's date is recoverable, absence is not.
         if (typeof fm.resolved !== "string" || fm.resolved.length === 0) {
-          fm.resolved = new Date().toISOString().slice(0, 10);
+          fm.resolved = fallbackResolved;
         }
       });
       fixed.push({ path: e.path, from: e.status });
@@ -63,4 +65,13 @@ export async function healStaleResolvedStatus(
     }
   }
   return { scanned: issues.length, fixed, errors };
+}
+
+function today(): string {
+  return new Date().toISOString().slice(0, 10);
+}
+
+function isoDate(epochMs: number | undefined): string | undefined {
+  if (typeof epochMs !== "number" || !Number.isFinite(epochMs) || epochMs <= 0) return undefined;
+  return new Date(epochMs).toISOString().slice(0, 10);
 }
