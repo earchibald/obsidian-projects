@@ -297,6 +297,53 @@ class MonotonicAndConcurrencyTests(unittest.TestCase):
         _asyncio.run(_check())
 
 
+class StaticIndexPathTests(unittest.TestCase):
+    """OP-231 ships client/index.html — daemon must serve it instead of the
+    diagnostic placeholder, and the file must contain the SPA's load-bearing
+    markers so a regression here surfaces in the unit suite, not just at
+    smoke-test time.
+    """
+
+    def test_static_index_path_resolves_to_shipped_spa(self):
+        path = opd.static_index_path()
+        self.assertIsNotNone(path, "client/index.html must ship under dashboard/")
+        self.assertTrue(path.is_file())
+        # Sibling of op-dashboard.py, under client/.
+        self.assertEqual(path.parent.name, "client")
+        self.assertEqual(path.parent.parent, HERE)
+
+    def test_spa_contains_required_hooks(self):
+        path = opd.static_index_path()
+        body = path.read_text(encoding="utf-8")
+        # Token-from-URL: SPA reads ?token=… and uses it on the WS upgrade.
+        self.assertIn("URLSearchParams", body)
+        self.assertIn('"token"', body)
+        # WebSocket upgrade against /ws.
+        self.assertIn("WebSocket(", body)
+        self.assertIn("/ws?token=", body)
+        # Frame reducer covers all server-pushed types.
+        for frame in ("snapshot", "session_added", "session_updated", "session_removed", "error"):
+            self.assertIn(f'"{frame}"', body, f"missing handler for frame type {frame}")
+        # Client→server commands.
+        for cmd in ("send", "quit", "close_pane", "reveal"):
+            self.assertIn(f'"{cmd}"', body, f"missing client command {cmd}")
+        # Filter chips and sort dropdown — required UI surface per OP-217 spec.
+        self.assertIn('class="chip"', body)
+        self.assertIn('data-hook="sort"', body)
+        # Reconnect schedule per spec: 5s × 12 = 60s.
+        self.assertIn("5000", body)
+        self.assertIn("max: 12", body)
+
+    def test_diagnostic_html_is_fallback_only(self):
+        # The DIAGNOSTIC_HTML constant still exists (so the daemon serves
+        # something useful when the SPA file is missing in dev/test setups).
+        # That string MUST NOT appear inside the shipped SPA — otherwise we'd
+        # mistake the placeholder for the real UI.
+        path = opd.static_index_path()
+        body = path.read_text(encoding="utf-8")
+        self.assertNotIn("daemon — placeholder", body)
+
+
 class TmuxSessionRegexTests(unittest.TestCase):
     def test_matches(self):
         for s in ["op-agents", "op-agents-1", "op-agents-22", "op-agents-100"]:
