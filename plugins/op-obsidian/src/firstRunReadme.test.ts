@@ -49,7 +49,7 @@ describe("DEMO_ISSUES", () => {
 
   it("renders an issue note with valid frontmatter", () => {
     const note = buildDemoIssueNote(DEMO_ISSUES[0]);
-    expect(note).toContain("id: OPD-1");
+    expect(note).toContain("id: DEMO-1");
     expect(note).toContain("type: issue");
     expect(note).toContain("status: open");
     expect(note).toContain("project: op-demo");

@@ -442,7 +442,7 @@ Use `createFragment` builder, set timeout `0` for actionable ones (sticky until 
 
 - A 4-line "what is this" intro.
 - The hotkey preset table from §3, with a working **Apply preset** chip (CM6 widget calling `applyPreset()`).
-- One **Start tour** chip that scaffolds a demo project (`op-demo`, prefix `OPD`) with three pre-seeded issues — the user can `/op:resolve` them as they explore. Removable in one click.
+- One **Start tour** chip that scaffolds a demo project (`op-demo`, prefix `DEMO`) with three pre-seeded issues — the user can `/op:resolve` them as they explore. Removable in one click.
 - A footer link to the GitHub repo.
 
 No modals. The README is the tour. Dismissed by deleting the file (we don't recreate it).
