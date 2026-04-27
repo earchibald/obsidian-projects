@@ -168,7 +168,7 @@ describe("slugify", () => {
       expect(slugify("1: 2: 3", { caseFold: true, stripLeadingTaskPrefix: false })).toBe("1-2-3");
     });
 
-    it("strips an oversized numeric-only prefix like `1234567890b:`", () => {
+    it("strips an oversized numeric-letter prefix like `1234567890b:`", () => {
       // The regex matches any run of digits (\d+) regardless of length, so
       // very large task numbers are still stripped — intentional.
       expect(slugify("1234567890b: long", { caseFold: true, stripLeadingTaskPrefix: true })).toBe("long");
