@@ -63,6 +63,12 @@ export interface LaunchArgs {
   // skips the `ActivateRequest`. No effect on Terminal.app — Terminal has
   // no equivalent non-activating launch path. Defaults to false.
   backgroundLaunch?: boolean;
+  // OP-234: forwarded into `OrchestrateArgs` so the orchestrator can record
+  // them on the new `SurfaceRef.agent` block. Only consumed on the
+  // orchestrator path (iTerm + orchestrator.enabled); the legacy tmux -CC
+  // attach path doesn't track per-agent metadata.
+  model?: string;
+  contextWindowSize?: number;
 }
 
 export interface LaunchResult {
@@ -106,6 +112,8 @@ export async function launchInTerminal(args: LaunchArgs): Promise<LaunchResult> 
         tmuxBinary: args.tmuxBinary,
         baseTmuxSession: SHARED_TMUX_SESSION,
         backgroundLaunch: args.backgroundLaunch,
+        model: args.model,
+        contextWindowSize: args.contextWindowSize,
       },
       args.orchestrator.settings,
       args.orchestrator.registry,

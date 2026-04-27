@@ -201,6 +201,46 @@ export function isKnownAgent(agent: string): boolean {
   );
 }
 
+// OP-234: per-canonical-model context-window budgets in tokens. Used by the
+// orchestrator to populate `SurfaceRef.agent.contextWindowSize` so the OP-230
+// dashboard daemon can render `ctx <pct>%` without re-deriving the budget from
+// scrollback. Unknown ids return `undefined` — the daemon degrades to `ctx —`
+// per the OP-217 spec, so silence is preferred over guessing.
+//
+// Sources: Anthropic / Google / GitHub model docs at the time of writing.
+// Adding a new pinned id: add it to `MODEL_CONTEXT_WINDOWS` *and* to the
+// agent's `versioned` set above.
+const MODEL_CONTEXT_WINDOWS: Record<string, number> = {
+  // Claude 4.x family — all 200K input window.
+  "claude-opus-4-7": 200_000,
+  "claude-opus-4-6": 200_000,
+  "claude-opus-4-5": 200_000,
+  "claude-sonnet-4-6": 200_000,
+  "claude-sonnet-4-5": 200_000,
+  "claude-haiku-4-5": 200_000,
+  "claude-haiku-4-5-20251001": 200_000,
+  // Gemini 2.x — 1M-token context for Pro / Flash; 2.0 Pro/Flash same budget.
+  "gemini-2.5-pro": 1_000_000,
+  "gemini-2.5-flash": 1_000_000,
+  "gemini-2.0-pro": 1_000_000,
+  "gemini-2.0-flash": 1_000_000,
+  // OpenAI / Copilot — GPT-5 ships a 400K window; GPT-4.1 ships 1M.
+  "gpt-5": 400_000,
+  "gpt-4.1": 1_000_000,
+};
+
+/**
+ * Look up the context-window size (in tokens) for a canonical model id. Pass
+ * the resolver's `canonicalModel` here — aliases are not accepted because the
+ * registry only carries pinned ids. Returns `undefined` for unknown / missing
+ * ids so the OP-234 metadata block can record `contextWindowSize: undefined`
+ * and the dashboard renders `ctx —` per OP-217 §UI.
+ */
+export function contextWindowFor(canonicalId: string | undefined): number | undefined {
+  if (!canonicalId) return undefined;
+  return MODEL_CONTEXT_WINDOWS[canonicalId];
+}
+
 /**
  * Test-only invariant check: every alias must resolve to a known versioned id
  * for the same agent. Exported so the test suite can assert it; not used at
