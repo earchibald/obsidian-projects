@@ -1471,3 +1471,43 @@ a.op-sidebar__agent:hover {
   color: var(--text-muted);
   word-break: break-all;
 }
+
+/* OP-235: Dashboard Settings subsection. Lives alongside OP-232's
+ * `.op-dashboard-setup__*` modal styles — distinct namespace. */
+
+.op-dashboard-radio {
+  display: inline-flex;
+  gap: 1.25rem;
+  align-items: center;
+}
+
+.op-dashboard-radio__option {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  cursor: pointer;
+  user-select: none;
+}
+
+.op-dashboard-status {
+  font-variant-numeric: tabular-nums;
+  margin-right: 0.75rem;
+}
+
+.op-dashboard-status--ok {
+  color: var(--color-green, var(--text-success));
+}
+
+.op-dashboard-status--warn {
+  color: var(--color-orange, var(--text-warning));
+}
+
+.op-dashboard-status--off {
+  color: var(--text-muted);
+}
+
+.op-dashboard-token {
+  font-family: var(--font-monospace, monospace);
+  width: 18ch;
+  margin-right: 0.5rem;
+}
