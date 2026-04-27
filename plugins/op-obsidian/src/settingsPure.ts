@@ -78,6 +78,25 @@ export interface DeveloperSettings {
   showDevCommands: boolean;
 }
 
+export type DashboardTarget = "iterm-browser-tab" | "system-browser";
+
+export const DASHBOARD_PORT_MIN = 1024;
+export const DASHBOARD_PORT_MAX = 65535;
+export const DASHBOARD_PORT_DEFAULT = 49217;
+
+export interface DashboardSettings {
+  // Port the OP-230 daemon binds on `127.0.0.1`. Default 49217 (per the
+  // OP-217 product spec). OP-235 surfaces the numeric input that writes
+  // here; this issue (OP-232) only reads it when building the dashboard URL.
+  port: number;
+  // Where `op-dashboard` opens the URL. Default `iterm-browser-tab` so users
+  // get the dashboard inside the same iTerm window they already have open
+  // for terminal work; `system-browser` is the documented fallback when the
+  // iTerm browser plugin isn't installed or the iTerm WS API rejects the
+  // browser-profile-property override.
+  target: DashboardTarget;
+}
+
 export interface FlowSettings {
   // When true, the SessionEnd hook auto-launches the next stage per the
   // flowOrchestrator transition matrix. Default false so the v1 ship doesn't
@@ -119,6 +138,10 @@ export interface OpSettings {
   agents: AgentsSettings;
   developer: DeveloperSettings;
   flow: FlowSettings;
+  /** OP-232: dashboard URL build settings. OP-235 will land the Settings UI
+   *  subsection that surfaces these to the user; OP-232 only consumes them
+   *  in the `op-dashboard` palette command + URI handler. */
+  dashboard: DashboardSettings;
   orchestrator: OrchestratorSettings;
   orchestratorState: RegistryData;
   // User-curated display order for project pickers, by slug. Slugs not in this
@@ -206,6 +229,10 @@ export const DEFAULT_SETTINGS: OpSettings = {
     autoAdvance: false,
     autoMerge: false,
     headlessTimeoutMs: FLOW_HEADLESS_TIMEOUT_DEFAULT_MS,
+  },
+  dashboard: {
+    port: DASHBOARD_PORT_DEFAULT,
+    target: "iterm-browser-tab",
   },
   orchestrator: {
     enabled: false,
@@ -344,6 +371,20 @@ export function mergeSettings(loaded: unknown): OpSettings {
     if (typeof f.autoMerge === "boolean") base.flow.autoMerge = f.autoMerge;
     if (typeof f.headlessTimeoutMs === "number" && f.headlessTimeoutMs > 0) {
       base.flow.headlessTimeoutMs = Math.floor(f.headlessTimeoutMs);
+    }
+  }
+  if (l.dashboard && typeof l.dashboard === "object") {
+    const d = l.dashboard as Partial<DashboardSettings>;
+    if (
+      typeof d.port === "number" &&
+      Number.isFinite(d.port) &&
+      d.port >= DASHBOARD_PORT_MIN &&
+      d.port <= DASHBOARD_PORT_MAX
+    ) {
+      base.dashboard.port = Math.floor(d.port);
+    }
+    if (d.target === "iterm-browser-tab" || d.target === "system-browser") {
+      base.dashboard.target = d.target;
     }
   }
   if (typeof l.workflowMode === "string" && WORKFLOW_MODES.has(l.workflowMode as WorkflowMode)) {
