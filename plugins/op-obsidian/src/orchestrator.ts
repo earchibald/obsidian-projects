@@ -505,12 +505,15 @@ export function labelWithId(issueId: string, issueTitle?: string): string {
 
 // OP-179: append ` [Parent: <PARENT-ID>]` to an already-composed label when
 // the issue has a parent. Returns `label` unchanged when `parentId` is
-// undefined or empty (so non-child issues keep OP-177's exact label shape).
-// Caller is expected to pass an `oscSafe`-stripped parentId — the suffix is
-// rendered verbatim into the OSC 1/2 payload.
+// undefined, empty, or whitespace-only (matching `readParentId`'s
+// `raw.trim().length > 0` guard so a `parent:` field that is all spaces
+// doesn't produce a `[Parent:    ]` suffix). Caller is expected to pass an
+// `oscSafe`-stripped parentId — the trimmed value is rendered verbatim into
+// the OSC 1/2 payload.
 export function labelWithParent(label: string, parentId?: string): string {
-  if (!parentId || parentId.length === 0) return label;
-  return `${label} [Parent: ${parentId}]`;
+  const trimmed = parentId?.trim();
+  if (!trimmed) return label;
+  return `${label} [Parent: ${trimmed}]`;
 }
 
 // iTerm's `create window with default profile command "..."` takes a bash
