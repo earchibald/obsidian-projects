@@ -270,6 +270,12 @@ export async function openAgent(
     tmuxBinary: settings.tmuxBinary,
     issueId: args.entry.id,
     issueTitle: args.entry.title,
+    // OP-179: append ` [Parent: <PARENT-ID>]` to the iTerm tab/window/session
+    // label when this issue has a parent. Sourced from the parsed entry; if
+    // the entry's `parent` is missing (legacy issue not yet re-indexed), fall
+    // back to a fresh metadata-cache read so newly-set parents take effect on
+    // the next launch without an editor round-trip.
+    parentId: args.entry.parent ?? readParentId(app, args.entry.path) ?? undefined,
     agentId,
     backgroundLaunch: settings.backgroundLaunch,
     orchestrator: {

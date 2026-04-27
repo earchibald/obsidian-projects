@@ -41,6 +41,12 @@ export interface OrchestrateArgs {
   // basename (e.g. "OP-94 iterm window title shows …"). Falls back to
   // issueId when empty.
   issueTitle?: string;
+  // OP-179: parent issue id (e.g. "OP-149"). When set, all visible labels
+  // (OSC 1 tab name, OSC 2 window title, iTerm session-name slot) carry a
+  // trailing ` [Parent: <PARENT-ID>]` so a child issue's pane is visibly
+  // tagged with its umbrella. Empty/missing → no suffix (no breaking change
+  // for non-child issues; OP-177's exact label shape).
+  parentId?: string;
   agentId: string;
   cwd: string;
   binary: string;
@@ -85,7 +91,10 @@ export async function orchestrateLaunch(
   // Re-launching an existing issue: if the session still exists in iTerm,
   // just select it. Otherwise fall through to fresh assignment — the user
   // likely closed the pane, and the issueId → session mapping is stale.
-  const sessionTitle = labelWithId(args.issueId, args.issueTitle);
+  const sessionTitle = labelWithParent(
+    labelWithId(oscSafe(args.issueId), args.issueTitle !== undefined ? oscSafe(args.issueTitle) : undefined),
+    args.parentId !== undefined ? oscSafe(args.parentId) : undefined,
+  );
   const existing = reg.surfaces[args.issueId];
   if (existing && (await sessionExists(existing.sessionId))) {
     await selectSession(existing.sessionId);
@@ -282,6 +291,7 @@ async function writeViewScript({ args, tmuxSession, tmuxWindow }: ViewArgs): Pro
     tmuxWindow,
     issueId: args.issueId,
     issueTitle: args.issueTitle,
+    parentId: args.parentId,
   });
   await fs.writeFile(viewPath, script, { mode: 0o755 });
   return viewPath;
@@ -293,6 +303,9 @@ interface BuildViewArgs {
   tmuxWindow: string;
   issueId: string;
   issueTitle?: string;
+  // OP-179: when set, the OSC 1/2 payloads get a ` [Parent: <PARENT-ID>]`
+  // suffix. `oscSafe` is applied before the suffix is composed.
+  parentId?: string;
 }
 
 // OP-172: emit BOTH OSC 1 (icon/tab name) and OSC 2 (window title) before
@@ -313,12 +326,17 @@ interface BuildViewArgs {
 // `oscSafe` is applied to id and title *before* `labelWithId` so the dedup
 // check operates on stripped values — a control char injected between the
 // id and its separator cannot bypass the guard.
+//
+// OP-179: when `parentId` is set, append ` [Parent: <PARENT-ID>]` after the
+// id+title prefix via `labelWithParent`. Empty/missing parent keeps OP-177's
+// exact label shape — non-child issues are unchanged.
 export function buildViewScript({
   tmuxBinary,
   tmuxSession,
   tmuxWindow,
   issueId,
   issueTitle,
+  parentId,
 }: BuildViewArgs): string {
   const tmux = shSingleQuote(tmuxBinary);
   const groupSessName = `view-${issueId}`;
@@ -330,7 +348,10 @@ export function buildViewScript({
   // control char injected between the id and its separator (e.g. "OP-177\x07
   // title") cannot bypass `labelWithId`'s prefix guard.  The result is
   // already OSC-safe — no second pass needed.
-  const label = labelWithId(oscSafe(issueId), issueTitle !== undefined ? oscSafe(issueTitle) : undefined);
+  const label = labelWithParent(
+    labelWithId(oscSafe(issueId), issueTitle !== undefined ? oscSafe(issueTitle) : undefined),
+    parentId !== undefined ? oscSafe(parentId) : undefined,
+  );
   const tabName = shSingleQuote(label);
   const windowTitle = shSingleQuote(label);
   // OP-178: the per-pane grouped session shares its window list with the
@@ -480,6 +501,16 @@ export function labelWithId(issueId: string, issueTitle?: string): string {
   // Match id followed by any non-word char (space, colon, dash…) OR end-of-string.
   if (new RegExp(`^${escapedId}(?:\\W|$)`).test(issueTitle)) return issueTitle;
   return `${issueId} ${issueTitle}`;
+}
+
+// OP-179: append ` [Parent: <PARENT-ID>]` to an already-composed label when
+// the issue has a parent. Returns `label` unchanged when `parentId` is
+// undefined or empty (so non-child issues keep OP-177's exact label shape).
+// Caller is expected to pass an `oscSafe`-stripped parentId — the suffix is
+// rendered verbatim into the OSC 1/2 payload.
+export function labelWithParent(label: string, parentId?: string): string {
+  if (!parentId || parentId.length === 0) return label;
+  return `${label} [Parent: ${parentId}]`;
 }
 
 // iTerm's `create window with default profile command "..."` takes a bash
