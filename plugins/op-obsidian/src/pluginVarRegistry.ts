@@ -1,4 +1,5 @@
 import type { AgentProfile } from "./agentProfiles";
+import { slugify } from "./slug";
 import type { IssueEntry } from "./types";
 
 // Always-on plugin vars surfaced to workflow-module templates. This file is
@@ -115,6 +116,19 @@ export const PLUGIN_VAR_REGISTRY: Readonly<Record<string, PluginVar>> = Object.f
     description: "The issue's priority (low, med, high) — undefined if not set.",
     example: "high",
     compute: (ctx) => ctx.priority,
+  },
+  slug: {
+    name: "slug",
+    description:
+      "Branch-safe kebab-cased slug derived from `title` (lowercase, capped at 40 chars on a `-` boundary, leading `NN[a-z]?:` task-prefix stripped) — undefined if `title` collapses to empty.",
+    example: "add-slug-plugin-var-extract-shared",
+    compute: (ctx) => {
+      if (ctx.title === undefined) return undefined;
+      return (
+        slugify(ctx.title, { caseFold: true, maxLen: 40, stripLeadingTaskPrefix: true }) ||
+        undefined
+      );
+    },
   },
 
   // Issue links

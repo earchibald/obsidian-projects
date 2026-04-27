@@ -5,6 +5,7 @@ import * as path from "path";
 import { promisify } from "util";
 
 import { activeWindowId, createTab, createWindow } from "./iterm/driver";
+import { slugify } from "./slug";
 
 const pExecFile = promisify(execFile);
 
@@ -316,13 +317,11 @@ export function buildITermAttachCommand(tmuxBinary: string, session: string): st
 // Sanitize arbitrary text into a tmux-safe window name. tmux uses `:`
 // as the session:window separator in target specs, so we map it (and
 // anything other than alnum/dash/underscore) to a dash, collapse runs,
-// and trim. Falls back to "agent" for empty input.
+// and trim. Falls back to "agent" for empty input. Case is preserved
+// because users grep tmux windows by issue id (`OP-220`), which is
+// upper-case by convention.
 export function tmuxWindowName(issueId: string): string {
-  const safe = issueId
-    .replace(/[^A-Za-z0-9_-]+/g, "-")
-    .replace(/-+/g, "-")
-    .replace(/^-|-$/g, "");
-  return safe || "agent";
+  return slugify(issueId, { allowUnderscore: true, fallback: "agent" });
 }
 
 function shSingleQuote(s: string): string {
