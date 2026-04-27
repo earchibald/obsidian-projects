@@ -61,6 +61,7 @@ import { resolveRepoPath } from "./repoPath";
 import { writeUriResponse, type UriResponsePayload } from "./uriResponse";
 import { normalizeUriParams, collectRepeated, parseLaunchVarsFromUri } from "./uriParams";
 import { runResolve, type ResolveArgs } from "./resolve";
+import { healStaleResolvedStatus } from "./healStaleResolvedStatus";
 import { shouldAutoResolve } from "./autoResolveOnStatusChange";
 import {
   findIssueById as findIssueByIdPure,
@@ -399,6 +400,64 @@ export default class OpPlugin extends Plugin {
       ).catch((err) => {
         console.error("[op-obsidian] first-run readme scaffold failed", err);
       });
+      // OP-221: clean up legacy data drift where a pre-OP-221 `runResolve`
+      // race left an issue in `RESOLVED ISSUES/` with a non-terminal
+      // `status:`. Idempotent — no-op on a clean vault. The fix in
+      // `resolve.ts` (rename → write) prevents new drift; this pass heals
+      // historical state.
+      //
+      // `metadataCache.on("resolved")` fires *each time* a batch of pending
+      // parse work completes — including partial batches mid-load on a
+      // large vault. Single-firing on the first event would race the
+      // IssueStore's hydration. Debounce instead: reset a 750ms
+      // quiet-window timer on every `resolved` event; only fire once the
+      // cache has been quiet for that long. The single-fire latch ensures
+      // subsequent per-edit `resolved` events after the heal don't
+      // re-trigger it. The 4s hard ceiling guarantees forward progress on
+      // a vault that never quiets (e.g., open with a sync engine
+      // continuously touching files).
+      let healFired = false;
+      let healDebounce: number | undefined;
+      const HEAL_QUIET_MS = 750;
+      const HEAL_HARD_CEILING_MS = 4000;
+      const fireHeal = () => {
+        if (healFired) return;
+        healFired = true;
+        if (healDebounce !== undefined) window.clearTimeout(healDebounce);
+        // Reading from the live store is correct here: the store hydrates
+        // synchronously inside its own onLayoutReady callback (registered
+        // before this one), so by the time the debounce window settles
+        // the store reflects the on-disk vault state.
+        void healStaleResolvedStatus(this.app, this.store)
+          .then((res) => {
+            if (res.fixed.length > 0) {
+              console.info(
+                `[op-obsidian] healed ${res.fixed.length} stale-status issue(s) in RESOLVED ISSUES/`,
+                res.fixed,
+              );
+            }
+            if (res.errors.length > 0) {
+              console.warn("[op-obsidian] healStaleResolvedStatus errors", res.errors);
+            }
+          })
+          .catch((err) => {
+            console.error("[op-obsidian] healStaleResolvedStatus threw", err);
+          });
+      };
+      const armDebounce = () => {
+        if (healFired) return;
+        if (healDebounce !== undefined) window.clearTimeout(healDebounce);
+        healDebounce = window.setTimeout(fireHeal, HEAL_QUIET_MS);
+      };
+      const ref = this.app.metadataCache.on("resolved", armDebounce);
+      this.registerEvent(ref);
+      // Arm immediately too — if the cache is already settled at
+      // onLayoutReady (small vault), no further `resolved` events fire
+      // and the debounce alone would never trip.
+      armDebounce();
+      // Hard ceiling: even if `resolved` keeps firing (busy vault, sync
+      // engine churn), heal at this point so we make forward progress.
+      window.setTimeout(fireHeal, HEAL_HARD_CEILING_MS);
     });
 
     // OP-151 (§2) + OP-162 (§11): note-level decoration infra. The
@@ -2445,6 +2504,22 @@ export default class OpPlugin extends Plugin {
             ]
           : [],
       });
+
+      // OP-221: when `processFrontMatter` failed after the rename
+      // succeeded, the file is moved but its status/resolved frontmatter
+      // wasn't written. Warn the user so they know the heal pass will
+      // reconcile it on next reload — silently returning success would
+      // mask the inconsistency.
+      if (result.frontmatterWriteError && result.issueId) {
+        notify(
+          `op: ${result.issueId} resolved (file moved) but frontmatter write failed — will heal on next reload`,
+        );
+        console.warn(
+          "[op-obsidian] resolve frontmatterWriteError",
+          result.issueId,
+          result.frontmatterWriteError,
+        );
+      }
 
       // §5: surface a second, actionable Notice when `agent:` survived the
       // resolve (live tmux window) or when tmux was unreachable. [Open agent]
