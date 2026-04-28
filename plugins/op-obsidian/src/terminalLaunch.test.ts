@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   SHARED_TMUX_SESSION,
+  buildAgentExecCommand,
   buildITermAttachCommand,
   buildInnerScript,
   buildPrepScript,
@@ -193,5 +194,34 @@ describe("buildITermAttachCommand", () => {
   it("escapes embedded single quotes in the binary path", () => {
     const out = buildITermAttachCommand("/path/with'quote/tmux", "op-agents");
     expect(out).toBe(`'/path/with'\\''quote/tmux' -CC attach -t 'op-agents'`);
+  });
+});
+
+describe("buildAgentExecCommand", () => {
+  it("passes the prompt positionally for claude-style CLIs", () => {
+    expect(buildAgentExecCommand({
+      agentId: "claude",
+      binary: "claude",
+      launchFlags: ["--permission-mode", "auto"],
+      promptRef: '"$PROMPT"',
+    })).toBe("'claude' '--permission-mode' 'auto' \"$PROMPT\"");
+  });
+
+  it("uses copilot's interactive prompt flag", () => {
+    expect(buildAgentExecCommand({
+      agentId: "copilot",
+      binary: "copilot",
+      launchFlags: ["--model", "gpt-5"],
+      promptRef: '"$PROMPT"',
+    })).toBe("'copilot' '--model' 'gpt-5' -i \"$PROMPT\"");
+  });
+
+  it("omits prompt wiring in debug launches", () => {
+    expect(buildAgentExecCommand({
+      agentId: "copilot",
+      binary: "copilot",
+      launchFlags: [],
+      promptRef: "",
+    })).toBe("'copilot'");
   });
 });
