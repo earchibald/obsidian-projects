@@ -62,6 +62,20 @@ describe("buildAgentInnerScript — OSC 1337 SetUserVar=op_issue (OP-233)", () =
     expect(oscIdx).toBeGreaterThan(0);
     expect(execIdx).toBeGreaterThan(oscIdx);
   });
+
+  it("uses copilot's interactive prompt flag in orchestrated launches", () => {
+    const s = buildAgentInnerScript({
+      args: makeOrchArgs({
+        issueId: "OP-244",
+        agentId: "copilot",
+        binary: "/opt/homebrew/bin/copilot",
+        launchFlags: ["--autopilot", "--allow-all"],
+      }),
+      promptPath: "/tmp/op-agent-xyz/prompt.txt",
+    });
+    expect(s).toContain(`exec '/opt/homebrew/bin/copilot' '--autopilot' '--allow-all' -i "$PROMPT"`);
+    expect(s).not.toContain(`exec '/opt/homebrew/bin/copilot' '--autopilot' '--allow-all' "$PROMPT"`);
+  });
 });
 
 describe("firstEmptyCell", () => {
