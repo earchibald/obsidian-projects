@@ -62,6 +62,7 @@ import { execFileSync } from "child_process";
 import { README_PATH } from "./firstRunReadme";
 import {
   EXTRA_PREAMBLE_MAX,
+  CLAUDE_SESSION_COLORS,
   type SidebarTab,
   type SidebarDensity,
   type OpSettings,
@@ -71,6 +72,7 @@ import {
   DEFAULT_SETTINGS,
   mergeSettings,
   matchSettingRow,
+  sanitizeSessionDecorationPalette,
 } from "./settingsPure";
 
 export {
@@ -87,6 +89,7 @@ export type {
   AgentsSettings,
   DeveloperSettings,
   FlowSettings,
+  SessionDecorationSettings,
   DashboardSettings,
   DashboardTarget,
   OpSettings,
@@ -113,6 +116,7 @@ type SectionId =
   | "workingDirs"
   | "orchestrator"
   | "profileOverlays"
+  | "sessionDecoration"
   | "worktreeEnforcement"
   | "flowChaining"
   | "github"
@@ -149,7 +153,13 @@ const ADVANCED_SECTIONS: ReadonlyArray<{
     id: "profileOverlays",
     title: "Profile overlays (JSON per agent)",
     blurb:
-      "JSON patches merged on top of the built-in agent profile. Allowed keys: binary, launchFlags, promptPreamble, skillTrigger, label.",
+      "JSON patches merged on top of the built-in agent profile. Includes post-launch command templates for agents that support session decoration.",
+  },
+  {
+    id: "sessionDecoration",
+    title: "Session decoration",
+    blurb:
+      "Auto-color and auto-rename Claude sessions after launch, with optional /remote-control and a configurable Claude color palette.",
   },
   {
     id: "worktreeEnforcement",
@@ -367,6 +377,7 @@ export class OpSettingsTab extends PluginSettingTab {
       case "workingDirs":
       case "orchestrator":
       case "profileOverlays":
+      case "sessionDecoration":
       case "worktreeEnforcement":
       case "flowChaining":
       case "github":
@@ -392,6 +403,8 @@ export class OpSettingsTab extends PluginSettingTab {
         return this.renderOrchestrator(el);
       case "profileOverlays":
         return this.renderProfileOverlays(el);
+      case "sessionDecoration":
+        return this.renderSessionDecoration(el);
       case "worktreeEnforcement":
         return this.renderWorktreeEnforcement(el);
       case "flowChaining":
@@ -1540,7 +1553,7 @@ export class OpSettingsTab extends PluginSettingTab {
 
     containerEl.createEl("p", {
       text:
-        "Overlays are a JSON patch merged on top of the built-in profile for each agent. Allowed keys: `binary` (string — absolute path or PATH lookup), `launchFlags` (string[] appended to the command line), `promptPreamble` (string prepended to every prompt), `skillTrigger` (string — first line of the prompt), `label` (string for the sidebar badge). Example: `{ \"binary\": \"/opt/homebrew/bin/claude\", \"launchFlags\": [\"--dangerously-skip-permissions\"] }`.",
+        "Overlays are a JSON patch merged on top of the built-in profile for each agent. Allowed keys include `binary`, `launchFlags`, `promptPreamble`, `skillTrigger`, `label`, `postLaunchCommands`, the per-mode `*PostLaunchCommands` arrays, and `postLaunchReadinessRegex`. Example: `{ \"binary\": \"/opt/homebrew/bin/claude\", \"postLaunchCommands\": [\"/rename {{name}}\"] }`.",
       cls: "setting-item-description",
     });
 
@@ -1613,7 +1626,7 @@ export class OpSettingsTab extends PluginSettingTab {
           if (!result.ok || !result.overlay) {
             userError(
               `${id} overlay: ${result.errors.join("; ")}`,
-              "Allowed keys: binary, launchFlags (string[]), promptPreamble, skillTrigger, label.",
+              "Allowed keys: binary, launchFlags (string[]), promptPreamble, skillTrigger, label, postLaunchCommands (string[]), per-mode *PostLaunchCommands (string[]), postLaunchReadinessRegex.",
             );
             return;
           }
@@ -1631,6 +1644,95 @@ export class OpSettingsTab extends PluginSettingTab {
       });
       banner = setting.settingEl.createDiv({ cls: "op-overlay-validation" });
     }
+  }
+
+  private renderSessionDecoration(containerEl: HTMLElement): void {
+    const s = this.plugin.settings;
+    new Setting(containerEl)
+      .setName("Auto-color sessions")
+      .setDesc(
+        "After Claude launches, send `/color <name>` in the tmux-backed REPL. Colors stay unique within a given iTerm window unless the palette is exhausted.",
+      )
+      .addToggle((t) =>
+        t.setValue(s.sessionDecoration.autoColor).onChange(async (v) => {
+          s.sessionDecoration.autoColor = v;
+          await this.plugin.saveSettings();
+        }),
+      );
+
+    new Setting(containerEl)
+      .setName("Auto-rename sessions")
+      .setDesc("After Claude launches, send `/rename <name>` using the session name template below.")
+      .addToggle((t) =>
+        t.setValue(s.sessionDecoration.autoRename).onChange(async (v) => {
+          s.sessionDecoration.autoRename = v;
+          await this.plugin.saveSettings();
+        }),
+      );
+
+    new Setting(containerEl)
+      .setName("Auto-engage Remote Control")
+      .setDesc(
+        "Sends `/remote-control` after launch so the session appears at claude.ai/code. Requires browser confirmation the first time.",
+      )
+      .addToggle((t) =>
+        t.setValue(s.sessionDecoration.autoRemoteControl).onChange(async (v) => {
+          s.sessionDecoration.autoRemoteControl = v;
+          await this.plugin.saveSettings();
+        }),
+      );
+
+    new Setting(containerEl)
+      .setName("Color palette")
+      .setDesc(
+        `Comma-separated Claude prompt-bar colors. Valid values: ${CLAUDE_SESSION_COLORS.join(", ")}. Invalid entries are dropped; if none remain, the default eight are restored.`,
+      )
+      .addText((t) => {
+        t.setValue(s.sessionDecoration.palette.join(", "));
+        t.inputEl.style.width = "100%";
+        t.inputEl.addEventListener("blur", async () => {
+          const raw = t.getValue();
+          const parts = raw.split(",");
+          const sanitized = sanitizeSessionDecorationPalette(parts);
+          const unknown = parts
+            .map((part) => part.trim().toLowerCase())
+            .filter((part) => part.length > 0 && !CLAUDE_SESSION_COLORS.includes(part as typeof CLAUDE_SESSION_COLORS[number]));
+          if (unknown.length > 0) {
+            notify(`op: dropped invalid session colors: ${unknown.join(", ")}`, 7000);
+          }
+          s.sessionDecoration.palette = sanitized.length > 0 ? sanitized : [...CLAUDE_SESSION_COLORS];
+          t.setValue(s.sessionDecoration.palette.join(", "));
+          await this.plugin.saveSettings();
+        });
+      });
+
+    new Setting(containerEl)
+      .setName("Session name template")
+      .setDesc("Template for `/rename`. Available variables: `{{id}}`, `{{title}}`, `{{agent}}`, `{{parent}}`.")
+      .addText((t) => {
+        t.setValue(s.sessionDecoration.nameTemplate);
+        t.inputEl.style.width = "100%";
+        t.inputEl.addEventListener("blur", async () => {
+          const next = t.getValue().trim();
+          s.sessionDecoration.nameTemplate = next || DEFAULT_SETTINGS.sessionDecoration.nameTemplate;
+          t.setValue(s.sessionDecoration.nameTemplate);
+          await this.plugin.saveSettings();
+        });
+      });
+
+    const advanced = new OpCollapsible(containerEl, "Advanced…", { startOpen: false });
+    new Setting(advanced.body)
+      .setName("Inter-command delay (ms)")
+      .setDesc("Delay between each post-launch tmux `send-keys` command.")
+      .addText((t) =>
+        t.setValue(String(s.sessionDecoration.interCommandDelayMs)).onChange(async (v) => {
+          const n = parseInt(v, 10);
+          if (Number.isFinite(n) && n >= 0) {
+            s.sessionDecoration.interCommandDelayMs = n;
+            await this.plugin.saveSettings();
+          }
+        }),
+      );
   }
 
   private renderWorktreeEnforcement(containerEl: HTMLElement): void {

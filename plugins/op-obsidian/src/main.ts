@@ -182,6 +182,7 @@ import {
   scaffoldFirstRunReadme,
 } from "./firstRunReadme";
 import { applyPreset, defaultPreset } from "./hotkeyPreset";
+import { colorRegistry } from "./colorRegistry";
 
 const pExecFile = promisify(execFile);
 
@@ -4433,6 +4434,7 @@ export default class OpPlugin extends Plugin {
       return { ok: true, command: "op-agent-ended", issueId: id, cleared: false };
     }
     await clearAgentOnIssue(this.app, entry.path);
+    colorRegistry.release(id);
     // V1: the SessionEnd shell hook can't pass an exit code, so any URI hit is
     // treated as a clean exit. Crashes don't fire SessionEnd at all, so they
     // leave `flow:` pinned automatically. Future: hook reads `reason` from
@@ -5053,4 +5055,3 @@ function resolveScopeParams(
     ? { scope: parsed.bullets }
     : { scopeBody: parsed.body };
 }
-

@@ -11,12 +11,18 @@ import {
   launchFlagsFor,
   mergeProfile,
   modeToWorkflowStep,
+  normalizeMode,
+  postLaunchCommandsFor,
 } from "./agentProfiles";
 import { buildPrompt } from "./promptBuild";
 import { gitBranchAt } from "./gitBranch";
 import { workIssue } from "./workIssue";
 import { resolveWorkingDir } from "./workingDir";
 import { launchInTerminal } from "./terminalLaunch";
+import { buildRenderContext } from "./pluginVarRegistry";
+import { renderTemplate } from "./renderTemplate";
+import { colorRegistry } from "./colorRegistry";
+import { dispatchPostLaunch } from "./postLaunchDispatch";
 import type { AgentDetector, DetectionMap } from "./agentDetect";
 import { AgentPickerModal } from "./modals";
 import { userError } from "./userError";
@@ -260,7 +266,7 @@ export async function openAgent(
     await writeLaunchVarsOnIssue(app, args.entry.path, launchVars);
   }
 
-  const { scriptPath, tmuxSession, tmuxWindow } = await launchInTerminal({
+  const { scriptPath, tmuxSession, tmuxWindow, windowId } = await launchInTerminal({
     cwd: wd.path,
     binary: det.path ?? profile.binary,
     launchFlags,
@@ -297,6 +303,55 @@ export async function openAgent(
     },
   });
 
+  const renderContext = buildRenderContext({
+    entry: args.entry,
+    profile,
+    launch: {
+      mode: normalizeMode(mode),
+      model: resolved?.canonicalModel,
+      branch,
+      repo_path: wd.path,
+      vault_path: vaultBasePath ?? "",
+      vault_name: app.vault.getName(),
+      today: new Date().toISOString().slice(0, 10),
+      parent: parentId,
+    },
+  });
+  const color = colorRegistry.assign({
+    issueId: args.entry.id,
+    parentId,
+    windowKey: resolveSessionDecorationWindowKey(settings, windowId),
+    palette: settings.sessionDecoration.palette,
+  });
+  const sessionName = truncateSessionName(
+    renderTemplate(settings.sessionDecoration.nameTemplate, renderContext).text,
+  );
+  const commands = buildPostLaunchCommands({
+    profile,
+    mode,
+    renderContext,
+    color,
+    name: sessionName,
+  }).filter((command) => shouldSendPostLaunchCommand(command, settings));
+  if (
+    settings.sessionDecoration.autoRemoteControl &&
+    !commands.some((command) => command.trim() === "/remote-control")
+  ) {
+    commands.push("/remote-control");
+  }
+  if (commands.length > 0 && profile.postLaunchReadinessRegex) {
+    void dispatchPostLaunch({
+      tmuxBinary: settings.tmuxBinary,
+      tmuxSession,
+      tmuxWindow,
+      commands,
+      readinessRegex: new RegExp(profile.postLaunchReadinessRegex),
+      interCommandDelayMs: settings.sessionDecoration.interCommandDelayMs,
+    }).catch((err) => {
+      console.error("[op-obsidian] post-launch dispatch failed", err);
+    });
+  }
+
   // OP-155 §4 Step 4: first iTerm launch — surface the one-time prefs Notice
   // and persist the bit. Flip the bit synchronously *before* yielding to the
   // event loop so a second concurrent op-open-agent invocation (near-
@@ -317,6 +372,39 @@ export async function openAgent(
     tmuxSession,
     tmuxWindow,
   };
+}
+
+function resolveSessionDecorationWindowKey(settings: OpSettings, windowId: string | undefined): string {
+  if (settings.terminal === "Terminal") return "terminal:default";
+  if (settings.orchestrator.enabled && windowId) return `iterm:${windowId}`;
+  return "iterm:legacy";
+}
+
+function buildPostLaunchCommands(args: {
+  profile: AgentProfile;
+  mode: AgentLaunchMode;
+  renderContext: ReturnType<typeof buildRenderContext>;
+  color: string;
+  name: string;
+}): string[] {
+  return postLaunchCommandsFor(args.profile, args.mode).map((template) =>
+    renderTemplate(template, args.renderContext).text
+      .replace(/\{\{\s*color\s*\}\}/g, args.color)
+      .replace(/\{\{\s*name\s*\}\}/g, args.name),
+  );
+}
+
+function shouldSendPostLaunchCommand(command: string, settings: OpSettings): boolean {
+  const trimmed = command.trim();
+  if (trimmed.startsWith("/color ")) return settings.sessionDecoration.autoColor;
+  if (trimmed.startsWith("/rename ")) return settings.sessionDecoration.autoRename;
+  if (trimmed === "/remote-control") return settings.sessionDecoration.autoRemoteControl;
+  return true;
+}
+
+function truncateSessionName(name: string): string {
+  const collapsed = name.replace(/\s+/g, " ").trim();
+  return collapsed.length <= 40 ? collapsed : collapsed.slice(0, 40).trimEnd();
 }
 
 async function maybeShowITermPrefsNotice(
