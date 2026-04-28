@@ -77,6 +77,13 @@ export interface LaunchResult {
   tmuxWindow: string;
 }
 
+interface BuildAgentExecCommandArgs {
+  agentId: string;
+  binary: string;
+  launchFlags: string[];
+  promptRef: string;
+}
+
 export async function launchInTerminal(args: LaunchArgs): Promise<LaunchResult> {
   if (process.platform !== "darwin") {
     throw new Error(`op: terminal launch currently supports macOS only (platform=${process.platform})`);
@@ -257,9 +264,7 @@ interface InnerScriptArgs {
 // binary. Pure string-building — no fs — so it's exercised by unit tests
 // without touching disk.
 export function buildInnerScript({ args, promptPath }: InnerScriptArgs): string {
-  const flagsShell = args.launchFlags.map(shSingleQuote).join(" ");
   const cwdShell = shSingleQuote(args.cwd);
-  const binShell = shSingleQuote(args.binary);
   const promptShell = shSingleQuote(promptPath);
   const agentIdShell = shSingleQuote(args.agentId);
 
@@ -299,12 +304,22 @@ export function buildInnerScript({ args, promptPath }: InnerScriptArgs): string 
     // while a human drives the session.
     innerLines.push(
       `echo "[op] debug agent launch — no prompt (issue=${args.issueId ?? "<none>"} agent=${args.agentId})"`,
-      `exec ${binShell} ${flagsShell}`,
+      `exec ${buildAgentExecCommand({
+        agentId: args.agentId,
+        binary: args.binary,
+        launchFlags: args.launchFlags,
+        promptRef: "",
+      })}`,
     );
   } else {
     innerLines.push(
       `PROMPT=$(<${promptShell})`,
-      `exec ${binShell} ${flagsShell} "$PROMPT"`,
+      `exec ${buildAgentExecCommand({
+        agentId: args.agentId,
+        binary: args.binary,
+        launchFlags: args.launchFlags,
+        promptRef: '"$PROMPT"',
+      })}`,
     );
   }
   innerLines.push("");
@@ -346,6 +361,26 @@ export function buildPrepScript({ tmuxBinary, session, windowName, innerPath }: 
 // a session name with shell metacharacters are still safe.
 export function buildITermAttachCommand(tmuxBinary: string, session: string): string {
   return `${shSingleQuote(tmuxBinary)} -CC attach -t ${shSingleQuote(session)}`;
+}
+
+export function buildAgentExecCommand({
+  agentId,
+  binary,
+  launchFlags,
+  promptRef,
+}: BuildAgentExecCommandArgs): string {
+  const parts = [
+    shSingleQuote(binary),
+    ...launchFlags.map(shSingleQuote),
+  ];
+  if (promptRef) {
+    if (agentId === "copilot") {
+      parts.push("-i", promptRef);
+    } else {
+      parts.push(promptRef);
+    }
+  }
+  return parts.join(" ");
 }
 
 // Sanitize arbitrary text into a tmux-safe window name. tmux uses `:`
