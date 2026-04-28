@@ -178,6 +178,19 @@ describe("buildInnerScript — OSC 1337 SetUserVar=op_issue (OP-233)", () => {
     expect(oscIdx).toBeGreaterThan(0);
     expect(execIdx).toBeGreaterThan(oscIdx);
   });
+
+  it("uses copilot's -i form in the actual generated inner script", () => {
+    const s = buildInnerScript({
+      args: makeArgs({
+        issueId: "OP-244",
+        agentId: "copilot",
+        binary: "/opt/homebrew/bin/copilot",
+      }),
+      promptPath: "/tmp/op-agent-xyz/prompt.txt",
+    });
+    expect(s).toContain(`exec '/opt/homebrew/bin/copilot' -i "$PROMPT"`);
+    expect(s).not.toContain(`exec '/opt/homebrew/bin/copilot'  "$PROMPT"`);
+  });
 });
 
 describe("buildITermAttachCommand", () => {
