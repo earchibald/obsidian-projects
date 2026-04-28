@@ -1,6 +1,21 @@
 import type { ProfileOverlay } from "./agentProfiles";
 
-const KNOWN_KEYS = ["binary", "launchFlags", "promptPreamble", "skillTrigger", "label"] as const;
+const STRING_KEYS = [
+  "binary",
+  "promptPreamble",
+  "skillTrigger",
+  "label",
+  "postLaunchReadinessRegex",
+] as const;
+const STRING_ARRAY_KEYS = [
+  "launchFlags",
+  "postLaunchCommands",
+  "evaluatePostLaunchCommands",
+  "planPostLaunchCommands",
+  "reviewPostLaunchCommands",
+  "finalizePostLaunchCommands",
+] as const;
+const KNOWN_KEYS = [...STRING_KEYS, ...STRING_ARRAY_KEYS] as const;
 const KNOWN_SET: ReadonlySet<string> = new Set(KNOWN_KEYS);
 
 export interface OverlayValidation {
@@ -25,19 +40,19 @@ export function validateOverlay(raw: unknown): OverlayValidation {
       warnings.push(`unknown key "${k}" (known: ${KNOWN_KEYS.join(", ")})`);
       continue;
     }
-    if (k === "launchFlags") {
+    if ((STRING_ARRAY_KEYS as readonly string[]).includes(k)) {
       if (!Array.isArray(v) || !v.every((x) => typeof x === "string")) {
-        errors.push(`"launchFlags" must be an array of strings`);
+        errors.push(`"${k}" must be an array of strings`);
         continue;
       }
-      out.launchFlags = v as string[];
-    } else {
-      if (typeof v !== "string") {
-        errors.push(`"${k}" must be a string`);
-        continue;
-      }
-      (out as Record<string, unknown>)[k] = v;
+      (out as Record<string, unknown>)[k] = [...v];
+      continue;
     }
+    if (!(STRING_KEYS as readonly string[]).includes(k) || typeof v !== "string") {
+      errors.push(`"${k}" must be a string`);
+      continue;
+    }
+    (out as Record<string, unknown>)[k] = v;
   }
   return { ok: errors.length === 0, overlay: errors.length === 0 ? out : undefined, errors, warnings };
 }

@@ -64,6 +64,7 @@ export interface LaunchResult {
   scriptPath: string;
   tmuxSession: string;
   tmuxWindow: string;
+  windowId?: string;
 }
 
 export async function launchInTerminal(args: LaunchArgs): Promise<LaunchResult> {
@@ -108,6 +109,7 @@ export async function launchInTerminal(args: LaunchArgs): Promise<LaunchResult> 
       scriptPath: r.scriptPath,
       tmuxSession: r.tmuxSession,
       tmuxWindow: r.tmuxWindow,
+      windowId: r.windowId,
     };
   }
 

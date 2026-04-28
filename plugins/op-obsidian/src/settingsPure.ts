@@ -92,6 +92,26 @@ export interface FlowSettings {
 }
 
 export const FLOW_HEADLESS_TIMEOUT_DEFAULT_MS = 10 * 60 * 1000;
+export const SESSION_DECORATION_INTER_COMMAND_DEFAULT_MS = 300;
+export const CLAUDE_SESSION_COLORS = [
+  "red",
+  "blue",
+  "green",
+  "yellow",
+  "purple",
+  "orange",
+  "pink",
+  "cyan",
+] as const;
+
+export interface SessionDecorationSettings {
+  autoColor: boolean;
+  autoRename: boolean;
+  autoRemoteControl: boolean;
+  palette: string[];
+  nameTemplate: string;
+  interCommandDelayMs: number;
+}
 
 export interface OpSettings {
   defaultAgent: AgentId;
@@ -119,6 +139,7 @@ export interface OpSettings {
   agents: AgentsSettings;
   developer: DeveloperSettings;
   flow: FlowSettings;
+  sessionDecoration: SessionDecorationSettings;
   orchestrator: OrchestratorSettings;
   orchestratorState: RegistryData;
   // User-curated display order for project pickers, by slug. Slugs not in this
@@ -207,6 +228,14 @@ export const DEFAULT_SETTINGS: OpSettings = {
     autoMerge: false,
     headlessTimeoutMs: FLOW_HEADLESS_TIMEOUT_DEFAULT_MS,
   },
+  sessionDecoration: {
+    autoColor: true,
+    autoRename: true,
+    autoRemoteControl: false,
+    palette: [...CLAUDE_SESSION_COLORS],
+    nameTemplate: "{{id}} {{title}}",
+    interCommandDelayMs: SESSION_DECORATION_INTER_COMMAND_DEFAULT_MS,
+  },
   orchestrator: {
     enabled: false,
     maxRows: 3,
@@ -224,6 +253,20 @@ export const DEFAULT_SETTINGS: OpSettings = {
 
 const SIDEBAR_TABS: ReadonlySet<SidebarTab> = new Set(["issues", "in-flight", "resolved"]);
 const SIDEBAR_DENSITIES: ReadonlySet<SidebarDensity> = new Set(["comfortable", "compact"]);
+const KNOWN_SESSION_COLOR_SET: ReadonlySet<string> = new Set(CLAUDE_SESSION_COLORS);
+
+export function sanitizeSessionDecorationPalette(colors: readonly string[]): string[] {
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const raw of colors) {
+    if (typeof raw !== "string") continue;
+    const normalized = raw.trim().toLowerCase();
+    if (!normalized || seen.has(normalized) || !KNOWN_SESSION_COLOR_SET.has(normalized)) continue;
+    seen.add(normalized);
+    out.push(normalized);
+  }
+  return out;
+}
 
 export function mergeSettings(loaded: unknown): OpSettings {
   const base: OpSettings = JSON.parse(JSON.stringify(DEFAULT_SETTINGS));
@@ -344,6 +387,28 @@ export function mergeSettings(loaded: unknown): OpSettings {
     if (typeof f.autoMerge === "boolean") base.flow.autoMerge = f.autoMerge;
     if (typeof f.headlessTimeoutMs === "number" && f.headlessTimeoutMs > 0) {
       base.flow.headlessTimeoutMs = Math.floor(f.headlessTimeoutMs);
+    }
+  }
+  if (l.sessionDecoration && typeof l.sessionDecoration === "object" && !Array.isArray(l.sessionDecoration)) {
+    const d = l.sessionDecoration as Partial<SessionDecorationSettings>;
+    if (typeof d.autoColor === "boolean") base.sessionDecoration.autoColor = d.autoColor;
+    if (typeof d.autoRename === "boolean") base.sessionDecoration.autoRename = d.autoRename;
+    if (typeof d.autoRemoteControl === "boolean") {
+      base.sessionDecoration.autoRemoteControl = d.autoRemoteControl;
+    }
+    if (Array.isArray(d.palette)) {
+      const sanitized = sanitizeSessionDecorationPalette(d.palette);
+      if (sanitized.length > 0) base.sessionDecoration.palette = sanitized;
+    }
+    if (typeof d.nameTemplate === "string" && d.nameTemplate.trim().length > 0) {
+      base.sessionDecoration.nameTemplate = d.nameTemplate;
+    }
+    if (
+      typeof d.interCommandDelayMs === "number" &&
+      Number.isFinite(d.interCommandDelayMs) &&
+      d.interCommandDelayMs >= 0
+    ) {
+      base.sessionDecoration.interCommandDelayMs = Math.floor(d.interCommandDelayMs);
     }
   }
   if (typeof l.workflowMode === "string" && WORKFLOW_MODES.has(l.workflowMode as WorkflowMode)) {

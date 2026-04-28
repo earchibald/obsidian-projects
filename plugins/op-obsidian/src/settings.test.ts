@@ -1,5 +1,11 @@
 import { describe, it, expect } from "vitest";
-import { DEFAULT_SETTINGS, mergeSettings, matchSettingRow } from "./settingsPure";
+import {
+  CLAUDE_SESSION_COLORS,
+  DEFAULT_SETTINGS,
+  mergeSettings,
+  matchSettingRow,
+  sanitizeSessionDecorationPalette,
+} from "./settingsPure";
 import { emptyRegistry, mergeRegistry, type RegistryData } from "./layout/registry";
 
 describe("mergeSettings", () => {
@@ -61,6 +67,33 @@ describe("mergeSettings", () => {
     expect(out.flow.autoAdvance).toBe(true);
     expect(out.flow.headlessTimeoutMs).toBe(30_000);
     expect(out.flow.autoMerge).toBe(DEFAULT_SETTINGS.flow.autoMerge);
+  });
+
+  it("session decoration defaults, sanitizes palette entries, and keeps full replacement semantics", () => {
+    const out = mergeSettings({
+      sessionDecoration: {
+        autoColor: false,
+        palette: ["RED", "blue", "blue", "bogus"],
+      },
+    });
+    expect(out.sessionDecoration.autoColor).toBe(false);
+    expect(out.sessionDecoration.autoRename).toBe(DEFAULT_SETTINGS.sessionDecoration.autoRename);
+    expect(out.sessionDecoration.palette).toEqual(["red", "blue"]);
+  });
+
+  it("session decoration falls back to defaults for blank template / invalid palette / invalid delay", () => {
+    const out = mergeSettings({
+      sessionDecoration: {
+        palette: ["bogus"],
+        nameTemplate: "   ",
+        interCommandDelayMs: -1,
+      },
+    });
+    expect(out.sessionDecoration.palette).toEqual(DEFAULT_SETTINGS.sessionDecoration.palette);
+    expect(out.sessionDecoration.nameTemplate).toBe(DEFAULT_SETTINGS.sessionDecoration.nameTemplate);
+    expect(out.sessionDecoration.interCommandDelayMs).toBe(
+      DEFAULT_SETTINGS.sessionDecoration.interCommandDelayMs,
+    );
   });
 
   it("rejects invalid flow.headlessTimeoutMs (non-positive / non-numeric)", () => {
@@ -371,6 +404,21 @@ describe("mergeSettings", () => {
     expect(mergeSettings({ defaultAgent: "claude" }).firstRunCompleted).toBe(true);
     expect(mergeSettings({ workingDirs: { "my-project": "/code/my-project" } }).firstRunCompleted).toBe(true);
     expect(mergeSettings({ view: { defaultTab: "issues" } }).firstRunCompleted).toBe(true);
+  });
+});
+
+describe("sanitizeSessionDecorationPalette", () => {
+  it("keeps only known Claude colors, lowercases them, and removes duplicates", () => {
+    expect(sanitizeSessionDecorationPalette(["RED", " blue ", "blue", "bogus"])).toEqual([
+      "red",
+      "blue",
+    ]);
+  });
+
+  it("matches the shipped default palette order", () => {
+    expect(sanitizeSessionDecorationPalette([...CLAUDE_SESSION_COLORS])).toEqual([
+      ...CLAUDE_SESSION_COLORS,
+    ]);
   });
 });
 

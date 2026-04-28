@@ -182,6 +182,14 @@ export interface AgentProfile {
   planPromptPreamble: string;
   reviewPromptPreamble: string;
   finalizePromptPreamble: string;
+  /** Default post-launch commands — also serve as the implement-mode commands. */
+  postLaunchCommands: string[];
+  evaluatePostLaunchCommands: string[];
+  planPostLaunchCommands: string[];
+  reviewPostLaunchCommands: string[];
+  finalizePostLaunchCommands: string[];
+  /** Regex source polled against tmux capture-pane output before dispatch. */
+  postLaunchReadinessRegex?: string;
   skillTrigger: string;
 }
 
@@ -202,6 +210,12 @@ export const BASE_PROFILES: Readonly<Record<AgentId, AgentProfile>> = Object.fre
     planPromptPreamble: DEFAULT_PLAN_PREAMBLE,
     reviewPromptPreamble: DEFAULT_REVIEW_PREAMBLE,
     finalizePromptPreamble: DEFAULT_FINALIZE_PREAMBLE,
+    postLaunchCommands: ["/color {{color}}", "/rename {{name}}"],
+    evaluatePostLaunchCommands: ["/color {{color}}", "/rename {{name}}"],
+    planPostLaunchCommands: ["/color {{color}}", "/rename {{name}}"],
+    reviewPostLaunchCommands: ["/color {{color}}", "/rename {{name}}"],
+    finalizePostLaunchCommands: ["/color {{color}}", "/rename {{name}}"],
+    postLaunchReadinessRegex: "\\?\\s+for\\s+shortcuts",
     skillTrigger: "/op:issue {{id}}",
   },
   // Second-class, untested. The dispatch code accepts gemini/copilot but no
@@ -223,6 +237,11 @@ export const BASE_PROFILES: Readonly<Record<AgentId, AgentProfile>> = Object.fre
     planPromptPreamble: DEFAULT_PLAN_PREAMBLE,
     reviewPromptPreamble: DEFAULT_REVIEW_PREAMBLE,
     finalizePromptPreamble: DEFAULT_FINALIZE_PREAMBLE,
+    postLaunchCommands: [],
+    evaluatePostLaunchCommands: [],
+    planPostLaunchCommands: [],
+    reviewPostLaunchCommands: [],
+    finalizePostLaunchCommands: [],
     skillTrigger: "Please call activate_skill for the \"op\" skill, then resume work on {{id}}.",
   },
   copilot: {
@@ -239,15 +258,25 @@ export const BASE_PROFILES: Readonly<Record<AgentId, AgentProfile>> = Object.fre
     planPromptPreamble: DEFAULT_PLAN_PREAMBLE,
     reviewPromptPreamble: DEFAULT_REVIEW_PREAMBLE,
     finalizePromptPreamble: DEFAULT_FINALIZE_PREAMBLE,
+    postLaunchCommands: [],
+    evaluatePostLaunchCommands: [],
+    planPostLaunchCommands: [],
+    reviewPostLaunchCommands: [],
+    finalizePostLaunchCommands: [],
     skillTrigger: "Use the `op` skill to resume work on {{id}}.",
   },
 });
 
 export function mergeProfile(id: AgentId, overlay?: ProfileOverlay): AgentProfile {
   const base = BASE_PROFILES[id];
+  const hasOverlayValue = (key: keyof ProfileOverlay): boolean =>
+    overlay !== undefined && Object.prototype.hasOwnProperty.call(overlay, key);
   const pickFlags = (key: keyof Pick<AgentProfile,
     "launchFlags" | "evaluateLaunchFlags" | "planLaunchFlags" | "reviewLaunchFlags" | "finalizeLaunchFlags"
-  >): string[] => (overlay?.[key] ? [...(overlay[key] as string[])] : [...base[key]]);
+  >): string[] => (hasOverlayValue(key) ? [...(overlay![key] as string[])] : [...base[key]]);
+  const pickCommands = (key: keyof Pick<AgentProfile,
+    "postLaunchCommands" | "evaluatePostLaunchCommands" | "planPostLaunchCommands" | "reviewPostLaunchCommands" | "finalizePostLaunchCommands"
+  >): string[] => (hasOverlayValue(key) ? [...(overlay![key] as string[])] : [...base[key]]);
   const pickPreamble = (key: keyof Pick<AgentProfile,
     "promptPreamble" | "evaluatePromptPreamble" | "planPromptPreamble" | "reviewPromptPreamble" | "finalizePromptPreamble"
   >): string => overlay?.[key] ?? base[key];
@@ -265,6 +294,12 @@ export function mergeProfile(id: AgentId, overlay?: ProfileOverlay): AgentProfil
     planPromptPreamble: pickPreamble("planPromptPreamble"),
     reviewPromptPreamble: pickPreamble("reviewPromptPreamble"),
     finalizePromptPreamble: pickPreamble("finalizePromptPreamble"),
+    postLaunchCommands: pickCommands("postLaunchCommands"),
+    evaluatePostLaunchCommands: pickCommands("evaluatePostLaunchCommands"),
+    planPostLaunchCommands: pickCommands("planPostLaunchCommands"),
+    reviewPostLaunchCommands: pickCommands("reviewPostLaunchCommands"),
+    finalizePostLaunchCommands: pickCommands("finalizePostLaunchCommands"),
+    postLaunchReadinessRegex: overlay?.postLaunchReadinessRegex ?? base.postLaunchReadinessRegex,
     skillTrigger: overlay?.skillTrigger ?? base.skillTrigger,
   };
 }
@@ -306,5 +341,20 @@ export function promptPreambleFor(profile: AgentProfile, mode: AgentLaunchMode):
       return profile.finalizePromptPreamble;
     case "implement":
       return profile.promptPreamble;
+  }
+}
+
+export function postLaunchCommandsFor(profile: AgentProfile, mode: AgentLaunchMode): string[] {
+  switch (normalizeMode(mode)) {
+    case "evaluate":
+      return [...profile.evaluatePostLaunchCommands];
+    case "plan":
+      return [...profile.planPostLaunchCommands];
+    case "review":
+      return [...profile.reviewPostLaunchCommands];
+    case "finalize":
+      return [...profile.finalizePostLaunchCommands];
+    case "implement":
+      return [...profile.postLaunchCommands];
   }
 }
