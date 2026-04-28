@@ -232,18 +232,14 @@ The bold takeaway:
   diagnostic), and the dual surface created confusion. Until then both
   controls coexist; the modules engine ignores this row.
 - **`workflowMode`** is the master toggle — `"legacy"` uses the
-  inline-cap path; `"modules"` uses the OP-201 module engine. There's
-  no UI toggle yet; until OP-186 lands, flip it by editing
-  `<vault>/.obsidian/plugins/op-obsidian/data.json` (see
-  [02-quickstart.md § step 1](./02-quickstart.md#1-switch-to-modules-mode-30-seconds)).
-  After OP-208, the default flips from `"legacy"` to `"modules"` — but
-  vaults that already have `workflowMode: "legacy"` set stay on legacy
-  (the migration treats an explicit value as user opt-in).
-
-If you've never edited `data.json` directly, the safe order is: quit
-Obsidian first (or fully disable op-obsidian) → edit → re-enable. The
-running plugin caches settings in memory and overwrites manual edits on
-its next save.
+  inline-cap path; `"modules"` uses the OP-201 module engine. Surfaced
+  as the **Workflow mode** dropdown at the top of the **Workflows**
+  group (OP-219); the change is saved immediately and the section
+  re-renders so the empty-state copy and launch preview reflect the new
+  mode without a restart. After OP-208, the default for fresh installs
+  flipped from `"legacy"` to `"modules"` — vaults that already have
+  `workflowMode: "legacy"` set stay on legacy (the migration treats an
+  explicit value as user opt-in).
 
 ## Where to next
 

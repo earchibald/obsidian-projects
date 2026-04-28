@@ -73,3 +73,11 @@ export async function applySplit(
 ): Promise<string> {
   return wsClient.applySplit(existingCells, op, command);
 }
+
+// OP-232: best-effort "open <url> in an iTerm browser tab". Re-exported
+// here so call sites stay on the driver surface rather than importing
+// `./client` directly.
+export type { OpenBrowserTabResult } from "./client";
+export async function openBrowserTab(url: string): Promise<wsClient.OpenBrowserTabResult> {
+  return wsClient.openBrowserTab(url);
+}

@@ -19,7 +19,7 @@ import { normalizePath } from "obsidian";
 
 export const README_PATH = "Projects/_op-readme.md";
 export const DEMO_PROJECT_SLUG = "op-demo";
-export const DEMO_PROJECT_PREFIX = "OPD";
+export const DEMO_PROJECT_PREFIX = "DEMO";
 export const DEMO_PROJECT_FOLDER = `Projects/${DEMO_PROJECT_SLUG}`;
 
 /**
@@ -57,7 +57,7 @@ export function buildReadmeBody(): string {
     "",
     "## Try it on a demo project",
     "",
-    "Spin up a throwaway `op-demo` project (prefix `OPD`) with three pre-seeded",
+    "Spin up a throwaway `op-demo` project (prefix `DEMO`) with three pre-seeded",
     "issues so you can practice `/op:resolve` against real data:",
     "",
     "```op-action",
@@ -92,8 +92,8 @@ export function buildDemoStatusBody(): string {
     "# op-demo — practice project",
     "",
     "Three pre-seeded issues live in `ISSUES/`. Practice the resolve flow",
-    "(`/op:resolve` or the sidebar's `r` shortcut) against `OPD-1`/`OPD-2`/",
-    "`OPD-3` — they have no real-world consequence.",
+    "(`/op:resolve` or the sidebar's `r` shortcut) against `DEMO-1`/`DEMO-2`/",
+    "`DEMO-3` — they have no real-world consequence.",
     "",
     "When you're done, tear the whole project down with one click:",
     "",

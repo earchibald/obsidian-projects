@@ -17,6 +17,7 @@ export interface IssueEntry {
   githubIssue?: string;
   agent?: string;
   title: string;
+  parent?: string;
   resolvedFolder: boolean;
 }
 
