@@ -16,7 +16,7 @@ import {
   setWindowName,
   splitSession,
 } from "./iterm/driver";
-import { buildPrepScript, tmuxWindowName } from "./terminalLaunch";
+import { buildAgentExecCommand, buildPrepScript, tmuxWindowName } from "./terminalLaunch";
 
 const pExecFile = promisify(execFile);
 
@@ -419,9 +419,7 @@ export function buildAgentInnerScript({
   args: OrchestrateArgs;
   promptPath: string;
 }): string {
-  const flagsShell = args.launchFlags.map(shSingleQuote).join(" ");
   const cwdShell = shSingleQuote(args.cwd);
-  const binShell = shSingleQuote(args.binary);
   const promptShell = shSingleQuote(promptPath);
   const issueIdShell = shSingleQuote(args.issueId);
   const agentIdShell = shSingleQuote(args.agentId);
@@ -449,7 +447,15 @@ export function buildAgentInnerScript({
       `exec "$SHELL" -l`,
     );
   } else {
-    lines.push(`PROMPT=$(<${promptShell})`, `exec ${binShell} ${flagsShell} "$PROMPT"`);
+    lines.push(
+      `PROMPT=$(<${promptShell})`,
+      `exec ${buildAgentExecCommand({
+        agentId: args.agentId,
+        binary: args.binary,
+        launchFlags: args.launchFlags,
+        promptRef: '"$PROMPT"',
+      })}`,
+    );
   }
   lines.push("");
   return lines.join("\n");

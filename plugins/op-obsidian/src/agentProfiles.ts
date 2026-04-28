@@ -105,6 +105,7 @@ const CLAUDE_FINALIZE_LAUNCH_FLAGS = claudeAgentLaunchFlags(
   CLAUDE_FINALIZE_AGENT_NAME,
   CLAUDE_FINALIZE_AGENT_DEFINITION,
 );
+const COPILOT_LAUNCH_FLAGS = ["--autopilot", "--allow-all"];
 
 /**
  * Modes an agent session can launch in. `"work"` is a deprecated alias for
@@ -229,11 +230,11 @@ export const BASE_PROFILES: Readonly<Record<AgentId, AgentProfile>> = Object.fre
     id: "copilot",
     label: "Copilot CLI",
     binary: "copilot",
-    launchFlags: [],
-    evaluateLaunchFlags: [],
-    planLaunchFlags: [],
-    reviewLaunchFlags: [],
-    finalizeLaunchFlags: [],
+    launchFlags: [...COPILOT_LAUNCH_FLAGS],
+    evaluateLaunchFlags: [...COPILOT_LAUNCH_FLAGS],
+    planLaunchFlags: [...COPILOT_LAUNCH_FLAGS],
+    reviewLaunchFlags: [...COPILOT_LAUNCH_FLAGS],
+    finalizeLaunchFlags: [...COPILOT_LAUNCH_FLAGS],
     promptPreamble: DEFAULT_PREAMBLE,
     evaluatePromptPreamble: DEFAULT_EVALUATE_PREAMBLE,
     planPromptPreamble: DEFAULT_PLAN_PREAMBLE,

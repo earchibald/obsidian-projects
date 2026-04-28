@@ -73,6 +73,21 @@ describe("launchFlagsFor (claude base profile)", () => {
   });
 });
 
+describe("launchFlagsFor (copilot base profile)", () => {
+  const p = BASE_PROFILES.copilot;
+
+  it("uses autopilot + allow-all for implement and work launches", () => {
+    expect(launchFlagsFor(p, "implement")).toEqual(["--autopilot", "--allow-all"]);
+    expect(launchFlagsFor(p, "work")).toEqual(["--autopilot", "--allow-all"]);
+  });
+
+  it("keeps autopilot + allow-all on mode-specific launches too", () => {
+    for (const mode of ["evaluate", "plan", "review", "finalize"] as const) {
+      expect(launchFlagsFor(p, mode)).toEqual(["--autopilot", "--allow-all"]);
+    }
+  });
+});
+
 describe("promptPreambleFor (claude base profile)", () => {
   const p = BASE_PROFILES.claude;
 
@@ -144,6 +159,6 @@ describe("BASE_PROFILES sanity", () => {
   it("only claude ships custom-agent launch flags out of the box", () => {
     expect(BASE_PROFILES.claude.evaluateLaunchFlags.length).toBeGreaterThan(0);
     expect(BASE_PROFILES.gemini.evaluateLaunchFlags).toEqual([]);
-    expect(BASE_PROFILES.copilot.evaluateLaunchFlags).toEqual([]);
+    expect(BASE_PROFILES.copilot.evaluateLaunchFlags).toEqual(["--autopilot", "--allow-all"]);
   });
 });
