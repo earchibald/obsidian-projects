@@ -330,6 +330,8 @@ export interface InstallDaemonResult {
 export interface DashboardDependencyInstallResult {
   ok: boolean;
   runtimesInstalled: number;
+  runtimePath?: string;
+  alreadySatisfied?: boolean;
   reason?: string;
 }
 
@@ -387,33 +389,54 @@ export function listITermPythonRuntimes(homeDir: string): string[] {
   }
 }
 
+export function preferredITermPythonRuntime(homeDir: string): string | null {
+  const runtimes = listITermPythonRuntimes(homeDir);
+  if (runtimes.length === 0) return null;
+  return [...runtimes].sort(comparePythonRuntimePaths).at(-1) ?? null;
+}
+
 export function dashboardDependencyInstallArgs(): string[] {
-  return ["-m", "pip", "install", DASHBOARD_AIOHTTP_SPEC];
+  return ["-m", "pip", "install", "--disable-pip-version-check", DASHBOARD_AIOHTTP_SPEC];
 }
 
 export async function installDashboardDependencies(
   homeDir: string,
 ): Promise<DashboardDependencyInstallResult> {
-  const runtimes = listITermPythonRuntimes(homeDir);
-  if (runtimes.length === 0) {
+  const runtime = preferredITermPythonRuntime(homeDir);
+  if (!runtime) {
     return {
       ok: false,
       runtimesInstalled: 0,
       reason: "no iTerm bundled Python runtimes were found under ~/Library/Application Support/iTerm2/iterm2env/versions",
     };
   }
-  for (const pythonPath of runtimes) {
-    try {
-      await pExecFile(pythonPath, dashboardDependencyInstallArgs());
-    } catch (err) {
-      return {
-        ok: false,
-        runtimesInstalled: 0,
-        reason: `${pythonPath}: ${describeErr(err)}`,
-      };
-    }
+  try {
+    await pExecFile(runtime, ["-c", "import aiohttp"], { timeout: 5_000 });
+    return {
+      ok: true,
+      runtimesInstalled: 0,
+      runtimePath: runtime,
+      alreadySatisfied: true,
+    };
+  } catch {
+    // Missing aiohttp is the expected bootstrap case — fall through to install.
   }
-  return { ok: true, runtimesInstalled: runtimes.length };
+  try {
+    await pExecFile(runtime, dashboardDependencyInstallArgs(), { timeout: 60_000 });
+    return {
+      ok: true,
+      runtimesInstalled: 1,
+      runtimePath: runtime,
+      alreadySatisfied: false,
+    };
+  } catch (err) {
+    return {
+      ok: false,
+      runtimesInstalled: 0,
+      runtimePath: runtime,
+      reason: `${runtime}: ${describeErr(err)}`,
+    };
+  }
 }
 export function dashboardClientPath(targetPath: string): string {
   return path.join(path.dirname(targetPath), "client", "index.html");
@@ -432,6 +455,24 @@ async function defaultClipboardWriter(text: string): Promise<void> {
 function describeErr(err: unknown): string {
   if (err instanceof Error) return err.message.split("\n")[0];
   return String(err);
+}
+
+function comparePythonRuntimePaths(a: string, b: string): number {
+  const aVersion = versionTuple(path.basename(path.dirname(path.dirname(a))));
+  const bVersion = versionTuple(path.basename(path.dirname(path.dirname(b))));
+  const len = Math.max(aVersion.length, bVersion.length);
+  for (let i = 0; i < len; i++) {
+    const delta = (aVersion[i] ?? 0) - (bVersion[i] ?? 0);
+    if (delta !== 0) return delta;
+  }
+  return a.localeCompare(b);
+}
+
+function versionTuple(raw: string): number[] {
+  return raw
+    .split(".")
+    .map((part) => Number.parseInt(part, 10))
+    .filter((part) => Number.isFinite(part));
 }
 
 // Re-export for callers that only want the AutoLaunch-relative path string.

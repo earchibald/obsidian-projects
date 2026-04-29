@@ -119,6 +119,7 @@ describe("dashboardDependencyInstallArgs", () => {
       "-m",
       "pip",
       "install",
+      "--disable-pip-version-check",
       DASHBOARD_AIOHTTP_SPEC,
     ]);
   });

@@ -29,6 +29,7 @@ import os
 import re
 import secrets
 import signal
+import shutil
 import socket
 import sys
 import time
@@ -64,6 +65,13 @@ WS_CLOSE_TOKEN_INVALID = 4401
 
 # Matches `op-agents` and `op-agents-1`, `op-agents-2`, etc.
 TMUX_SESSION_RE = re.compile(r"^op-agents(?:-\d+)?$")
+TMUX_CANDIDATE_PATHS = [
+    "/opt/homebrew/bin/tmux",
+    "/usr/local/bin/tmux",
+    "/opt/local/bin/tmux",
+    "/usr/bin/tmux",
+    "/bin/tmux",
+]
 
 VALID_STATES = ("running", "waiting_user", "waiting_review", "idle", "exited")
 
@@ -75,6 +83,7 @@ VALID_STATES = ("running", "waiting_user", "waiting_review", "idle", "exited")
 SPINNER_CHARS = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏◐◓◑◒"
 
 log = logging.getLogger("op-dashboard")
+_tmux_missing_warned = False
 
 
 # ---- Logging ---------------------------------------------------------------
@@ -235,13 +244,40 @@ class TmuxError(Exception):
     pass
 
 
+def resolve_tmux_binary(
+    which=shutil.which,
+    exists=lambda p: Path(p).exists(),
+) -> str:
+    explicit = os.environ.get("OP_DASHBOARD_TMUX_BINARY", "").strip()
+    if explicit:
+        return explicit
+    detected = which("tmux")
+    if detected:
+        return detected
+    for candidate in TMUX_CANDIDATE_PATHS:
+        if exists(candidate):
+            return candidate
+    return "tmux"
+
+
 async def tmux_run(*args: str, check: bool = True) -> Tuple[int, str, str]:
     """Run `tmux <args...>`, return (rc, stdout, stderr)."""
-    proc = await asyncio.create_subprocess_exec(
-        "tmux", *args,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
-    )
+    global _tmux_missing_warned
+    tmux_binary = resolve_tmux_binary()
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            tmux_binary, *args,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+    except FileNotFoundError:
+        err = f"{tmux_binary}: not found"
+        if not _tmux_missing_warned:
+            log.warning("tmux unavailable (%s) — running without tmux data.", err)
+            _tmux_missing_warned = True
+        if check:
+            raise TmuxError(err)
+        return 127, "", err
     out_b, err_b = await proc.communicate()
     rc = proc.returncode if proc.returncode is not None else -1
     out = out_b.decode("utf-8", errors="replace")
