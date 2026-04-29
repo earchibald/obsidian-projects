@@ -65,6 +65,24 @@ class TmuxParseTests(unittest.TestCase):
             ("op-agents-22", "OP-3"),
         ])
 
+    def test_resolve_tmux_binary_prefers_which(self):
+        self.assertEqual(
+            opd.resolve_tmux_binary(
+                which=lambda _: "/tmp/tmux",
+                exists=lambda _: False,
+            ),
+            "/tmp/tmux",
+        )
+
+    def test_resolve_tmux_binary_falls_back_to_known_paths(self):
+        self.assertEqual(
+            opd.resolve_tmux_binary(
+                which=lambda _: None,
+                exists=lambda p: p == "/opt/homebrew/bin/tmux",
+            ),
+            "/opt/homebrew/bin/tmux",
+        )
+
 
 class StateClassifierTests(unittest.TestCase):
     def setUp(self):

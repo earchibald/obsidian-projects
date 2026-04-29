@@ -17,6 +17,7 @@
 
 import { existsSync, readFileSync } from "node:fs";
 import { execFile } from "node:child_process";
+import * as http from "node:http";
 import * as path from "node:path";
 
 /** Pure: where the daemon writes its stderr log per the OP-217 spec. */
@@ -96,27 +97,16 @@ export async function probeDaemonStatus(
   options: ProbeOptions = {},
 ): Promise<DaemonStatus> {
   const { timeoutMs = 1000, signal: external } = options;
-  const ctrl = new AbortController();
-  const t = setTimeout(() => ctrl.abort(), timeoutMs);
-  // Chain external aborts so the fetch is cancelled when the caller closes
-  // its scope (e.g. the Settings tab's hide() handler).
-  const onExternalAbort = () => ctrl.abort();
-  if (external) {
-    if (external.aborted) ctrl.abort();
-    else external.addEventListener("abort", onExternalAbort);
-  }
+  if (external?.aborted) return { running: false };
   try {
-    const url = `http://127.0.0.1:${port}/healthz${
-      token ? `?token=${encodeURIComponent(token)}` : ""
-    }`;
-    const res = await fetch(url, { signal: ctrl.signal });
+    const res = await requestDaemonStatus(port, token, timeoutMs, external);
     if (res.status === 401) {
       return { running: true, authError: true };
     }
-    if (!res.ok) {
+    if (res.status !== 200) {
       return { running: false };
     }
-    const body = (await res.json()) as {
+    const body = (JSON.parse(res.body) ?? {}) as {
       ok?: boolean;
       version?: string;
       uptime_s?: number;
@@ -130,8 +120,68 @@ export async function probeDaemonStatus(
     };
   } catch {
     return { running: false };
-  } finally {
-    clearTimeout(t);
-    if (external) external.removeEventListener("abort", onExternalAbort);
   }
+}
+
+interface DaemonHttpResponse {
+  status: number;
+  body: string;
+}
+
+function requestDaemonStatus(
+  port: number,
+  token: string | null,
+  timeoutMs: number,
+  signal?: AbortSignal,
+): Promise<DaemonHttpResponse> {
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    const req = http.get(
+      `http://127.0.0.1:${port}/healthz${token ? `?token=${encodeURIComponent(token)}` : ""}`,
+      (res) => {
+        const chunks: Buffer[] = [];
+        res.on("data", (chunk) => {
+          chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+        });
+        res.on("end", () => {
+          if (settled) return;
+          settled = true;
+          cleanup();
+          resolve({
+            status: res.statusCode ?? 0,
+            body: Buffer.concat(chunks).toString("utf8"),
+          });
+        });
+      },
+    );
+    const cleanup = () => {
+      req.removeListener("error", onError);
+      req.removeListener("timeout", onTimeout);
+      signal?.removeEventListener("abort", onAbort);
+    };
+    const onError = (err: Error) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      reject(err);
+    };
+    const onTimeout = () => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      req.destroy();
+      reject(new Error("timeout"));
+    };
+    const onAbort = () => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      req.destroy();
+      reject(new DOMException("aborted", "AbortError"));
+    };
+    req.on("error", onError);
+    req.on("timeout", onTimeout);
+    req.setTimeout(timeoutMs);
+    signal?.addEventListener("abort", onAbort, { once: true });
+  });
 }

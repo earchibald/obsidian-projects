@@ -4,14 +4,21 @@ import {
   rmSync,
   writeFileSync,
 } from "node:fs";
+import { EventEmitter } from "node:events";
+import type { ClientRequest, IncomingMessage } from "node:http";
 import { tmpdir } from "node:os";
 import * as path from "node:path";
+import * as http from "node:http";
 import {
   formatUptime,
   getDashboardLogPath,
   probeDaemonStatus,
   readDashboardToken,
 } from "./dashboardInstall";
+
+vi.mock("node:http", () => ({
+  get: vi.fn(),
+}));
 
 describe("getDashboardLogPath", () => {
   it("derives the macOS Library/Logs path from a home dir", () => {
@@ -73,34 +80,40 @@ describe("readDashboardToken", () => {
 });
 
 describe("probeDaemonStatus", () => {
-  const realFetch = globalThis.fetch;
+  const httpGetMock = vi.mocked(http.get);
 
   afterEach(() => {
-    globalThis.fetch = realFetch;
+    httpGetMock.mockReset();
   });
 
-  it("reports running:false when fetch rejects (daemon offline)", async () => {
-    globalThis.fetch = vi.fn().mockRejectedValue(new Error("ECONNREFUSED")) as unknown as typeof fetch;
+  it("reports running:false when the request errors (daemon offline)", async () => {
+    httpGetMock.mockImplementation(() => {
+      const req = makeRequest();
+      queueMicrotask(() => req.emit("error", new Error("ECONNREFUSED")));
+      return req as ClientRequest;
+    });
     const status = await probeDaemonStatus(49217, "tok");
     expect(status.running).toBe(false);
   });
 
   it("flags authError when the daemon returns 401", async () => {
-    globalThis.fetch = vi.fn().mockResolvedValue({
-      ok: false,
-      status: 401,
-      json: async () => ({}),
-    } as unknown as Response) as unknown as typeof fetch;
+    httpGetMock.mockImplementation((_url, cb) => {
+      const req = makeRequest();
+      queueMicrotask(() => emitResponse(cb, 401, "{}"));
+      return req as ClientRequest;
+    });
     const status = await probeDaemonStatus(49217, "stale-token");
     expect(status).toEqual({ running: true, authError: true });
   });
 
   it("parses the running daemon's healthz payload", async () => {
-    globalThis.fetch = vi.fn().mockResolvedValue({
-      ok: true,
-      status: 200,
-      json: async () => ({ ok: true, version: "0.84.0", uptime_s: 42, iterm: true }),
-    } as unknown as Response) as unknown as typeof fetch;
+    httpGetMock.mockImplementation((_url, cb) => {
+      const req = makeRequest();
+      queueMicrotask(() =>
+        emitResponse(cb, 200, JSON.stringify({ ok: true, version: "0.84.0", uptime_s: 42, iterm: true })),
+      );
+      return req as ClientRequest;
+    });
     const status = await probeDaemonStatus(49217, "good");
     expect(status).toEqual({
       running: true,
@@ -115,36 +128,50 @@ describe("probeDaemonStatus", () => {
   // stale badge. Verify by holding the fetch mock open until the test fires
   // `ext.abort()`, then assert the helper resolved to running:false (the
   // catch path) and that the inner signal saw the abort.
-  it("aborts the in-flight fetch when the external signal fires", async () => {
-    let capturedAborted = false;
-    globalThis.fetch = vi.fn((_url, init?: RequestInit) =>
-      new Promise<Response>((_resolve, reject) => {
-        const sig = init?.signal;
-        sig?.addEventListener("abort", () => {
-          capturedAborted = sig.aborted;
-          reject(new DOMException("aborted", "AbortError"));
-        });
-      }),
-    ) as unknown as typeof fetch;
+  it("aborts the in-flight probe when the external signal fires", async () => {
+    let destroyed = false;
+    httpGetMock.mockImplementation(() => {
+      const req = makeRequest();
+      req.destroy = vi.fn(() => {
+        destroyed = true;
+        return req as ClientRequest;
+      }) as ClientRequest["destroy"];
+      return req as ClientRequest;
+    });
     const ext = new AbortController();
     const probe = probeDaemonStatus(49217, "tok", { signal: ext.signal });
     await new Promise((r) => setTimeout(r, 0));
     ext.abort();
     const status = await probe;
     expect(status).toEqual({ running: false });
-    expect(capturedAborted).toBe(true);
+    expect(destroyed).toBe(true);
   });
 
   it("aborts immediately when the external signal is already aborted", async () => {
     const ext = new AbortController();
     ext.abort();
-    let captured: AbortSignal | undefined;
-    globalThis.fetch = vi.fn(async (_url, init?: RequestInit) => {
-      captured = init?.signal;
-      throw new DOMException("aborted", "AbortError");
-    }) as unknown as typeof fetch;
     const status = await probeDaemonStatus(49217, "tok", { signal: ext.signal });
     expect(status).toEqual({ running: false });
-    expect(captured?.aborted).toBe(true);
+    expect(httpGetMock).not.toHaveBeenCalled();
   });
 });
+
+function makeRequest(): EventEmitter & Pick<ClientRequest, "on" | "setTimeout" | "destroy" | "removeListener"> {
+  const req = new EventEmitter() as EventEmitter &
+    Pick<ClientRequest, "on" | "setTimeout" | "destroy" | "removeListener">;
+  req.setTimeout = vi.fn();
+  req.destroy = vi.fn(() => req as ClientRequest);
+  return req;
+}
+
+function emitResponse(
+  callback: ((res: IncomingMessage) => void) | undefined,
+  status: number,
+  body: string,
+): void {
+  const res = new EventEmitter() as IncomingMessage;
+  res.statusCode = status;
+  callback?.(res);
+  res.emit("data", Buffer.from(body));
+  res.emit("end");
+}
