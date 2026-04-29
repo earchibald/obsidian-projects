@@ -163,6 +163,16 @@ class AuthTests(unittest.TestCase):
         self.assertFalse(opd.token_ok("abc", ""))
 
 
+class AutoLaunchEntrypointTests(unittest.TestCase):
+    def test_should_autolaunch_true_for_autolaunch_path_with_no_args(self):
+        argv0 = str(opd.AUTOLAUNCH_DIR / "op-dashboard.py")
+        self.assertTrue(opd.should_autolaunch(argv0, [argv0]))
+
+    def test_should_autolaunch_false_when_args_are_present(self):
+        argv0 = str(opd.AUTOLAUNCH_DIR / "op-dashboard.py")
+        self.assertFalse(opd.should_autolaunch(argv0, [argv0, "--help"]))
+
+
 class DataJsonReaderTests(unittest.TestCase):
     def _write(self, payload):
         td = tempfile.mkdtemp()

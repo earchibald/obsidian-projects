@@ -7,7 +7,7 @@ into ~/Library/ApplicationSupport/iTerm2/Scripts/AutoLaunch/ by the
 plugin's Setup modal (OP-232).
 
 Runtime requirements:
-    pip3 install aiohttp iterm2
+    Install aiohttp into iTerm's bundled Python runtime; `iterm2` ships there.
 
 The `iterm2` package is best-effort — if it's missing or the API is
 disabled, the daemon runs in tmux-only mode (Close pane returns an error
@@ -36,6 +36,11 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, Tuple
+
+try:
+    import iterm2  # type: ignore
+except ImportError:
+    iterm2 = None  # type: ignore[assignment]
 
 # ---- Constants -------------------------------------------------------------
 
@@ -307,14 +312,12 @@ class ITermBridge:
         self.available = False
         self._uuid_by_issue: Dict[str, str] = {}
 
-    async def start(self) -> None:
-        try:
-            import iterm2  # type: ignore
-        except ImportError:
+    async def start(self, connection: Any = None) -> None:
+        if iterm2 is None:
             log.warning("iterm2 Python package not installed — running in tmux-only mode.")
             return
         try:
-            self.connection = await iterm2.Connection.async_create()
+            self.connection = connection or await iterm2.Connection.async_create()
             self.app = await iterm2.async_get_app(self.connection)
             self.available = True
             log.info("iTerm2 Python API connected.")
@@ -874,7 +877,16 @@ async def poll_loop(state: AppState) -> None:
 
 # ---- main ------------------------------------------------------------------
 
-async def run(args: argparse.Namespace) -> int:
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(description="op-dashboard daemon")
+    parser.add_argument("--port", type=int, default=DEFAULT_PORT)
+    parser.add_argument("--host", default=DEFAULT_HOST)
+    parser.add_argument("--no-iterm", action="store_true",
+                        help="Skip iTerm Python API (force tmux-only mode).")
+    return parser
+
+
+async def run(args: argparse.Namespace, connection: Any = None) -> int:
     # Single-instance probe — fail-fast if another daemon already owns the port.
     probe = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     try:
@@ -891,7 +903,7 @@ async def run(args: argparse.Namespace) -> int:
     try:
         from aiohttp import web
     except ImportError:
-        log.error("aiohttp not installed — `pip3 install aiohttp` and restart iTerm.")
+        log.error("aiohttp not installed in iTerm's bundled Python runtime — rerun the dashboard installer and restart iTerm.")
         return 1
 
     state = AppState(
@@ -905,7 +917,7 @@ async def run(args: argparse.Namespace) -> int:
     log.info("token written to %s (mode 0600)", TOKEN_PATH)
 
     if not args.no_iterm:
-        await state.iterm.start()
+        await state.iterm.start(connection)
 
     app = build_app(state)
     runner = web.AppRunner(app)
@@ -931,20 +943,34 @@ async def run(args: argparse.Namespace) -> int:
     return 0
 
 
+async def autolaunch_main(connection: Any) -> None:
+    setup_logging()
+    args = build_parser().parse_args([])
+    rc = await run(args, connection=connection)
+    if rc != 0:
+        raise SystemExit(rc)
+
+
+def should_autolaunch(argv0: str, argv: List[str]) -> bool:
+    return Path(argv0).resolve().parent == AUTOLAUNCH_DIR and len(argv) == 1
+
+
 def main() -> int:
     if sys.platform != "darwin":
         setup_logging()
         log.error("op-dashboard is macOS-only (platform=%s) — exiting.", sys.platform)
         return 0
-    parser = argparse.ArgumentParser(description="op-dashboard daemon")
-    parser.add_argument("--port", type=int, default=DEFAULT_PORT)
-    parser.add_argument("--host", default=DEFAULT_HOST)
-    parser.add_argument("--no-iterm", action="store_true",
-                        help="Skip iTerm Python API (force tmux-only mode).")
-    args = parser.parse_args()
+    args = build_parser().parse_args()
     setup_logging()
     return asyncio.run(run(args))
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    if should_autolaunch(sys.argv[0], sys.argv):
+        if iterm2 is None:
+            setup_logging()
+            log.error("iterm2 Python package unavailable in AutoLaunch environment.")
+            sys.exit(1)
+        iterm2.run_forever(autolaunch_main)
+    else:
+        sys.exit(main())

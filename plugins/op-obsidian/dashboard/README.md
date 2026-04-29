@@ -14,11 +14,13 @@ on launch and on every restart.
 
 - macOS (the daemon exits cleanly on other platforms)
 - Python 3.11+ (uses `dataclasses` defaults, structural typing, modern asyncio)
-- `aiohttp >= 3.9, < 4` — hard dep, needed for HTTP + WebSocket
+- `aiohttp >= 3.9, < 4` — hard dep, needed for HTTP + WebSocket. When the
+  plugin installs the daemon into iTerm AutoLaunch, it must land in **iTerm's
+  bundled Python runtime**, not just the user's shell `pip3`.
 - `iterm2 >= 2.1` — optional; the daemon falls back to tmux-only mode without it
 
 ```bash
-pip3 install 'aiohttp>=3.9,<4' 'iterm2>=2.1'
+"$HOME/Library/Application Support/iTerm2/iterm2env/versions/3.14.0/bin/python3" -m pip install 'aiohttp>=3.9,<4'
 ```
 
 Both versions are pinned because the daemon ships into the user's
@@ -26,8 +28,8 @@ Both versions are pinned because the daemon ships into the user's
 break every dashboard install. OP-232's Setup modal will surface the
 version constraint when its `import` probe finds a mismatch.
 
-The Setup modal will surface `pip3 install` instructions when these are
-missing.
+The Setup modal installs the daemon assets and `aiohttp` into iTerm's bundled
+runtime. If that bootstrap fails, check `~/Library/Logs/op-dashboard.log`.
 
 ## Files at runtime
 
