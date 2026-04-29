@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { mkdtempSync, readFileSync, rmSync, statSync } from "node:fs";
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import * as path from "node:path";
 
@@ -19,7 +19,13 @@ vi.mock("obsidian", () => ({
   },
 }));
 
-import { dashboardClientPath, installDaemon } from "./dashboardSetupModal";
+import {
+  DASHBOARD_AIOHTTP_SPEC,
+  dashboardClientPath,
+  dashboardDependencyInstallArgs,
+  installDaemon,
+  listITermPythonRuntimes,
+} from "./dashboardSetupModal";
 
 describe("dashboardClientPath", () => {
   it("installs the client next to the daemon under client/index.html", () => {
@@ -67,5 +73,53 @@ describe("installDaemon", () => {
         daemonPath,
       ),
     ).toEqual({ ok: false, reason: "bundled daemon payload is empty" });
+  });
+});
+
+describe("listITermPythonRuntimes", () => {
+  it("returns every bundled iTerm python path under versions/*/bin/python3", () => {
+    const homeDir = mkdtempSync(path.join(tmpdir(), "op-dashboard-runtimes-"));
+    try {
+      const versionsDir = path.join(
+        homeDir,
+        "Library",
+        "Application Support",
+        "iTerm2",
+        "iterm2env",
+        "versions",
+      );
+      mkdirSync(path.join(versionsDir, "3.10.19", "bin"), { recursive: true });
+      mkdirSync(path.join(versionsDir, "3.14.0", "bin"), { recursive: true });
+      writeFileSync(path.join(versionsDir, "3.10.19", "bin", "python3"), "");
+      writeFileSync(path.join(versionsDir, "3.14.0", "bin", "python3"), "");
+      mkdirSync(path.join(versionsDir, "notes"), { recursive: true });
+
+      expect(listITermPythonRuntimes(homeDir)).toEqual([
+        path.join(versionsDir, "3.10.19", "bin", "python3"),
+        path.join(versionsDir, "3.14.0", "bin", "python3"),
+      ]);
+    } finally {
+      rmSync(homeDir, { recursive: true, force: true });
+    }
+  });
+
+  it("returns an empty list when the canonical iterm2env path is absent", () => {
+    const homeDir = mkdtempSync(path.join(tmpdir(), "op-dashboard-runtimes-"));
+    try {
+      expect(listITermPythonRuntimes(homeDir)).toEqual([]);
+    } finally {
+      rmSync(homeDir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("dashboardDependencyInstallArgs", () => {
+  it("pins aiohttp to the supported range", () => {
+    expect(dashboardDependencyInstallArgs()).toEqual([
+      "-m",
+      "pip",
+      "install",
+      DASHBOARD_AIOHTTP_SPEC,
+    ]);
   });
 });

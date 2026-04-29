@@ -40,7 +40,10 @@ import {
   buildDashboardUrl,
   type DashboardTarget as DashboardTargetType,
 } from "./dashboardOpen";
-import { installDaemon as installDashboardDaemon } from "./dashboardSetupModal";
+import {
+  installDaemon as installDashboardDaemon,
+  installDashboardDependencies,
+} from "./dashboardSetupModal";
 import {
   formatUptime,
   getDashboardLogPath,
@@ -2088,7 +2091,7 @@ export class OpSettingsTab extends PluginSettingTab {
     new Setting(containerEl)
       .setName("Install daemon")
       .setDesc(
-        "Install the bundled `op-dashboard.py` plus its `client/index.html` sibling into ~/Library/Application Support/iTerm2/Scripts/AutoLaunch/ — same install path as OP-232's Setup modal. Idempotent. Restart iTerm2 after install/upgrade.",
+        "Install the bundled `op-dashboard.py` plus its `client/index.html` sibling into ~/Library/Application Support/iTerm2/Scripts/AutoLaunch/, then install `aiohttp` into iTerm's bundled Python runtime. Same install path as OP-232's Setup modal. Restart iTerm2 after install/upgrade.",
       )
       .addButton((b) =>
         b
@@ -2099,13 +2102,21 @@ export class OpSettingsTab extends PluginSettingTab {
               BUNDLED_DASHBOARD_ASSETS,
               paths.daemonPath,
             );
-            if (result.ok) {
+            if (!result.ok) {
               notify(
-                `Installed daemon and client assets to ${paths.autoLaunchDir}. Restart iTerm2 to launch it.`,
+                `Install failed: ${result.reason ?? "unknown error"}. Source: ${BUNDLED_DASHBOARD_ASSETS.sourceLabel}.`,
+              );
+              await refreshStatus();
+              return;
+            }
+            const deps = await installDashboardDependencies(os.homedir());
+            if (deps.ok) {
+              notify(
+                `Installed daemon/client assets to ${paths.autoLaunchDir} and aiohttp into ${deps.runtimesInstalled} iTerm runtime${deps.runtimesInstalled === 1 ? "" : "s"}. Restart iTerm2 to launch it.`,
               );
             } else {
               notify(
-                `Install failed: ${result.reason ?? "unknown error"}. Source: ${BUNDLED_DASHBOARD_ASSETS.sourceLabel}.`,
+                `Installed daemon assets, but couldn't install aiohttp into iTerm's bundled Python runtime: ${deps.reason}`,
               );
             }
             await refreshStatus();

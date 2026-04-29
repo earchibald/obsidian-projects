@@ -12,6 +12,8 @@
 // don't reach through Obsidian's vault adapter because the AutoLaunch
 // directory lives outside the vault.
 
+import { execFile } from "node:child_process";
+import * as fs from "fs";
 import { App, Modal, Notice, Setting } from "obsidian";
 import {
   AUTOLAUNCH_REL_DIR,
@@ -21,9 +23,9 @@ import {
   detectSetupGates,
   type SetupGatesWithToken,
 } from "./dashboardOpen";
-import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
+import { promisify } from "util";
 import type { BundledDashboardAssets } from "./dashboardBundledAssets";
 
 export interface DashboardSetupDeps {
@@ -43,6 +45,8 @@ export interface DashboardSetupDeps {
 
 /** Resolves whatever the user typed/pasted/dropped. Used only by the modal. */
 const HOMEBREW_INSTALL_CMD = "brew install --cask itermbrowserplugin";
+export const DASHBOARD_AIOHTTP_SPEC = "aiohttp>=3.9,<4";
+const pExecFile = promisify(execFile);
 
 export class DashboardSetupModal extends Modal {
   private gates: SetupGatesWithToken | null = null;
@@ -170,7 +174,7 @@ export class DashboardSetupModal extends Modal {
         });
       } else if (this.gates?.daemonInstalled) {
         gate.createEl("p", {
-          text: "The daemon is installed but not responding. Restart iTerm2 (or run it manually from the iTerm Scripts → Run menu) to launch it. The dashboard re-checks once iTerm restarts.",
+          text: "The daemon is installed but not responding. Restart iTerm2 (or rerun Scripts → AutoLaunch → op-dashboard.py) to launch it. If it still fails, open ~/Library/Logs/op-dashboard.log and look for missing bundled-Python dependencies.",
         });
       } else {
         gate.createEl("p", {
@@ -288,17 +292,25 @@ class InstallDaemonConfirmModal extends Modal {
         b
           .setButtonText(exists ? "Reinstall" : "Install")
           .setCta()
-          .onClick(() => {
+          .onClick(async () => {
             const result = installDaemon(this.assets, this.targetPath);
-            if (result.ok) {
+            if (!result.ok) {
+              new Notice(`Install failed: ${result.reason}`, 8000);
+              return;
+            }
+            const deps = await installDashboardDependencies(os.homedir());
+            if (deps.ok) {
               new Notice(
-                "op-dashboard.py and client/index.html installed. Restart iTerm2 to start the daemon.",
+                `op-dashboard.py, client/index.html, and aiohttp installed for ${deps.runtimesInstalled} iTerm runtime${deps.runtimesInstalled === 1 ? "" : "s"}. Restart iTerm2 to start the daemon.`,
                 /* timeout */ 6000,
               );
               this.close();
               this.onInstalled();
             } else {
-              new Notice(`Install failed: ${result.reason}`, 8000);
+              new Notice(
+                `Installed daemon assets, but couldn't install aiohttp into iTerm's bundled Python runtime: ${deps.reason}`,
+                8000,
+              );
             }
           }),
       )
@@ -312,6 +324,12 @@ class InstallDaemonConfirmModal extends Modal {
 
 export interface InstallDaemonResult {
   ok: boolean;
+  reason?: string;
+}
+
+export interface DashboardDependencyInstallResult {
+  ok: boolean;
+  runtimesInstalled: number;
   reason?: string;
 }
 
@@ -348,6 +366,55 @@ export function installDaemon(
   }
 }
 
+export function listITermPythonRuntimes(homeDir: string): string[] {
+  const versionsDir = path.join(
+    homeDir,
+    "Library",
+    "Application Support",
+    "iTerm2",
+    "iterm2env",
+    "versions",
+  );
+  try {
+    return fs
+      .readdirSync(versionsDir, { withFileTypes: true })
+      .filter((entry) => entry.isDirectory())
+      .map((entry) => path.join(versionsDir, entry.name, "bin", "python3"))
+      .filter((pythonPath) => fs.existsSync(pythonPath))
+      .sort();
+  } catch {
+    return [];
+  }
+}
+
+export function dashboardDependencyInstallArgs(): string[] {
+  return ["-m", "pip", "install", DASHBOARD_AIOHTTP_SPEC];
+}
+
+export async function installDashboardDependencies(
+  homeDir: string,
+): Promise<DashboardDependencyInstallResult> {
+  const runtimes = listITermPythonRuntimes(homeDir);
+  if (runtimes.length === 0) {
+    return {
+      ok: false,
+      runtimesInstalled: 0,
+      reason: "no iTerm bundled Python runtimes were found under ~/Library/Application Support/iTerm2/iterm2env/versions",
+    };
+  }
+  for (const pythonPath of runtimes) {
+    try {
+      await pExecFile(pythonPath, dashboardDependencyInstallArgs());
+    } catch (err) {
+      return {
+        ok: false,
+        runtimesInstalled: 0,
+        reason: `${pythonPath}: ${describeErr(err)}`,
+      };
+    }
+  }
+  return { ok: true, runtimesInstalled: runtimes.length };
+}
 export function dashboardClientPath(targetPath: string): string {
   return path.join(path.dirname(targetPath), "client", "index.html");
 }
