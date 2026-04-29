@@ -1,8 +1,8 @@
 // OP-232: Setup modal for the agent dashboard. Runs the four gates from
 // `dashboardOpen.detectSetupGates`, surfaces each one with actionable copy,
-// and exposes the "Install daemon" button that copies the bundled
-// `op-dashboard.py` (shipped by OP-230) into the user's iTerm AutoLaunch
-// directory.
+// and exposes the "Install daemon" button that writes the bundled
+// `op-dashboard.py` plus `client/index.html` (shipped by OP-230 / OP-231)
+// into the user's iTerm AutoLaunch directory.
 //
 // Never silently writes — Install always opens a confirm sub-modal listing
 // the source path, the destination path, and whether a copy already exists.
@@ -24,16 +24,16 @@ import {
 import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
+import type { BundledDashboardAssets } from "./dashboardBundledAssets";
 
 export interface DashboardSetupDeps {
   /** Probe used by `detectSetupGates`. Production passes a `requestUrl`-backed
    *  probe with a 1-second AbortController; the modal injects it so the
    *  confirm/cancel UX can be exercised without a real daemon. */
   probeHealthz: (url: string, timeoutMs: number) => Promise<boolean>;
-  /** Source path of the bundled `op-dashboard.py` daemon (typically
-   *  `<vault-config>/.obsidian/plugins/op-obsidian/dashboard/op-dashboard.py`).
-   *  Must exist; the Install button copies it into the AutoLaunch dir. */
-  bundledDaemonPath: string;
+  /** Bundled daemon + client payload embedded in the plugin's main bundle so
+   *  BRAT installs still have the dashboard runtime assets available. */
+  bundledAssets: BundledDashboardAssets;
   /** Optional clipboard writer (`navigator.clipboard.writeText`). Used for
    *  the "Copy" button next to the Homebrew install instruction. */
   copyToClipboard?: (text: string) => Promise<void>;
@@ -140,16 +140,20 @@ export class DashboardSetupModal extends Modal {
         });
       } else {
         gate.createEl("p", {
-          text: "Click Install daemon to copy op-dashboard.py into your iTerm AutoLaunch folder. You’ll always be asked to confirm before the file is written.",
+          text: "Click Install daemon to install op-dashboard.py and its client/index.html sibling into your iTerm AutoLaunch folder. You’ll always be asked to confirm before the files are written.",
         });
       }
       gate.createEl("p", {
         cls: "op-dashboard-setup__path",
-        text: `Source: ${this.deps.bundledDaemonPath}`,
+        text: `Source: ${this.deps.bundledAssets.sourceLabel}`,
       });
       gate.createEl("p", {
         cls: "op-dashboard-setup__path",
         text: `Target: ${paths.daemonPath}`,
+      });
+      gate.createEl("p", {
+        cls: "op-dashboard-setup__path",
+        text: `Also installs: ${dashboardClientPath(paths.daemonPath)}`,
       });
       new Setting(gate).addButton((b) =>
         b
@@ -232,7 +236,7 @@ export class DashboardSetupModal extends Modal {
   private openInstallConfirm(targetPath: string): void {
     new InstallDaemonConfirmModal(
       this.app,
-      this.deps.bundledDaemonPath,
+      this.deps.bundledAssets,
       targetPath,
       () => void this.refresh(),
     ).open();
@@ -242,7 +246,7 @@ export class DashboardSetupModal extends Modal {
 class InstallDaemonConfirmModal extends Modal {
   constructor(
     app: App,
-    private sourcePath: string,
+    private assets: BundledDashboardAssets,
     private targetPath: string,
     private onInstalled: () => void,
   ) {
@@ -264,15 +268,19 @@ class InstallDaemonConfirmModal extends Modal {
     this.contentEl.createEl("p", {
       text: exists
         ? "An op-dashboard.py already exists at the target path. Confirming will overwrite it."
-        : "Confirming will copy the bundled op-dashboard.py into your iTerm AutoLaunch folder.",
+        : "Confirming will install the bundled op-dashboard.py and client/index.html into your iTerm AutoLaunch folder.",
     });
     this.contentEl.createEl("p", {
       cls: "op-dashboard-setup__path",
-      text: `Source: ${this.sourcePath}`,
+      text: `Source: ${this.assets.sourceLabel}`,
     });
     this.contentEl.createEl("p", {
       cls: "op-dashboard-setup__path",
       text: `Target: ${this.targetPath}`,
+    });
+    this.contentEl.createEl("p", {
+      cls: "op-dashboard-setup__path",
+      text: `Also installs: ${dashboardClientPath(this.targetPath)}`,
     });
 
     new Setting(this.contentEl)
@@ -281,10 +289,10 @@ class InstallDaemonConfirmModal extends Modal {
           .setButtonText(exists ? "Reinstall" : "Install")
           .setCta()
           .onClick(() => {
-            const result = installDaemon(this.sourcePath, this.targetPath);
+            const result = installDaemon(this.assets, this.targetPath);
             if (result.ok) {
               new Notice(
-                "op-dashboard.py installed. Restart iTerm2 to start the daemon.",
+                "op-dashboard.py and client/index.html installed. Restart iTerm2 to start the daemon.",
                 /* timeout */ 6000,
               );
               this.close();
@@ -308,15 +316,23 @@ export interface InstallDaemonResult {
 }
 
 /** Pure-ish helper exported for testing. Synchronous because the dest write
- *  is a single file copy and we want the post-write Notice to fire only
+ *  is a small local write and we want the post-write Notice to fire only
  *  after the bytes hit disk. */
-export function installDaemon(sourcePath: string, targetPath: string): InstallDaemonResult {
+export function installDaemon(
+  assets: BundledDashboardAssets,
+  targetPath: string,
+): InstallDaemonResult {
   try {
-    if (!fs.existsSync(sourcePath)) {
-      return { ok: false, reason: `bundled daemon missing at ${sourcePath}` };
+    if (!assets.daemonContent.trim()) {
+      return { ok: false, reason: "bundled daemon payload is empty" };
+    }
+    if (!assets.clientContent.trim()) {
+      return { ok: false, reason: "bundled client payload is empty" };
     }
     fs.mkdirSync(path.dirname(targetPath), { recursive: true });
-    fs.copyFileSync(sourcePath, targetPath);
+    fs.writeFileSync(targetPath, assets.daemonContent, "utf8");
+    fs.mkdirSync(path.dirname(dashboardClientPath(targetPath)), { recursive: true });
+    fs.writeFileSync(dashboardClientPath(targetPath), assets.clientContent, "utf8");
     // Daemon expects executable permission. `iterm2` AutoLaunch runs `python3
     // <script>` so technically the bit isn't required, but setting it
     // matches what users get if they install via `cp` and means manual
@@ -330,6 +346,10 @@ export function installDaemon(sourcePath: string, targetPath: string): InstallDa
   } catch (err) {
     return { ok: false, reason: describeErr(err) };
   }
+}
+
+export function dashboardClientPath(targetPath: string): string {
+  return path.join(path.dirname(targetPath), "client", "index.html");
 }
 
 async function defaultClipboardWriter(text: string): Promise<void> {

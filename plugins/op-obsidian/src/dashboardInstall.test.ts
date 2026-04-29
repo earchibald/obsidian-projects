@@ -7,7 +7,6 @@ import {
 import { tmpdir } from "node:os";
 import * as path from "node:path";
 import {
-  bundledDaemonSource,
   formatUptime,
   getDashboardLogPath,
   probeDaemonStatus,
@@ -18,18 +17,6 @@ describe("getDashboardLogPath", () => {
   it("derives the macOS Library/Logs path from a home dir", () => {
     expect(getDashboardLogPath("/home/me")).toBe(
       "/home/me/Library/Logs/op-dashboard.log",
-    );
-  });
-});
-
-describe("bundledDaemonSource", () => {
-  it("joins the plugin dir with dashboard/op-dashboard.py", () => {
-    const src = bundledDaemonSource({
-      pluginDir: ".obsidian/plugins/op-obsidian",
-      vaultBasePath: "/tmp/vault",
-    });
-    expect(src).toBe(
-      "/tmp/vault/.obsidian/plugins/op-obsidian/dashboard/op-dashboard.py",
     );
   });
 });

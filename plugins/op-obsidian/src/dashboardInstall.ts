@@ -31,20 +31,6 @@ export interface PluginPaths {
   vaultBasePath: string;
 }
 
-/** Pure: resolve where the bundled daemon script lives at runtime. The
- * plugin's `manifest.dir` + adapter base path point at the installed plugin
- * folder; the daemon source ships under `dashboard/op-dashboard.py` next
- * to `main.js`. (`dev-sync.mjs` and the BRAT release artifacts must include
- * the `dashboard/` folder for this path to resolve to a real file.) */
-export function bundledDaemonSource(paths: PluginPaths): string {
-  return path.join(
-    paths.vaultBasePath,
-    paths.pluginDir,
-    "dashboard",
-    "op-dashboard.py",
-  );
-}
-
 /** Pure: format an uptime in seconds as "1h 23m 04s" / "23m 04s" / "04s".
  * Used by the daemon-status badge. */
 export function formatUptime(seconds: number): string {
