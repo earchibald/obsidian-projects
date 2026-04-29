@@ -14,12 +14,13 @@ Reference: https://docs.obsidian.md/Plugins/Releasing/Submit+your+plugin
 - [ ] `versions.json` — add a row for each `manifest.json` version that bumped `minAppVersion`.
 - [ ] LICENSE — confirm MIT (matches `package.json`).
 - [ ] README.md — top-level install / usage section. Current README needs a community-store-facing rewrite: what it does, screenshots, settings overview, known limitations (macOS-only agent launcher).
-- [ ] `main.js`, `manifest.json`, `styles.css` committed or shipped via GitHub release assets.
+- [ ] `main.js`, `manifest.json`, `styles.css`, and `op-obsidian.zip` committed or shipped via GitHub release assets. The zip must preserve `dashboard/op-dashboard.py` (and its sibling `dashboard/client/index.html`) under the installed plugin root.
 
 ## GitHub release
 
 - [ ] Tag matches `manifest.json` version exactly (no `v` prefix — the reviewer bot is strict).
-- [ ] Release assets: `main.js`, `manifest.json`, `styles.css`.
+- [ ] Release assets: `main.js`, `manifest.json`, `styles.css`, `op-obsidian.zip`.
+- [ ] `op-obsidian.zip` contains `dashboard/op-dashboard.py` and `dashboard/client/index.html` under the `op-obsidian/` root — do not flatten or omit the `dashboard/` subtree.
 - [ ] Release notes summarise user-visible changes.
 
 ## Screenshots (for README + submission PR)
