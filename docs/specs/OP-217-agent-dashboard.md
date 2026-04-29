@@ -57,7 +57,7 @@ The iTerm2 control protocol is exposed exclusively through the official `iterm2`
 The daemon is **opt-in.** First-time setup is initiated by the user running `op-dashboard` (palette or URI). If neither the iTerm browser plugin nor the daemon is detected, the plugin opens a Setup modal that:
 
 1. Detects whether `iTermBrowserPlugin` is installed; if not, links to `brew install --cask itermbrowserplugin` with a copy-to-clipboard button.
-2. Detects whether `op-dashboard.py` exists in `~/Library/ApplicationSupport/iTerm2/Scripts/AutoLaunch/`; if not, offers an "Install daemon" button that copies the bundled script (shipped under `plugins/op-obsidian/dashboard/op-dashboard.py`) into that folder and prompts the user to restart iTerm2.
+2. Detects whether `op-dashboard.py` exists in `~/Library/ApplicationSupport/iTerm2/Scripts/AutoLaunch/`; if not, offers an "Install daemon" button that installs the bundled daemon payload plus `client/index.html` into that folder and prompts the user to restart iTerm2.
 3. Detects whether the daemon is running on its configured port; if not, instructs the user to restart iTerm2 (or to run the daemon manually for one session via the `Run` menu in iTerm Scripts).
 
 We never silently drop a Python file into the user's iTerm Scripts folder.

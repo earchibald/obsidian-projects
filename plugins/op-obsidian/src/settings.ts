@@ -42,7 +42,6 @@ import {
 } from "./dashboardOpen";
 import { installDaemon as installDashboardDaemon } from "./dashboardSetupModal";
 import {
-  bundledDaemonSource,
   formatUptime,
   getDashboardLogPath,
   probeDaemonStatus,
@@ -50,6 +49,7 @@ import {
   revealDashboardLog,
   type DaemonStatus,
 } from "./dashboardInstall";
+import { BUNDLED_DASHBOARD_ASSETS } from "./dashboardBundledAssets";
 import { applyProjectOrder, listProjects } from "./projects";
 import { AGENT_IDS, type AgentId } from "./agentProfiles";
 import type { ITermPlacement } from "./terminalLaunch";
@@ -1832,7 +1832,7 @@ export class OpSettingsTab extends PluginSettingTab {
    * OP-235: Dashboard subsection (per OP-217 §"New settings subsection").
    * Five rows — port, target, daemon-status, token, install. Designed to
    * compose with OP-232's already-landed surface: the "Install daemon"
-   * button calls OP-232's exported `installDaemon(sourcePath, targetPath)`;
+     * button calls OP-232's exported `installDaemon(assets, targetPath)`;
    * the daemon-status row uses a richer `probeDaemonStatus` than the
    * boolean OP-232 healthz probe so the badge can render uptime/version.
    *
@@ -2088,56 +2088,29 @@ export class OpSettingsTab extends PluginSettingTab {
     new Setting(containerEl)
       .setName("Install daemon")
       .setDesc(
-        "Copy the bundled `op-dashboard.py` (shipped by OP-230) into ~/Library/Application Support/iTerm2/Scripts/AutoLaunch/ — same install path as OP-232's Setup modal. Idempotent. Restart iTerm2 after install/upgrade.",
+        "Install the bundled `op-dashboard.py` plus its `client/index.html` sibling into ~/Library/Application Support/iTerm2/Scripts/AutoLaunch/ — same install path as OP-232's Setup modal. Idempotent. Restart iTerm2 after install/upgrade.",
       )
       .addButton((b) =>
         b
           .setButtonText("Install / upgrade")
           .setCta()
           .onClick(async () => {
-            const sourcePath = this.resolveBundledDashboardSource();
-            if (!sourcePath) {
-              notify(
-                "Could not resolve the bundled daemon path — plugin manifest is missing `dir`. Reinstall the plugin and retry.",
-              );
-              return;
-            }
-            const result = installDashboardDaemon(sourcePath, paths.daemonPath);
+            const result = installDashboardDaemon(
+              BUNDLED_DASHBOARD_ASSETS,
+              paths.daemonPath,
+            );
             if (result.ok) {
               notify(
-                `Installed daemon to ${paths.daemonPath}. Restart iTerm2 to launch it.`,
+                `Installed daemon and client assets to ${paths.autoLaunchDir}. Restart iTerm2 to launch it.`,
               );
             } else {
               notify(
-                `Install failed: ${result.reason ?? "unknown error"}. Source: ${sourcePath}.`,
+                `Install failed: ${result.reason ?? "unknown error"}. Source: ${BUNDLED_DASHBOARD_ASSETS.sourceLabel}.`,
               );
             }
             await refreshStatus();
           }),
       );
-  }
-
-  /**
-   * OP-235: resolve the absolute path to the bundled `op-dashboard.py`
-   * shipped under `dashboard/op-dashboard.py` next to `main.js`. Mirrors
-   * the private `resolveBundledDashboardDaemonPath()` already in main.ts —
-   * factored small here rather than promoting the main.ts version to public,
-   * to keep OP-235's diff scoped to the Settings tab.
-   */
-  private resolveBundledDashboardSource(): string | null {
-    const dir = this.plugin.manifest.dir;
-    const adapter = this.app.vault.adapter as unknown as {
-      basePath?: string;
-      getBasePath?: () => string;
-    };
-    const base =
-      typeof adapter.basePath === "string"
-        ? adapter.basePath
-        : typeof adapter.getBasePath === "function"
-        ? adapter.getBasePath()
-        : null;
-    if (!dir || !base) return null;
-    return bundledDaemonSource({ pluginDir: dir, vaultBasePath: base });
   }
 
   private renderDeveloper(containerEl: HTMLElement): void {

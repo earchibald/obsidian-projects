@@ -5,9 +5,9 @@ and a localhost web server. Powers the agent dashboard described in
 [`docs/specs/OP-217-agent-dashboard.md`](../../../docs/specs/OP-217-agent-dashboard.md).
 
 This directory ships the daemon source. The plugin's Setup modal (OP-232)
-copies `op-dashboard.py` into
+installs `op-dashboard.py` plus its sibling `client/index.html` into
 `~/Library/Application Support/iTerm2/Scripts/AutoLaunch/` — never silently;
-the user is always prompted before the file lands. iTerm2 starts the daemon
+the user is always prompted before the files land. iTerm2 starts the daemon
 on launch and on every restart.
 
 ## Runtime requirements
@@ -34,6 +34,7 @@ missing.
 | Path | Purpose |
 |---|---|
 | `~/Library/Application Support/iTerm2/Scripts/AutoLaunch/op-dashboard.py` | The daemon itself (copied here by OP-232). |
+| `~/Library/Application Support/iTerm2/Scripts/AutoLaunch/client/index.html` | The dashboard SPA served by the daemon at `/`. |
 | `~/Library/Application Support/iTerm2/Scripts/AutoLaunch/op-dashboard.token` | Auth token, regenerated on startup, mode 0600. |
 | `~/Library/Application Support/iTerm2/Scripts/AutoLaunch/op-dashboard.config.json` | Optional config. Currently honors `vault_data_paths: [...]` for `data.json` discovery. |
 | `~/Library/Logs/op-dashboard.log` | Rotating log (1 MB × 3 backups). |

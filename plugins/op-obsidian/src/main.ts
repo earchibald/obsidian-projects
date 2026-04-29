@@ -160,6 +160,7 @@ import {
   type SetupGatesWithToken,
 } from "./dashboardOpen";
 import { DashboardSetupModal } from "./dashboardSetupModal";
+import { BUNDLED_DASHBOARD_ASSETS } from "./dashboardBundledAssets";
 import * as os from "os";
 import { existsSync, readFileSync } from "fs";
 import { execFile } from "child_process";
@@ -4882,23 +4883,11 @@ export default class OpPlugin extends Plugin {
   }
 
   private openDashboardSetupModal(gates: SetupGatesWithToken): void {
-    const bundledDaemonPath = this.resolveBundledDashboardDaemonPath();
-    if (!bundledDaemonPath) {
-      // Should never happen — `manifest.dir` is always populated when the
-      // plugin is loaded — but defend against it so the user gets a clear
-      // error rather than a silent open of the modal with a broken Install
-      // button.
-      new Notice(
-        "op: cannot resolve bundled op-dashboard.py path — try restarting Obsidian",
-        6000,
-      );
-      return;
-    }
     new DashboardSetupModal(
       this.app,
       {
         probeHealthz: (url, timeoutMs) => probeDashboardHealthz(url, timeoutMs),
-        bundledDaemonPath,
+        bundledAssets: BUNDLED_DASHBOARD_ASSETS,
         port: this.settings.dashboard.port,
       },
       () => void this.runOpenDashboardCommand(),
@@ -4916,28 +4905,6 @@ export default class OpPlugin extends Plugin {
       return;
     }
     new Notice(`op: dashboard URL ${url}`, 8000);
-  }
-
-  /**
-   * Resolves the absolute path to the bundled `op-dashboard.py` shipped with
-   * this plugin (under `dashboard/op-dashboard.py`). Returns `undefined`
-   * when the manifest's vault-relative dir or the adapter's base path are
-   * unreachable — same surface as `resolveCookieCachePath`.
-   */
-  private resolveBundledDashboardDaemonPath(): string | undefined {
-    const dir = this.manifest.dir;
-    const adapter = this.app.vault.adapter as unknown as {
-      basePath?: string;
-      getBasePath?: () => string;
-    };
-    const base =
-      typeof adapter.basePath === "string"
-        ? adapter.basePath
-        : typeof adapter.getBasePath === "function"
-        ? adapter.getBasePath()
-        : undefined;
-    if (!dir || !base) return undefined;
-    return `${base}/${dir}/dashboard/op-dashboard.py`;
   }
 
   /**
