@@ -172,13 +172,13 @@ export class DashboardSetupModal extends Modal {
         gate.createEl("p", {
           text: `op-dashboard.py is responding on port ${this.gates.port}.`,
         });
-        } else if (this.gates?.daemonInstalled) {
-          gate.createEl("p", {
-            text: "The daemon is installed but not responding. Restart iTerm2 (or rerun Scripts → AutoLaunch → op-dashboard.py) to launch it. If it still fails, open ~/Library/Logs/op-dashboard.log and look for missing bundled-Python dependencies.",
-          });
-        } else {
-          gate.createEl("p", {
-            text: "Install the daemon first, then restart iTerm2 to bring it up.",
+      } else if (this.gates?.daemonInstalled) {
+        gate.createEl("p", {
+          text: "The daemon is installed but not responding. Restart iTerm2 (or rerun Scripts → AutoLaunch → op-dashboard.py) to launch it. If it still fails, open ~/Library/Logs/op-dashboard.log and look for missing bundled-Python dependencies.",
+        });
+      } else {
+        gate.createEl("p", {
+          text: "Install the daemon first, then restart iTerm2 to bring it up.",
         });
       }
     });
@@ -415,7 +415,6 @@ export async function installDashboardDependencies(
   }
   return { ok: true, runtimesInstalled: runtimes.length };
 }
-
 export function dashboardClientPath(targetPath: string): string {
   return path.join(path.dirname(targetPath), "client", "index.html");
 }
