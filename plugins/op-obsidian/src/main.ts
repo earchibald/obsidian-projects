@@ -497,6 +497,7 @@ export default class OpPlugin extends Plugin {
       app: this.app,
       isAgentLive: (id, agent) => this.isAgentLiveSync(id, agent),
       getSettings: () => ({
+        defaultAgent: this.settings.defaultAgent,
         view: { disableInlineGithubStatus: this.settings.view.disableInlineGithubStatus },
       }),
       ghCache,
