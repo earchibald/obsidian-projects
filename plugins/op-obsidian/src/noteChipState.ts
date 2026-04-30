@@ -90,6 +90,11 @@ export interface ChipState {
   status: IssueStatus;
 }
 
+export interface ChipPrimaryClickEvent {
+  metaKey?: boolean;
+  ctrlKey?: boolean;
+}
+
 /** Loose check: does this frontmatter shape describe an issue note we
  * should decorate? Both the resolver and the codeblock fence guard call
  * this so the gate logic only lives once. */
@@ -269,4 +274,19 @@ export function resolveChipState(
     issueId: id,
     status,
   };
+}
+
+export function describeChipPrimaryAction(state: ChipState, defaultAgent: string): string {
+  if (state.action !== "start-agent") return state.primaryLabel;
+  return `${state.primaryLabel} (default: ${defaultAgent}; Cmd/Ctrl-click to pick agent)`;
+}
+
+export function chipPrimaryCommandForClick(
+  state: ChipState,
+  ev: ChipPrimaryClickEvent,
+): string {
+  if (state.action === "start-agent" && (ev.metaKey || ev.ctrlKey)) {
+    return "op-open-agent-pick";
+  }
+  return state.primaryCommand;
 }

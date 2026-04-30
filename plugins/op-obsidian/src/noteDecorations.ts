@@ -31,6 +31,8 @@ import { StateEffect } from "@codemirror/state";
 import {
   ChipFrontmatter,
   ChipState,
+  chipPrimaryCommandForClick,
+  describeChipPrimaryAction,
   resolveChipState,
 } from "./noteChipState";
 import {
@@ -59,9 +61,9 @@ export interface ChipDeps {
    * the renderer caches the result for the widget lifetime. May return
    * `null` to mean "tmux unavailable, treat as live". */
   isAgentLive: (issueId: string, agent: string | undefined) => boolean | null;
-  /** Settings accessor — the renderer reads `view.disableInlineGithubStatus`
-   * each render, so toggling it in Settings updates without a reload. */
-  getSettings: () => { view: { disableInlineGithubStatus: boolean } };
+  /** Settings accessor — the renderer reads live note-chip-affecting settings
+   * on each render so toggling them updates without a reload. */
+  getSettings: () => { defaultAgent: string; view: { disableInlineGithubStatus: boolean } };
   /** Single in-memory cache shared across renderers (CM6 + post-processor)
    * so the strip doesn't double-fetch when both renderers run on the
    * same file during a mode toggle. */
@@ -97,21 +99,23 @@ export function renderChipDom(
     cls: `op-note-chip op-note-chip--${state.variant}`,
     text: state.primaryLabel,
   });
+  const settings = deps.getSettings();
   primary.setAttribute("type", "button");
   primary.setAttribute("aria-label", state.primaryLabel);
-  primary.title = state.primaryLabel;
+  primary.title = describeChipPrimaryAction(state, settings.defaultAgent);
   primary.addEventListener(
     "click",
     (ev) => {
       ev.preventDefault();
       ev.stopPropagation();
-      const ok = dispatchCommand(deps.app, state.primaryCommand);
+      const command = chipPrimaryCommandForClick(state, ev);
+      const ok = dispatchCommand(deps.app, command);
       if (!ok) {
         // Command unavailable (typically: not the active leaf). Surface
         // it instead of failing silently — same UX as the menu items.
         // Notice uses the bare id so the developer can grep noteChipState.ts.
         void import("./notificationLog").then(({ notify }) =>
-          notify(`op: ${state.primaryCommand} unavailable — open the issue note first.`),
+          notify(`op: ${command} unavailable — open the issue note first.`),
         );
       }
     },
@@ -485,4 +489,3 @@ export function dispatchChipRefresh(app: App): void {
     }
   });
 }
-

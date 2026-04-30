@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { isIssueFrontmatter, resolveChipState } from "./noteChipState";
+import {
+  chipPrimaryCommandForClick,
+  describeChipPrimaryAction,
+  isIssueFrontmatter,
+  resolveChipState,
+} from "./noteChipState";
 
 describe("isIssueFrontmatter", () => {
   it("rejects notes without type=issue", () => {
@@ -41,6 +46,36 @@ describe("resolveChipState — every row of the chip-state matrix", () => {
     ]);
   });
 
+  it("start-agent hover text names the configured default agent and pick hint", () => {
+    const state = resolveChipState(
+      { id: "OP-1", type: "issue", status: "open" },
+      true,
+    );
+    expect(state).not.toBeNull();
+    expect(describeChipPrimaryAction(state!, "copilot")).toBe(
+      "▶ Start agent (default: copilot; Cmd/Ctrl-click to pick agent)",
+    );
+  });
+
+  it("plain click on Start agent keeps the default-agent launch command", () => {
+    const state = resolveChipState(
+      { id: "OP-1", type: "issue", status: "open" },
+      true,
+    );
+    expect(state).not.toBeNull();
+    expect(chipPrimaryCommandForClick(state!, {})).toBe("op-open-agent");
+  });
+
+  it("Cmd/Ctrl-click on Start agent routes through the picker command", () => {
+    const state = resolveChipState(
+      { id: "OP-1", type: "issue", status: "open" },
+      true,
+    );
+    expect(state).not.toBeNull();
+    expect(chipPrimaryCommandForClick(state!, { metaKey: true })).toBe("op-open-agent-pick");
+    expect(chipPrimaryCommandForClick(state!, { ctrlKey: true })).toBe("op-open-agent-pick");
+  });
+
   it("open / agent set / not live → Re-attach (stale variant)", () => {
     const state = resolveChipState(
       { id: "OP-2", type: "issue", status: "open", agent: "claude" },
@@ -61,6 +96,16 @@ describe("resolveChipState — every row of the chip-state matrix", () => {
     expect(state?.primaryLabel).toBe("▶ Attach session");
     expect(state?.primaryCommand).toBe("op-attach-current");
     expect(state?.menu.map((m) => m.key)).toEqual(["append-commit", "set-pr", "resolve"]);
+  });
+
+  it("modified click does not rewrite non-start-agent chip commands", () => {
+    const state = resolveChipState(
+      { id: "OP-3", type: "issue", status: "in-progress", agent: "claude" },
+      true,
+    );
+    expect(state).not.toBeNull();
+    expect(chipPrimaryCommandForClick(state!, { metaKey: true })).toBe("op-attach-current");
+    expect(describeChipPrimaryAction(state!, "copilot")).toBe("▶ Attach session");
   });
 
   it("in-progress / agent set / not live → Re-attach (stale)", () => {
