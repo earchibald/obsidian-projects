@@ -15,15 +15,15 @@ export interface ActionableNoticeOptions {
   /** Inline action links rendered after the text, joined by " · ". */
   actions?: NoticeAction[];
   /**
-   * Override duration (ms). Default: `0` (sticky) when `actions` is non-empty,
-   * else `10_000` so non-actionable Notices auto-dismiss after 10 s.
+   * Override duration (ms). Default: `10_000` (10 s auto-dismiss) regardless
+   * of whether actions are present. Pass `0` explicitly for a sticky notice.
    */
   duration?: number;
 }
 
 export function durationForActions(actions: NoticeAction[], override?: number): number {
   if (typeof override === "number") return override;
-  return actions.length > 0 ? 0 : 10_000;
+  return 10_000;
 }
 
 /**
