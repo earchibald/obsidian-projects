@@ -17,8 +17,8 @@ describe("durationForActions", () => {
     expect(durationForActions([a, a])).toBe(0);
   });
 
-  it("returns 5000 when no actions are present", () => {
-    expect(durationForActions([])).toBe(5000);
+  it("returns 10_000 when no actions are present", () => {
+    expect(durationForActions([])).toBe(10_000);
   });
 
   it("honours an explicit duration override", () => {

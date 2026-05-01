@@ -1,5 +1,4 @@
 import {
-  Notice,
   Plugin,
   TFile,
   WorkspaceLeaf,
@@ -1744,14 +1743,14 @@ export default class OpPlugin extends Plugin {
       this.settings.recent = this.settings.recent.slice(staleCount);
       await this.saveSettings();
       if (staleCount === 1) {
-        new Notice(`op: ${staleIds[0]} is no longer in the vault — cleared from recency log.`);
+        notify(`op: ${staleIds[0]} is no longer in the vault — cleared from recency log.`);
       } else {
-        new Notice(`op: cleared ${staleCount} stale entries from recency log.`);
+        notify(`op: cleared ${staleCount} stale entries from recency log.`);
       }
     }
     const head = this.settings.recent[0] as (typeof this.settings.recent)[number] | undefined;
     if (!head) {
-      new Notice("op: no recent issues to resume — touch one via op:work or op:open-agent first.");
+      notify("op: no recent issues to resume — touch one via op:work or op:open-agent first.");
       return;
     }
     const entry = this.store.byId(head.id);
@@ -1901,13 +1900,13 @@ export default class OpPlugin extends Plugin {
       text = (await navigator.clipboard.readText()) ?? "";
     } catch (err) {
       console.warn("[op-obsidian] clipboard read failed", err);
-      new Notice("op: clipboard unavailable — fill the form manually.");
+      notify("op: clipboard unavailable — fill the form manually.");
       text = "";
     }
     // readText() resolves with "" when the clipboard is empty (no rejection).
     // Surface a Notice so the user understands why the modal opened blank.
     if (!text.trim()) {
-      new Notice("op: clipboard was empty — fill the form manually.");
+      notify("op: clipboard was empty — fill the form manually.");
     }
     const file = this.app.workspace.getActiveFile();
     const title = deriveTitle(text);
@@ -2161,7 +2160,7 @@ export default class OpPlugin extends Plugin {
       const projects = listProjects(this.app);
       const result = findIssue(this.store, { raw, projects });
       if (result.matches.length === 0) {
-        new Notice(
+        notify(
           `op: no match for ${result.interpretation}. Try an ID (e.g. OP-12) or a title fragment.`,
         );
         return;
@@ -2189,10 +2188,10 @@ export default class OpPlugin extends Plugin {
       });
       const cleanedNote = res.cleaned.length ? ` · cleaned ${res.cleaned.join(", ")}` : "";
       const changeNote = res.changed ? "linked" : "already linked";
-      new Notice(`op: ${src.id} ${relation} → ${dst.id} (${changeNote})${cleanedNote}`);
+      notify(`op: ${src.id} ${relation} → ${dst.id} (${changeNote})${cleanedNote}`);
     } catch (err: any) {
       console.error("[op-obsidian] op-set-link failed", err);
-      new Notice(`op-set-link failed: ${err?.message ?? err}`);
+      notify(`op-set-link failed: ${err?.message ?? err}`);
     }
   }
 
@@ -2212,12 +2211,12 @@ export default class OpPlugin extends Plugin {
     if (linked.length === 0) {
       const dangling = listDanglingLinkedIds(this.app, this.store, srcEntry.id, relation);
       if (dangling.length > 0) {
-        new Notice(
+        notify(
           `op: ${srcEntry.id} has no resolvable ${relation} links` +
             ` (${dangling.length} dangling — run 'op: check issue link drift' to repair)`,
         );
       } else {
-        new Notice(`op: ${srcEntry.id} has no ${relation} links to remove`);
+        notify(`op: ${srcEntry.id} has no ${relation} links to remove`);
       }
       return;
     }
@@ -2242,10 +2241,10 @@ export default class OpPlugin extends Plugin {
         relation,
       });
       const changeNote = res.changed ? "removed" : "already absent";
-      new Notice(`op: ${src.id} ${relation} ✗ ${dst.id} (${changeNote})`);
+      notify(`op: ${src.id} ${relation} ✗ ${dst.id} (${changeNote})`);
     } catch (err: any) {
       console.error("[op-obsidian] op-remove-link failed", err);
-      new Notice(`op-remove-link failed: ${err?.message ?? err}`);
+      notify(`op-remove-link failed: ${err?.message ?? err}`);
     }
   }
 
@@ -3538,7 +3537,7 @@ export default class OpPlugin extends Plugin {
     try {
       const repoPath = resolveRepoPath(this.app, this.settings, entry.project);
       if (!repoPath) {
-        new Notice(`op: no repo_path for ${entry.project} — cannot append commit`);
+        notify(`op: no repo_path for ${entry.project} — cannot append commit`);
         return;
       }
       const { stdout: shaRaw } = await pExecFile(
@@ -3554,18 +3553,18 @@ export default class OpPlugin extends Plugin {
       const sha = shaRaw.trim();
       const subject = subjRaw.trim();
       if (!sha || !subject) {
-        new Notice(`op: empty git output in ${repoPath} — skipping append`);
+        notify(`op: empty git output in ${repoPath} — skipping append`);
         return;
       }
       const res = await appendCommit(this.app, entry, { sha, subject });
-      new Notice(
+      notify(
         res.added
           ? `op: appended ${sha} to ${res.issueId}`
           : `op: ${sha} already on ${res.issueId}`,
       );
     } catch (err: any) {
       console.error("[op-obsidian] pick-and-act commit failed", err);
-      new Notice(`op: pick & act commit failed — ${err?.message ?? err}`);
+      notify(`op: pick & act commit failed — ${err?.message ?? err}`);
     }
   }
 
@@ -3587,7 +3586,7 @@ export default class OpPlugin extends Plugin {
       )
       .sort((a, b) => issueIdNumericSuffix(a.id) - issueIdNumericSuffix(b.id));
     if (peers.length === 0) {
-      new Notice(`op: no other open issues in ${current.project}`);
+      notify(`op: no other open issues in ${current.project}`);
       return;
     }
     const idx = peers.findIndex((e) => e.path === current.path);
@@ -3598,7 +3597,7 @@ export default class OpPlugin extends Plugin {
     }
     const next = peers[(idx + direction + peers.length) % peers.length];
     if (next.path === current.path) {
-      new Notice(`op: only one open issue in ${current.project}`);
+      notify(`op: only one open issue in ${current.project}`);
       return;
     }
     void this.openIssue(next);
@@ -4731,7 +4730,7 @@ export default class OpPlugin extends Plugin {
   private async runReopenCommand(path: string): Promise<void> {
     const file = this.app.vault.getAbstractFileByPath(path);
     if (!(file instanceof TFile)) {
-      new Notice(`op: reopen — file not found at ${path}`);
+      notify(`op: reopen — file not found at ${path}`);
       return;
     }
     await this.app.fileManager.processFrontMatter(file, (fm) => {
@@ -4746,11 +4745,11 @@ export default class OpPlugin extends Plugin {
       try {
         await this.app.fileManager.renameFile(file, newPath);
       } catch (err: any) {
-        new Notice(`op: reopen — move failed (${err?.message ?? err})`);
+        notify(`op: reopen — move failed (${err?.message ?? err})`);
         return;
       }
     }
-    new Notice("op: issue reopened");
+    notify("op: issue reopened");
     dispatchChipRefresh(this.app);
   }
 
@@ -4767,7 +4766,7 @@ export default class OpPlugin extends Plugin {
     await this.app.fileManager.processFrontMatter(file, (fm) => {
       fm.priority = next;
     });
-    new Notice(`op: priority → ${next}`);
+    notify(`op: priority → ${next}`);
   }
 
   /** OP-161 chip helper — scaffold the demo project. */
@@ -4775,9 +4774,9 @@ export default class OpPlugin extends Plugin {
     try {
       const result = await scaffoldDemoProject(this.app);
       if (!result.created) {
-        new Notice("op: demo project already present at " + DEMO_PROJECT_FOLDER);
+        notify("op: demo project already present at " + DEMO_PROJECT_FOLDER);
       } else {
-        new Notice("op: demo project scaffolded at " + DEMO_PROJECT_FOLDER);
+        notify("op: demo project scaffolded at " + DEMO_PROJECT_FOLDER);
         const status = this.app.vault.getAbstractFileByPath(result.statusPath);
         if (status instanceof TFile) {
           await this.app.workspace.getLeaf(false).openFile(status);
@@ -4785,7 +4784,7 @@ export default class OpPlugin extends Plugin {
       }
     } catch (err: any) {
       console.error("[op-obsidian] start-tour failed", err);
-      new Notice("op: start tour failed — " + (err?.message ?? err));
+      notify("op: start tour failed — " + (err?.message ?? err));
     }
   }
 
@@ -4794,13 +4793,13 @@ export default class OpPlugin extends Plugin {
     try {
       const result = await removeDemoProject(this.app);
       if (!result.removed) {
-        new Notice("op: demo project not found (already removed?).");
+        notify("op: demo project not found (already removed?).");
       } else {
-        new Notice("op: demo project trashed.");
+        notify("op: demo project trashed.");
       }
     } catch (err: any) {
       console.error("[op-obsidian] remove-demo failed", err);
-      new Notice("op: remove demo failed — " + (err?.message ?? err));
+      notify("op: remove demo failed — " + (err?.message ?? err));
     }
   }
 
@@ -4875,7 +4874,7 @@ export default class OpPlugin extends Plugin {
       console.warn(
         `[op-obsidian] op-dashboard: iTerm browser tab failed (${result.reason}); falling back to system browser`,
       );
-      new Notice(
+      notify(
         `op: opening dashboard in system browser (iTerm: ${result.reason ?? "unavailable"})`,
         4000,
       );
@@ -4905,7 +4904,7 @@ export default class OpPlugin extends Plugin {
       window.open(url);
       return;
     }
-    new Notice(`op: dashboard URL ${url}`, 8000);
+    notify(`op: dashboard URL ${url}`, 8000);
   }
 
   /**

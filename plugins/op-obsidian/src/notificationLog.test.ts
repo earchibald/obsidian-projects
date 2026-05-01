@@ -259,6 +259,11 @@ describe("notify", () => {
     expect((FakeNotice as any).calls[0].duration).toBe(12000);
   });
 
+  it("defaults to 10 s when no duration is supplied", () => {
+    notify("default-duration");
+    expect((FakeNotice as any).calls[0].duration).toBe(10_000);
+  });
+
   it("stops writing to vault after unregisterApp (simulates onunload)", async () => {
     const { app, files } = makeApp();
     registerApp(app);
