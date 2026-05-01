@@ -14,7 +14,8 @@
 
 import { execFile } from "node:child_process";
 import * as fs from "fs";
-import { App, Modal, Notice, Setting } from "obsidian";
+import { App, Modal, Setting } from "obsidian";
+import { notify } from "./notificationLog";
 import {
   AUTOLAUNCH_REL_DIR,
   DAEMON_FILENAME,
@@ -125,9 +126,9 @@ export class DashboardSetupModal extends Modal {
         const writer = this.deps.copyToClipboard ?? defaultClipboardWriter;
         try {
           await writer(HOMEBREW_INSTALL_CMD);
-          new Notice("Copied install command");
+          notify("Copied install command");
         } catch (err) {
-          new Notice(`Copy failed: ${describeErr(err)}`);
+          notify(`Copy failed: ${describeErr(err)}`);
         }
       });
       gate.createEl("p", {
@@ -295,19 +296,19 @@ class InstallDaemonConfirmModal extends Modal {
           .onClick(async () => {
             const result = installDaemon(this.assets, this.targetPath);
             if (!result.ok) {
-              new Notice(`Install failed: ${result.reason}`, 8000);
+              notify(`Install failed: ${result.reason}`, 8000);
               return;
             }
             const deps = await installDashboardDependencies(os.homedir());
             if (deps.ok) {
-              new Notice(
+              notify(
                 `op-dashboard.py, client/index.html, and aiohttp installed for ${deps.runtimesInstalled} iTerm runtime${deps.runtimesInstalled === 1 ? "" : "s"}. Restart iTerm2 to start the daemon.`,
                 /* timeout */ 6000,
               );
               this.close();
               this.onInstalled();
             } else {
-              new Notice(
+              notify(
                 `Installed daemon assets, but couldn't install aiohttp into iTerm's bundled Python runtime: ${deps.reason}`,
                 8000,
               );

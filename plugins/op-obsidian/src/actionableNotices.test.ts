@@ -12,9 +12,9 @@ import { durationForActions, type NoticeAction } from "./actionableNotices";
 const a: NoticeAction = { label: "Open", onClick: () => {} };
 
 describe("durationForActions", () => {
-  it("returns 0 (sticky) when actions are present", () => {
-    expect(durationForActions([a])).toBe(0);
-    expect(durationForActions([a, a])).toBe(0);
+  it("returns 10_000 when actions are present", () => {
+    expect(durationForActions([a])).toBe(10_000);
+    expect(durationForActions([a, a])).toBe(10_000);
   });
 
   it("returns 10_000 when no actions are present", () => {
