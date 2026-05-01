@@ -16,14 +16,14 @@ export interface ActionableNoticeOptions {
   actions?: NoticeAction[];
   /**
    * Override duration (ms). Default: `0` (sticky) when `actions` is non-empty,
-   * else `5000` so non-actionable Notices keep current short-toast behavior.
+   * else `10_000` so non-actionable Notices auto-dismiss after 10 s.
    */
   duration?: number;
 }
 
 export function durationForActions(actions: NoticeAction[], override?: number): number {
   if (typeof override === "number") return override;
-  return actions.length > 0 ? 0 : 5000;
+  return actions.length > 0 ? 0 : 10_000;
 }
 
 /**

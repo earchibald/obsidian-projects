@@ -1,6 +1,7 @@
-import { App, Modal, Notice, Setting } from "obsidian";
+import { App, Modal, Setting } from "obsidian";
 import type { AgentId } from "./agentProfiles";
 import { AGENT_IDS } from "./agentProfiles";
+import { notify } from "./notificationLog";
 import {
   composeWorkflowPure,
   loadAndComposeWorkflow,
@@ -505,7 +506,7 @@ class LaunchAgentModal extends Modal {
     });
     copyBtn.addEventListener("click", async () => {
       const ok = await copyToClipboard(text);
-      new Notice(ok ? "Composed prompt copied to clipboard" : "Copy failed — clipboard unavailable");
+      notify(ok ? "Composed prompt copied to clipboard" : "Copy failed — clipboard unavailable");
     });
 
     if (!this.args.settings.previewAutoExpandDismissed) {
