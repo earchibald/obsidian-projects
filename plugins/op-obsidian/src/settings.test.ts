@@ -121,6 +121,7 @@ describe("mergeSettings", () => {
 
   it("clamps and floors orchestrator maxRows/maxCols to [1,3]", () => {
     const out = mergeSettings({
+      legacyITermMigrationCompleted: true,
       orchestrator: { maxRows: 2.7, maxCols: 1.9, enabled: true, preferred: "2x2" },
     });
     expect(out.orchestrator.maxRows).toBe(2);
@@ -143,6 +144,21 @@ describe("mergeSettings", () => {
       mergeSettings({ orchestrator: { preferred: "9x9" as unknown as string } }).orchestrator
         .preferred,
     ).toBe(DEFAULT_SETTINGS.orchestrator.preferred);
+  });
+
+  it("migrates pre-legacy-fallback installs off orchestrator when the migration bit is absent", () => {
+    const out = mergeSettings({ orchestrator: { enabled: true } });
+    expect(out.legacyITermMigrationCompleted).toBe(true);
+    expect(out.orchestrator.enabled).toBe(false);
+  });
+
+  it("preserves manual orchestrator opt-in after the legacy-fallback migration has completed", () => {
+    const out = mergeSettings({
+      legacyITermMigrationCompleted: true,
+      orchestrator: { enabled: true },
+    });
+    expect(out.legacyITermMigrationCompleted).toBe(true);
+    expect(out.orchestrator.enabled).toBe(true);
   });
 
   it("view.recentResolvedLimit > 0 and floored; openOnStartup boolean", () => {
