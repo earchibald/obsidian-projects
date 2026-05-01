@@ -164,6 +164,12 @@ export interface OpSettings {
    *  in the `op-dashboard` palette command + URI handler. */
   dashboard: DashboardSettings;
   orchestrator: OrchestratorSettings;
+  /** OP-249: one-shot compatibility bit for the retreat back to legacy iTerm
+   *  `tmux -CC` launches. Older data.json files lack this key; if they also
+   *  had `orchestrator.enabled=true`, `mergeSettings` flips them back to
+   *  legacy once. After the bit is present, explicit user opt-ins are
+   *  preserved across reloads. */
+  legacyITermMigrationCompleted: boolean;
   orchestratorState: RegistryData;
   // User-curated display order for project pickers, by slug. Slugs not in this
   // list (e.g. newly-discovered projects) sort lexically at the tail. Empty
@@ -269,6 +275,7 @@ export const DEFAULT_SETTINGS: OpSettings = {
     maxCols: 3,
     preferred: "2x3",
   },
+  legacyITermMigrationCompleted: true,
   orchestratorState: emptyRegistry(),
   projectOrder: [],
   recent: [],
@@ -299,6 +306,9 @@ export function mergeSettings(loaded: unknown): OpSettings {
   const base: OpSettings = JSON.parse(JSON.stringify(DEFAULT_SETTINGS));
   if (!loaded || typeof loaded !== "object") return base;
   const l = loaded as Partial<OpSettings>;
+  const hasLegacyITermMigrationCompleted =
+    typeof (l as { legacyITermMigrationCompleted?: unknown }).legacyITermMigrationCompleted ===
+    "boolean";
   if (l.defaultAgent && AGENT_IDS.includes(l.defaultAgent as AgentId)) {
     base.defaultAgent = l.defaultAgent as AgentId;
   }
@@ -372,6 +382,13 @@ export function mergeSettings(loaded: unknown): OpSettings {
     if (o.preferred && LAYOUT_IDS.includes(o.preferred as LayoutId)) {
       base.orchestrator.preferred = o.preferred as LayoutId;
     }
+  }
+  if (hasLegacyITermMigrationCompleted) {
+    base.legacyITermMigrationCompleted = (
+      l as { legacyITermMigrationCompleted: boolean }
+    ).legacyITermMigrationCompleted;
+  } else if (base.orchestrator.enabled) {
+    base.orchestrator.enabled = false;
   }
   base.orchestratorState = mergeRegistry((l as { orchestratorState?: unknown }).orchestratorState);
   if (l.github && typeof l.github === "object") {
