@@ -1,176 +1,223 @@
 # obsidian-projects
 
-A Jira-lite project tracker that lives inside your Obsidian vault, driven by Claude.
+An issue tracker and agent orchestrator for agentic software development, designed to allow autonomous workflows with maximum visilibity.
 
-This repository provides two paired components that work together to maintain a schema-conformant vault:
+Agent harness agnostic, shipping with initial detection and adapter support for claude, copilot and gemini CLI.
 
-1.  **`op` skill (Claude side)** — The "workflow brain". It understands the Projects schema, reconciles your repo state with your tasks, and orchestrates the high-level workflow (scaffolding, creating issues, resolving them) with human-in-the-loop judgment.
-2.  **`op-obsidian` plugin (Obsidian side)** — The "deterministic backend". It provides the UI (sidebar), enforces schema rules during file operations, handles next-ID computation, and manages atomic transitions (like resolving an issue) that are too risky or slow for a LLM to do with raw CLI calls.
+obsidian-projects turns an Obsidian vault into a durable project workspace. Issues live as markdown notes, agents launch from the work itself, and deterministic vault operations stay inside a native Obsidian plugin instead of being left to raw LLM file edits.
 
-Both components read and write the same schema. You can drive the vault entirely from the Obsidian command palette, entirely from Claude, or switch between them as needed.
+```mermaid
+flowchart LR
+    V[Obsidian vault] --> P[op-obsidian plugin]
+    V --> S[op skill]
+    S --> R[Agent runtime]
+    R -->|Claude| C[Claude Code]
+    R -->|Gemini| G[Gemini CLI]
+    R -->|Copilot| O[Copilot CLI]
+    P --> U[Sidebar, commands, schema-safe file ops]
+    S --> W[Scaffolding, issue flow, workflow orchestration]
+```
 
-## What's inside
+## Why it exists
 
-- **`op` skill** (`plugins/op/`) — The authoritative workflow reference for Claude.
-  - **Skill** (`skills/op/SKILL.md`) — Consolidates schema, frontmatter conventions, and verb dispatch.
-  - **Slash commands** (`commands/`) — Entry points for `/op:scaffold`, `/op:new`, `/op:issue`, and `/op:resolve`.
-- **`op-obsidian` plugin** (`plugins/op-obsidian/`) — The Obsidian community plugin.
-  - **Sidebar view** — Open, in-flight, and resolved issue tabs.
-  - **Command palette** — Native Obsidian commands for every workflow step.
-  - **Workflow modules** — Per-step prompt composition from small reusable markdown files (global at `Projects/_op-modules/`, per-project at `Projects/<slug>/MODULES/`), driven by a typed workflow file with `extends:` inheritance, two template-var namespaces (plugin vars like `{{id}}` / `{{today}}` resolved from a fixed registry, and user vars `{{vars.<name>}}` declared by modules and resolved through a four-layer precedence chain: module default → global user → project user → launch override), and per-step agent/model selection. Replaces the monolithic `WORKFLOW.md` of older installs; see `docs/workflow-modules/` for the conceptual overview and `docs/specs/workflow-{module,file}-schema.md` for the file-format reference.
-  - **Agent orchestration** — Launching Claude (and, on a best-effort basis, Gemini or Copilot — see below) in tmux windows directly from an issue note.
-- **Marketplace** — `.claude-plugin/marketplace.json` at repo root.
+Most agent workflows still split the source of truth across chat history, issue trackers, scratch docs, and local scripts. This project keeps the work in one place:
 
-### Supported AI runtimes
+- **Obsidian** holds projects, issues, workflow modules, and durable notes.
+- **`op`** provides the agent-facing workflow logic and slash commands.
+- **`op-obsidian`** handles the deterministic parts that should not depend on model judgment: IDs, file moves, schema enforcement, and UI.
 
-The agent-orchestration code paths recognize three runtimes — `claude`, `gemini`, and `copilot` — but they are not equally supported:
+You can drive the same workflow from the Obsidian command palette, from the CLI skill, or by switching between them mid-task.
 
-- **Claude (Claude Code)** — primary supported runtime. The `op` skill, the slash commands, the smoke-test scripts, and the orchestration tests are all developed and exercised against Claude Code.
-- **Gemini CLI** — second-class, untested. Profile entries, hook installers, and dispatch code exist but no part of the dev workflow runs against Gemini, the launch flags and prompt preambles are unverified, and the PreToolUse worktree guard has not been validated end-to-end against a live Gemini install.
-- **Copilot CLI** — second-class, untested. Same caveat as Gemini, plus two special cases: op now sends a best-effort post-launch `/rename` slash command so Copilot sessions pick up the issue label, but Copilot CLI still has no PreToolUse hook surface, so the worktree-enforcement guard does **not** apply to Copilot sessions even when the setting is on. The SessionEnd hook file path (`~/.copilot/hooks.json`) is best-effort from docs and has not been verified against a live Copilot install.
+## Quick example
 
-Picking Gemini or Copilot in **Settings → Default agent** is allowed and the plugin will dispatch them, but you are exercising untested code paths. If you hit a problem, switching back to Claude is the supported recovery path. Patches that improve Gemini/Copilot support are welcome — start by adding a smoke-test recipe before changing dispatch code.
+Create a project, open an issue, let an agent work, then resolve it:
 
-## Getting Started
+```text
+/op:scaffold jira-bases JB Jira-style bases
+/op:new JB Escape markdown links in descriptions
+/op:issue JB-3
+/op:resolve JB-3
+```
 
-### For End-Users
+Inside the vault, that turns into a structure like:
 
-Follow these steps to set up the workflow in your vault.
+```text
+Projects/
+  jira-bases/
+    STATUS.md
+    TASKS/
+      JB-3 Escape markdown links in descriptions.md
+```
 
-#### 1. Install the Obsidian Plugin (`op-obsidian`)
-This plugin provides the vault-side backend and native commands.
+The matching Obsidian plugin gives you a sidebar view for open, in-flight, and resolved issues, plus native commands for the same lifecycle.
 
-1.  Install [BRAT](https://github.com/TfTHacker/obsidian42-brat) from the Obsidian community store.
-2.  Open **Settings → BRAT → Add Beta Plugin with frozen version**.
-3.  Enter `https://github.com/earchibald/obsidian-projects` and pick the latest `op-obsidian-v*` tag.
-4.  Enable the plugin in **Settings → Community plugins**.
+## What's in this repository
 
-#### 2. Install the Claude Skill (`op`)
-This provides the AI-side logic and slash commands.
+| Component | Path | Responsibility |
+| --- | --- | --- |
+| `op` skill | `plugins/op/` | Agent workflow logic, slash commands, schema reference, marketplace packaging |
+| `op-obsidian` plugin | `plugins/op-obsidian/` | Obsidian UI, schema-safe file operations, workflow launching, settings |
+| Docs and specs | `docs/` | Workflow modules guides, schemas, design notes, migration context |
+| Marketplace metadata | `.claude-plugin/marketplace.json` | Root marketplace catalog for installation |
 
-1.  In your terminal, search for the plugin:
-    ```
-    /plugin marketplace search obsidian-projects
-    ```
-2.  Add the marketplace and install:
-    ```
-    /plugin marketplace add earchibald/obsidian-projects
-    /plugin install op@obsidian-projects
-    ```
+## Core capabilities
 
-#### 3. Setup Vault Symlink
-Obsidian needs to index the schema file shipped with the Claude plugin so it shows up under `Projects/`.
+- **Vault-native issue tracking** with project folders, issue notes, status views, and schema-aware file layouts
+- **Agent orchestration** launched directly from issue notes or commands
+- **Workflow modules** for composing prompts from reusable markdown building blocks instead of one giant workflow file
+- **Deterministic operations** for risky actions like ID assignment and resolve-time file moves
+- **CLI and UI parity** so the same workflow works from slash commands and the Obsidian command palette
 
-1.  **Find the installed version path:**
-    List the contents of the cache directory to find the latest version number:
-    ```bash
-    ls ~/.claude/plugins/cache/obsidian-projects/op/
-    ```
-    Pick the highest version folder (e.g., `0.3.0`).
+## Installation
 
-2.  **Create the symlink:**
-    Replace `<version>` with the folder name you found above.
-    ```bash
-    # Schema — the file Obsidian surfaces in Projects/
-    ln -s ~/.claude/plugins/cache/obsidian-projects/op/<version>/plugins/op/skills/op/reference/schema.md \
-          <vault>/Projects/"Projects schema.md"
-    ```
+### 1. Install the Obsidian plugin
 
-`op-obsidian` is the only required plugin; no Templater, sidekick, or other companion plugin is needed.
+`op-obsidian` is the only required Obsidian plugin for the workflow itself.
 
----
+1. Install [BRAT](https://github.com/TfTHacker/obsidian42-brat) from the Obsidian community store.
+2. Open **Settings -> BRAT -> Add Beta Plugin with frozen version**.
+3. Enter `https://github.com/earchibald/obsidian-projects` and pick the latest `op-obsidian-v*` tag.
+4. Enable **op-obsidian** in **Settings -> Community plugins**.
 
-### For Contributors (Development)
+### 2. Install the `op` skill
 
-Follow these steps if you want to modify the skill or the plugin.
+Install the CLI-side workflow logic from the marketplace:
 
-#### 1. Clone and Build the Plugin
-1.  Clone the repository:
-    ```bash
-    git clone https://github.com/earchibald/obsidian-projects.git
-    cd obsidian-projects
-    ```
-2.  Build the Obsidian plugin:
-    ```bash
-    cd plugins/op-obsidian
-    npm install
-    npm run build
-    ```
-3.  Copy `main.js`, `manifest.json`, and `styles.css` into your vault:
-    ```bash
-    mkdir -p <vault>/.obsidian/plugins/op-obsidian
-    cp main.js manifest.json styles.css <vault>/.obsidian/plugins/op-obsidian/
-    ```
+```text
+/plugin marketplace search obsidian-projects
+/plugin marketplace add earchibald/obsidian-projects
+/plugin install op@obsidian-projects
+```
 
-#### 2. Run the Skill Locally
-Launch Claude using the local plugin directory instead of the marketplace install:
+### 3. Link the schema into your vault
+
+Obsidian needs the schema file from the installed skill so it appears under `Projects/`.
+
 ```bash
-cd obsidian-projects
+ls ~/.claude/plugins/cache/obsidian-projects/op/
+
+ln -s ~/.claude/plugins/cache/obsidian-projects/op/<version>/plugins/op/skills/op/reference/schema.md \
+      <vault>/Projects/"Projects schema.md"
+```
+
+Replace `<version>` with the newest installed version directory.
+
+No Templater, sidekick, or companion plugin is required for the core workflow.
+
+## Getting started
+
+1. **Scaffold a project** with `/op:scaffold`.
+2. **Create an issue** with `/op:new`.
+3. **Start work** with `/op:issue`, or launch the equivalent command from Obsidian.
+4. **Resolve the issue** with `/op:resolve` once the work is done.
+
+If you are starting from an older loose `.claude/commands/` setup, see [Migration](#migration-from-the-loose-claudecommands-setup).
+
+## Supported runtimes
+
+The repository recognizes `claude`, `gemini`, and `copilot`, but support is not equal.
+
+| Runtime | Status | Notes |
+| --- | --- | --- |
+| Claude Code | Primary | The main supported runtime for the skill, plugin smoke tests, and orchestration flow |
+| Gemini CLI | Experimental | Dispatch code exists, but the workflow is not exercised in normal development |
+| Copilot CLI | Experimental | Dispatch code exists, but worktree enforcement hooks are not available and the runtime is not part of the normal smoke path |
+
+If Gemini or Copilot behavior breaks, switching back to Claude is the supported recovery path today.
+
+## Documentation
+
+- [Workflow modules overview](docs/workflow-modules/01-overview.md)
+- [Quickstart](docs/workflow-modules/02-quickstart.md)
+- [Author your first module](docs/workflow-modules/03-author-your-first-module.md)
+- [Troubleshooting](docs/workflow-modules/03-troubleshooting.md)
+- [Compose your first workflow](docs/workflow-modules/04-compose-your-first-workflow.md)
+- [FAQ](docs/workflow-modules/04-faq.md)
+- [Variables and templating](docs/workflow-modules/05-variables-and-templating.md)
+- [Settings reference](docs/workflow-modules/05-settings-reference.md)
+- [Workflow module schema](docs/specs/workflow-module-schema.md)
+- [Workflow file schema](docs/specs/workflow-file-schema.md)
+- [Plugin split rationale](docs/specs/OP-19-plugin-split-recommendation.md)
+
+## Development
+
+### Clone and build the plugin
+
+```bash
+git clone https://github.com/earchibald/obsidian-projects.git
+cd obsidian-projects/plugins/op-obsidian
+npm install
+npm run build
+```
+
+Copy `main.js`, `manifest.json`, and `styles.css` into your test vault:
+
+```bash
+mkdir -p <vault>/.obsidian/plugins/op-obsidian
+cp main.js manifest.json styles.css <vault>/.obsidian/plugins/op-obsidian/
+```
+
+### Run the skill locally
+
+```bash
+cd /path/to/obsidian-projects
 claude --plugin-dir ./plugins/op
 ```
 
-#### 3. Symlink Hygiene
-When switching from the marketplace version to your local clone, you **must** update your vault symlinks to point to your local files. This ensures your changes to `schema.md` or templates are visible to Obsidian.
+### Keep the vault schema pointed at your local clone
+
+When developing locally, update the schema symlink so Obsidian sees changes from your checkout instead of the marketplace cache:
 
 ```bash
-# Point to your local repository clone
 ln -sf /path/to/obsidian-projects/plugins/op/skills/op/reference/schema.md \
        <vault>/Projects/"Projects schema.md"
 ```
 
-Revert these symlinks to the `~/.claude/plugins/cache/` path (see End-User Step 3) if you switch back to the published version.
+Switch the symlink back to `~/.claude/plugins/cache/...` when returning to the published install.
+
+### Contributing
+
+Issues and PRs are welcome. If you are working on code in this repo, prefer an isolated git worktree for each task so plugin builds, vault sync, and parallel agent sessions do not collide.
 
 ## Migration from the loose `.claude/commands/` setup
 
-If you previously used this repo's old layout (`commands/`, `schema/`, `templates/` at root, with `~/.claude/commands/*.md` symlinked to `commands/*.md`):
+If you previously used the older root-level `commands/`, `schema/`, and `templates/` layout:
 
 1. Remove the old command symlinks:
    ```bash
    rm ~/.claude/commands/{project,issue,create-issue}.md
    ```
-2. Install via the marketplace (above), or run with `--plugin-dir ./plugins/op` if you want to follow your local clone.
-3. Update your vault schema symlink to the new canonical path:
+2. Install the marketplace package, or run locally with `claude --plugin-dir ./plugins/op`.
+3. Repoint the vault schema symlink:
    ```bash
    rm <vault>/Projects/"Projects schema.md"
    ln -s <repo>/plugins/op/skills/op/reference/schema.md \
          <vault>/Projects/"Projects schema.md"
    ```
-4. If you previously symlinked `<vault>/Templates/issue.md` to a `plugins/op/reference/issue-template.md` from this repo, delete the symlink — `op-obsidian` renders issue notes itself, so the Templater template is no longer shipped:
+4. Remove any old issue template symlink if you created one:
    ```bash
    rm <vault>/Templates/issue.md
    ```
-5. Command renames: `/project` → `/op:scaffold`, `/create-issue` → `/op:new`, `/issue` → `/op:issue`, plus the new `/op:resolve`.
+5. Command renames:
+   - `/project` -> `/op:scaffold`
+   - `/create-issue` -> `/op:new`
+   - `/issue` -> `/op:issue`
+   - `resolve` is now `/op:resolve`
 
 ## Repo layout
 
-```
+```text
 .claude-plugin/
-  marketplace.json        ← marketplace catalog
-plugins/op/               ← The "op" skill (Claude)
-  .claude-plugin/
-    plugin.json
+  marketplace.json
+plugins/op/
+  .claude-plugin/plugin.json
+  commands/
   skills/op/
-    SKILL.md              ← workflow logic
-    reference/
-      schema.md           ← vault schema (symlink target)
-  commands/               ← slash commands
-plugins/op-obsidian/      ← The Obsidian plugin
-  src/                    ← TypeScript source
-  manifest.json           ← Obsidian manifest
-docs/                     ← design specs and plans for this repo
+plugins/op-obsidian/
+  src/
+  manifest.json
+docs/
 ```
-
-## Why the split?
-
-Moving from loose command files to a **skill + plugin** architecture provides several wins:
-
-1.  **Versioned Installs:** `/plugin update` manages the skill logic without manual `git pull` or symlink hacking.
-2.  **Namespace Isolation:** `/op:*` commands won't collide with other project commands.
-3.  **Deterministic Operations:** The `op-obsidian` plugin handles complex file moves, ID numbering, and schema enforcement using typed code, while the `op` skill focuses on high-level reasoning.
-4.  **Authoritative Context:** A single `SKILL.md` file serves as the source of truth for Claude, replacing fragmented command preambles.
-5.  **Workflow-agnostic:** The skill and plugin manage vault state and the issue schema; they do **not** define a development workflow. Branching, worktrees, PR requirements, release cadence, and version bumping are each project's own concern, expressed as **workflow modules** (small reusable markdown files) composed by a per-project workflow file. Modules can be shared across projects (global at `Projects/_op-modules/`), overridden per-project (`Projects/<slug>/MODULES/`), or imported from another vault. Drive the `op-*` capabilities (`commits:`, `pr:`, `version:`, `github_issue:`) the way your project wants — straight-to-main, PR-required, multi-stage pipelines, or anything in between — and let the workflow modules system inject the right rules at the right step of every agent launch.
-
-See `docs/plans/2026-04-18-skill-and-plugin-packaging.md` and `docs/specs/OP-19-plugin-split-recommendation.md` for more rationale.
 
 ## License
 
