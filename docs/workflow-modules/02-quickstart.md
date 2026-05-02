@@ -16,35 +16,33 @@ re-explanation.
   walkthrough below, we'll use a placeholder slug `myproject`).
 - An issue in that project — any open issue will do.
 
-## 1. Switch to modules mode (30 seconds)
+## 1. Confirm modules mode (10 seconds)
 
-`workflowMode` is a per-vault setting. There's no UI toggle yet (one is
-tracked under the OP-186 settings work) — until then, flip it by hand
-in the plugin's `data.json`:
+`workflowMode` is a per-vault setting controlled from **Settings → Obsidian
+Projects (op) → Workflows → Workflow mode**. Two values:
 
-1. Quit Obsidian (or fully disable the op-obsidian plugin) before
-   editing — the running plugin holds a copy of the settings in memory
-   and will overwrite manual edits on the next save.
-2. Open `<your-vault>/.obsidian/plugins/op-obsidian/data.json` in any
-   text editor.
-3. Find the top-level `"workflowMode"` key (it defaults to `"legacy"`).
-   Change its value to `"modules"`. Save.
-4. Re-open the vault (or re-enable the plugin).
+- **Modules (default)** — the launcher composes the prompt from
+  workflow-module files in this vault. This is the post-OP-208 default
+  for fresh installs.
+- **Legacy (inline WORKFLOW.md)** — the launcher inlines the project's
+  `WORKFLOW.md` as opaque prose and ignores any modules you create.
 
-If `workflowMode` is missing entirely, your install pre-dates OP-198 —
-add `"workflowMode": "modules"` as a new top-level entry in the JSON
-object.
+Open the dropdown and confirm it reads **Modules (default)**. If your
+install is older than the OP-208 cutover and the prior value was
+`"legacy"`, the migration preserved it — pick **Modules (default)** now
+to follow this walkthrough. The change is saved immediately; no restart.
 
-Verify with the developer console (Cmd-Option-I in Obsidian, Console
-tab):
+If you'd rather verify from the developer console (Cmd-Option-I in
+Obsidian, Console tab):
 
 ```js
 app.plugins.plugins["op-obsidian"].settings.workflowMode
 // → "modules"
 ```
 
-Until this flip, the launch modal uses the legacy injection blob and
-ignores any module files you create.
+Under Legacy mode the launch modal uses the WORKFLOW.md injection blob
+and ignores any module files you create — you'll see a "Workflow modules
+disabled" callout in the launch preview if you forget to flip it.
 
 ## 2. Author a global workflow file (90 seconds)
 
@@ -103,14 +101,21 @@ order: 10
 ---
 
 Always create a feature branch off `main` before making changes. Branch
-names use `<issue-id>-<slug>`. Push commits to that branch only —
-never directly to `main`.
+names use `{{id}}-{{slug}}`. Push commits to that branch only — never
+directly to `main`.
 ```
 
 That's it: three lines of body, six lines of frontmatter. The filename
 basename (`branching.md`) must match the `id:` field
 (`id: branching`) — a mismatch is a `malformed-frontmatter` diagnostic
 and the module is silently dropped.
+
+`{{id}}` and `{{slug}}` are always-on plugin vars: `{{id}}` is the
+issue's canonical id (e.g. `OP-194`); `{{slug}}` is a kebab-cased,
+40-char-capped slug derived from the issue's `title:`. Together they
+produce a branch suggestion the agent can use verbatim. The full
+registry — and the precedence rules for user-declared vars — lives in
+[05-variables-and-templating.md](./05-variables-and-templating.md).
 
 ## 4. See it in the launch preview (60 seconds)
 
@@ -120,22 +125,30 @@ the command palette (⌘P). The launch modal opens.
 Below the **Cancel** / **Launch** buttons, find the **▶ Composed prompt
 preview** disclosure. Click it to expand.
 
-You should see the body of `branching.md` rendered as the kickoff prompt:
+You should see the body of `branching.md` rendered as the kickoff prompt
+**with `{{id}}` and `{{slug}}` substituted** for your current issue. For
+an issue like `OP-194` titled "Add module variables", that renders as:
 
 ```
-▼ Composed prompt preview        187 chars · 1 module · 0 diagnostics
+▼ Composed prompt preview        ~190 chars · 1 module · 0 diagnostics
 
 Always create a feature branch off `main` before making changes. Branch
-names use `<issue-id>-<slug>`. Push commits to that branch only —
-never directly to `main`.
+names use `OP-194-add-module-variables`. Push commits to that branch
+only — never directly to `main`.
 ```
 
 The header line on the right of the disclosure tells you how many
-characters of prompt the composer produced (`187 chars`), how many
-modules contributed (`1 module`), and how many diagnostics fired
-(`0 diagnostics` in the happy path). If the module count is `0 modules`,
-scroll back through this walkthrough — most likely your workflow file's
-`steps:` list doesn't mention `branching` in any kickoff step.
+characters of prompt the composer produced (the count varies with the
+issue's title — this example renders ~190 chars), how many modules
+contributed (`1 module`), and how many diagnostics fired (`0 diagnostics`
+in the happy path). If the module count is `0 modules`, scroll back
+through this walkthrough — most likely your workflow file's `steps:`
+list doesn't mention `branching` in any kickoff step.
+
+If you instead see the literal text `{{id}}-{{slug}}` in the rendered
+preview, the launch context isn't supplying the issue — open the
+launch modal from an issue note (not a project root) so the composer
+has an `IssueEntry` to read `title:` from.
 
 **Click Cancel.** You don't need to launch the agent to verify the
 plumbing.

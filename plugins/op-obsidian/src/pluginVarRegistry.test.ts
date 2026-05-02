@@ -49,6 +49,7 @@ describe("PLUGIN_VAR_REGISTRY", () => {
     const required = [
       "id",
       "title",
+      "slug",
       "project",
       "status",
       "priority",
@@ -109,6 +110,55 @@ describe("PLUGIN_VAR_REGISTRY", () => {
     }
   });
 
+  describe("{{slug}} (derived from title)", () => {
+    it("renders the fixture title as a kebab-cased branch tail", () => {
+      // Fixture title: "Generic {{var}} renderer + context builder"
+      expect(PLUGIN_VAR_REGISTRY.slug.compute(FIXTURE_CTX)).toBe(
+        "generic-var-renderer-context-builder",
+      );
+    });
+
+    it("strips a leading `NNb:` task prefix from the title", () => {
+      const ctx = { ...FIXTURE_CTX, title: "10b: Authoring tutorials with checked-in examples" };
+      expect(PLUGIN_VAR_REGISTRY.slug.compute(ctx)).toBe("authoring-tutorials-with-checked-in");
+    });
+
+    it("returns undefined when title collapses to empty (soft-fail contract)", () => {
+      // All-punctuation title -> empty slug -> registry returns undefined so the
+      // renderer leaves `{{slug}}` verbatim and fires a `missing-var` diagnostic.
+      const ctx = { ...FIXTURE_CTX, title: "???" };
+      expect(PLUGIN_VAR_REGISTRY.slug.compute(ctx)).toBeUndefined();
+    });
+
+    it("returns undefined for a whitespace-only title (spaces collapse to empty slug)", () => {
+      const ctx = { ...FIXTURE_CTX, title: "   " };
+      expect(PLUGIN_VAR_REGISTRY.slug.compute(ctx)).toBeUndefined();
+    });
+
+    it("returns undefined for an empty-string title", () => {
+      const ctx = { ...FIXTURE_CTX, title: "" };
+      expect(PLUGIN_VAR_REGISTRY.slug.compute(ctx)).toBeUndefined();
+    });
+
+    it("returns undefined when title is missing from a Partial ctx", () => {
+      // Mirrors the existing `parent`-slot-absent test: undefined vs. empty has
+      // a meaning here. Caller didn't supply the field at all.
+      expect(PLUGIN_VAR_REGISTRY.slug.compute({})).toBeUndefined();
+    });
+
+    it("caps long titles at 40 chars and truncates at the last `-` boundary", () => {
+      const ctx = {
+        ...FIXTURE_CTX,
+        title: "Add slug plugin var and extract shared slugify util and other goodies",
+      };
+      const out = PLUGIN_VAR_REGISTRY.slug.compute(ctx);
+      expect(out).toBeDefined();
+      expect(out!.length).toBeLessThanOrEqual(40);
+      expect(out!.endsWith("-")).toBe(false);
+      expect(out!.startsWith("add-slug-plugin-var")).toBe(true);
+    });
+  });
+
   describe("parent sentinel", () => {
     it("returns the literal parent id when present", () => {
       expect(PLUGIN_VAR_REGISTRY.parent.compute({ ...FIXTURE_CTX, parent: "OP-184" })).toBe("OP-184");
@@ -165,6 +215,7 @@ describe("PLUGIN_VAR_REGISTRY", () => {
     it.each([
       "id",
       "title",
+      "slug",
       "project",
       "status",
       "vault_path",

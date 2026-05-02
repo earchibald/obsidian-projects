@@ -105,8 +105,9 @@ async function writeOnce(app: App, entry: NotificationEntry): Promise<void> {
 }
 
 // Show a Notice and persist it to the log. Drop-in replacement for
-// `new Notice(text, durationMs)`.
-export function notify(text: string, durationMs?: number): Notice {
+// `new Notice(text, durationMs)`. Defaults to 10 s so notices don't linger
+// indefinitely; pass 0 for a persistent (sticky) notice.
+export function notify(text: string, durationMs = 10_000): Notice {
   const n = new Notice(text, durationMs);
   if (registeredApp) void appendNotification(registeredApp, text);
   return n;

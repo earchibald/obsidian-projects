@@ -175,6 +175,7 @@ export class IssueStore extends Component {
       githubIssue: str(fm.github_issue),
       agent: str(fm.agent),
       title: str(fm.title) ?? file.basename,
+      parent: str(fm.parent),
       resolvedFolder: inResolved,
     };
   }

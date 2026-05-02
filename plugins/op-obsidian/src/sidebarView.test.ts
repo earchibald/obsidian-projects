@@ -43,6 +43,7 @@ import {
   OpSidebarView,
   pickIssuesForTab,
   prNumber,
+  sidebarSearchHelpText,
   shouldShowProjectChip,
   TMUX_PROBE_INTERVAL_MS,
   type OpSidebarHooks,
@@ -75,14 +76,50 @@ const subseqMatcher = (q: string) => (text: string) => {
 
 describe("filterEntries", () => {
   const items = [
-    entry({ id: "OP-1", title: "OP-1 sidebar fuzzy filter" }),
-    entry({ id: "OP-2", title: "OP-2 settings tab cleanup" }),
-    entry({ id: "JB-9", title: "JB-9 link escaping", project: "jira-bases" }),
+    entry({
+      id: "OP-1",
+      title: "OP-1 sidebar fuzzy filter",
+      project: "obsidian-projects",
+      priority: "high",
+      agent: "copilot",
+      pr: "https://github.com/owner/repo/pull/1",
+    }),
+    entry({
+      id: "OP-2",
+      title: "OP-2 settings tab cleanup",
+      project: "obsidian-projects",
+      status: "blocked",
+      githubIssue: "https://github.com/owner/repo/issues/2",
+    }),
+    entry({
+      id: "OPD-3",
+      title: "OPD-3 demo issue",
+      project: "op-demo",
+      status: "open",
+      priority: "med",
+    }),
+    entry({
+      id: "DEV-4",
+      title: "DEV-4 docs examples",
+      project: "obsidian-plugin-development",
+      status: "in-progress",
+      priority: "med",
+      agent: "copilot-helper",
+    }),
+    entry({
+      id: "JB-9",
+      title: "JB-9 link escaping",
+      project: "jira-bases",
+      status: "in-progress",
+      priority: "low",
+      agent: "claude",
+      commits: ["abc1234 initial import"],
+    }),
   ];
 
   it("returns all entries when query is empty", () => {
-    expect(filterEntries(items, "", subseqMatcher)).toHaveLength(3);
-    expect(filterEntries(items, "   ", subseqMatcher)).toHaveLength(3);
+    expect(filterEntries(items, "", subseqMatcher)).toHaveLength(5);
+    expect(filterEntries(items, "   ", subseqMatcher)).toHaveLength(5);
   });
 
   it("filters to fuzzy-matching entries by title", () => {
@@ -100,13 +137,79 @@ describe("filterEntries", () => {
     expect(out.map((e) => e.id)).toEqual(["JB-9"]);
   });
 
+  it("parses project filters by prefix", () => {
+    const out = filterEntries(items, "project:OP", subseqMatcher);
+    expect(out.map((e) => e.id)).toEqual(["OP-1", "OP-2"]);
+  });
+
+  it("prefers exact project matches over broader substring matches", () => {
+    const out = filterEntries(items, "project:OP", subseqMatcher);
+    expect(out.map((e) => e.id)).toEqual(["OP-1", "OP-2"]);
+  });
+
+  it("falls back from exact to case-insensitive exact for project filters", () => {
+    expect(filterEntries(items, "project:op", subseqMatcher).map((e) => e.id)).toEqual(["OP-1", "OP-2"]);
+    expect(filterEntries(items, "project:opd", subseqMatcher).map((e) => e.id)).toEqual(["OPD-3"]);
+  });
+
+  it("falls back to substring matching only when exact tiers miss", () => {
+    expect(filterEntries(items, "project:op-de", subseqMatcher).map((e) => e.id)).toEqual(["OPD-3"]);
+    expect(filterEntries(items, "project:obsidi", subseqMatcher).map((e) => e.id)).toEqual([
+      "OP-1",
+      "OP-2",
+      "DEV-4",
+    ]);
+  });
+
+  it("combines project filters with free-text fuzzy matching", () => {
+    const out = filterEntries(items, "project:OP filter", subseqMatcher);
+    expect(out.map((e) => e.id)).toEqual(["OP-1"]);
+  });
+
+  it("parses status, priority, and agent filters", () => {
+    expect(filterEntries(items, "status:blocked", subseqMatcher).map((e) => e.id)).toEqual(["OP-2"]);
+    expect(filterEntries(items, "priority:high", subseqMatcher).map((e) => e.id)).toEqual(["OP-1"]);
+    expect(filterEntries(items, "agent:claude", subseqMatcher).map((e) => e.id)).toEqual(["JB-9"]);
+  });
+
+  it("applies the same exact/CI exact/substring fallback to non-project keys", () => {
+    expect(filterEntries(items, "status:Blocked", subseqMatcher).map((e) => e.id)).toEqual(["OP-2"]);
+    expect(filterEntries(items, "status:prog", subseqMatcher).map((e) => e.id)).toEqual(["DEV-4", "JB-9"]);
+    expect(filterEntries(items, "agent:copilot", subseqMatcher).map((e) => e.id)).toEqual(["OP-1"]);
+    expect(filterEntries(items, "agent:copilot-helper", subseqMatcher).map((e) => e.id)).toEqual(["DEV-4"]);
+    expect(filterEntries(items, "agent:helper", subseqMatcher).map((e) => e.id)).toEqual(["DEV-4"]);
+  });
+
+  it("parses has:* filters", () => {
+    expect(filterEntries(items, "has:pr", subseqMatcher).map((e) => e.id)).toEqual(["OP-1"]);
+    expect(filterEntries(items, "has:github", subseqMatcher).map((e) => e.id)).toEqual(["OP-2"]);
+    expect(filterEntries(items, "has:commits", subseqMatcher).map((e) => e.id)).toEqual(["JB-9"]);
+  });
+
+  it("treats unsupported key:value tokens as plain text when structured filters are present", () => {
+    const out = filterEntries(items, "project:OP title:filter", subseqMatcher);
+    expect(out.map((e) => e.id)).toEqual(["OP-1"]);
+  });
+
   it("returns empty when nothing matches", () => {
     expect(filterEntries(items, "zzznotpresent", subseqMatcher)).toEqual([]);
   });
 
   it("preserves input order", () => {
     const out = filterEntries(items, "op", subseqMatcher);
-    expect(out.map((e) => e.id)).toEqual(["OP-1", "OP-2"]);
+    expect(out.map((e) => e.id)).toEqual(["OP-1", "OP-2", "OPD-3", "DEV-4"]);
+  });
+});
+
+describe("sidebarSearchHelpText", () => {
+  it("lists supported structured keys and a combined example", () => {
+    const text = sidebarSearchHelpText();
+    expect(text).toContain("project:<slug|PREFIX>");
+    expect(text).toContain("status:<open|in-progress|blocked|resolved|wontfix>");
+    expect(text).toContain("priority:<low|med|high>");
+    expect(text).toContain("agent:<name|none>");
+    expect(text).toContain("has:<pr|github|agent|commits>");
+    expect(text).toContain("project:OP sidebar");
   });
 });
 
@@ -202,6 +305,65 @@ describe("pickIssuesForTab", () => {
       recentResolvedLimit: 20,
     } as any);
     expect(out.map((e) => e.id)).toEqual(["OP-6", "OP-5", "OP-4"]);
+  });
+
+  // OP-221: an issue that lives in RESOLVED ISSUES/ but whose `status:`
+  // frontmatter never flipped to a terminal value (the OP-197 data state)
+  // must not appear in the In flight tab — the folder is the source of
+  // truth, not the status field.
+  describe("OP-221: resolvedFolder beats stale status", () => {
+    const driftNoAgent = entry({
+      id: "OP-197",
+      status: "in-progress",
+      resolvedFolder: true,
+      resolved: "2026-04-26",
+    });
+    const driftAliveAgent = entry({
+      id: "OP-198",
+      status: "in-progress",
+      resolvedFolder: true,
+      agent: "claude",
+      resolved: "2026-04-26",
+    });
+    const driftDeadAgent = entry({
+      id: "OP-199",
+      status: "in-progress",
+      resolvedFolder: true,
+      agent: "claude",
+      resolved: "2026-04-26",
+    });
+
+    it("hides folder-resolved rows in In flight even when status is stale and no agent", () => {
+      const out = pickIssuesForTab([inProg, driftNoAgent], "in-flight" as any, {
+        liveTmuxWindows: new Set<string>(),
+        recentResolvedLimit: 20,
+      } as any);
+      expect(out.map((e) => e.id).sort()).toEqual(["OP-2"]);
+    });
+
+    it("keeps folder-resolved rows with stale status when their tmux window is live (OP-156 §5)", () => {
+      const out = pickIssuesForTab([inProg, driftAliveAgent, driftDeadAgent], "in-flight" as any, {
+        liveTmuxWindows: new Set(["OP-198"]),
+        recentResolvedLimit: 20,
+      } as any);
+      expect(out.map((e) => e.id).sort()).toEqual(["OP-198", "OP-2"]);
+    });
+
+    it("keeps folder-resolved rows with stale status when probe is unknown", () => {
+      const out = pickIssuesForTab([driftAliveAgent], "in-flight" as any, {
+        liveTmuxWindows: undefined,
+        recentResolvedLimit: 20,
+      } as any);
+      expect(out.map((e) => e.id)).toEqual(["OP-198"]);
+    });
+
+    it("includes folder-resolved rows with stale status in the Resolved tab (folder is source of truth)", () => {
+      const out = pickIssuesForTab([driftNoAgent], "resolved" as any, {
+        liveTmuxWindows: new Set<string>(),
+        recentResolvedLimit: 20,
+      } as any);
+      expect(out.map((e) => e.id)).toEqual(["OP-197"]);
+    });
   });
 });
 

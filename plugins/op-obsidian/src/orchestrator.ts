@@ -5,7 +5,7 @@ import * as path from "path";
 import { promisify } from "util";
 
 import { LAYOUTS, type LayoutId } from "./layout/layouts";
-import type { RegistryData, SurfaceRef, WindowState } from "./layout/registry";
+import type { AgentMetadata, RegistryData, SurfaceRef, WindowState } from "./layout/registry";
 import { activeWindow, addWindow, assignSurface } from "./layout/registry";
 import type { OpSettings } from "./settingsPure";
 import {
@@ -16,7 +16,7 @@ import {
   setWindowName,
   splitSession,
 } from "./iterm/driver";
-import { buildPrepScript, tmuxWindowName } from "./terminalLaunch";
+import { buildAgentExecCommand, buildPrepScript, tmuxWindowName } from "./terminalLaunch";
 
 const pExecFile = promisify(execFile);
 
@@ -41,6 +41,12 @@ export interface OrchestrateArgs {
   // basename (e.g. "OP-94 iterm window title shows …"). Falls back to
   // issueId when empty.
   issueTitle?: string;
+  // OP-179: parent issue id (e.g. "OP-149"). When set, all visible labels
+  // (OSC 1 tab name, OSC 2 window title, iTerm session-name slot) carry a
+  // trailing ` [Parent: <PARENT-ID>]` so a child issue's pane is visibly
+  // tagged with its umbrella. Empty/missing → no suffix (no breaking change
+  // for non-child issues; OP-177's exact label shape).
+  parentId?: string;
   agentId: string;
   cwd: string;
   binary: string;
@@ -57,6 +63,13 @@ export interface OrchestrateArgs {
   // (growth into an existing window) does not need additional treatment —
   // `splitSession` does not call ActivateRequest in the first place.
   backgroundLaunch?: boolean;
+  // OP-234: launch-time agent metadata persisted into `SurfaceRef.agent` so
+  // the OP-230 dashboard daemon can pull a snapshot without re-deriving from
+  // scrollback. Both are optional — undefined when no model was resolved
+  // (fallback to the agent CLI's default) or the id is unknown to the
+  // model registry's context-window table.
+  model?: string;
+  contextWindowSize?: number;
 }
 
 export interface OrchestrateResult {
@@ -85,7 +98,10 @@ export async function orchestrateLaunch(
   // Re-launching an existing issue: if the session still exists in iTerm,
   // just select it. Otherwise fall through to fresh assignment — the user
   // likely closed the pane, and the issueId → session mapping is stale.
-  const sessionTitle = labelWithId(args.issueId, args.issueTitle);
+  const sessionTitle = labelWithParent(
+    labelWithId(oscSafe(args.issueId), args.issueTitle !== undefined ? oscSafe(args.issueTitle) : undefined),
+    args.parentId !== undefined ? oscSafe(args.parentId) : undefined,
+  );
   const existing = reg.surfaces[args.issueId];
   if (existing && (await sessionExists(existing.sessionId))) {
     await selectSession(existing.sessionId);
@@ -182,6 +198,7 @@ export async function orchestrateLaunch(
       cellIndex: nextCellIndex,
       layoutId: win.layoutId,
       tmuxWindow: windowName,
+      agent: makeAgentMetadata(args),
     };
     assignSurface(reg, args.issueId, ref);
     await registry.save(reg);
@@ -229,6 +246,7 @@ export async function orchestrateLaunch(
     cellIndex: 0,
     layoutId: ceiling,
     tmuxWindow: windowName,
+    agent: makeAgentMetadata(args),
   };
   assignSurface(reg, args.issueId, ref);
   await registry.save(reg);
@@ -282,6 +300,7 @@ async function writeViewScript({ args, tmuxSession, tmuxWindow }: ViewArgs): Pro
     tmuxWindow,
     issueId: args.issueId,
     issueTitle: args.issueTitle,
+    parentId: args.parentId,
   });
   await fs.writeFile(viewPath, script, { mode: 0o755 });
   return viewPath;
@@ -293,6 +312,9 @@ interface BuildViewArgs {
   tmuxWindow: string;
   issueId: string;
   issueTitle?: string;
+  // OP-179: when set, the OSC 1/2 payloads get a ` [Parent: <PARENT-ID>]`
+  // suffix. `oscSafe` is applied before the suffix is composed.
+  parentId?: string;
 }
 
 // OP-172: emit BOTH OSC 1 (icon/tab name) and OSC 2 (window title) before
@@ -313,12 +335,17 @@ interface BuildViewArgs {
 // `oscSafe` is applied to id and title *before* `labelWithId` so the dedup
 // check operates on stripped values — a control char injected between the
 // id and its separator cannot bypass the guard.
+//
+// OP-179: when `parentId` is set, append ` [Parent: <PARENT-ID>]` after the
+// id+title prefix via `labelWithParent`. Empty/missing parent keeps OP-177's
+// exact label shape — non-child issues are unchanged.
 export function buildViewScript({
   tmuxBinary,
   tmuxSession,
   tmuxWindow,
   issueId,
   issueTitle,
+  parentId,
 }: BuildViewArgs): string {
   const tmux = shSingleQuote(tmuxBinary);
   const groupSessName = `view-${issueId}`;
@@ -330,7 +357,10 @@ export function buildViewScript({
   // control char injected between the id and its separator (e.g. "OP-177\x07
   // title") cannot bypass `labelWithId`'s prefix guard.  The result is
   // already OSC-safe — no second pass needed.
-  const label = labelWithId(oscSafe(issueId), issueTitle !== undefined ? oscSafe(issueTitle) : undefined);
+  const label = labelWithParent(
+    labelWithId(oscSafe(issueId), issueTitle !== undefined ? oscSafe(issueTitle) : undefined),
+    parentId !== undefined ? oscSafe(parentId) : undefined,
+  );
   const tabName = shSingleQuote(label);
   const windowTitle = shSingleQuote(label);
   // OP-178: the per-pane grouped session shares its window list with the
@@ -364,17 +394,32 @@ export function buildViewScript({
 }
 
 // Agent inner script: same shape as the pre-orchestrator launch path —
-// cd + PATH + env + exec binary with prompt (or interactive shell in debug
-// mode). Factored here so the tmux window runs it when first created.
+// cd + PATH + env + OP-233 iTerm tag + exec binary with prompt (or
+// interactive shell in debug mode). Factored here so the tmux window runs
+// it when first created.
 async function writeAgentInnerScript(args: OrchestrateArgs): Promise<string> {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), "op-agent-"));
   const innerPath = path.join(dir, "agent.command");
   const promptPath = path.join(dir, "prompt.txt");
   await fs.writeFile(promptPath, args.prompt, { mode: 0o600 });
+  const inner = buildAgentInnerScript({ args, promptPath });
+  await fs.writeFile(innerPath, inner, { mode: 0o755 });
+  return innerPath;
+}
 
-  const flagsShell = args.launchFlags.map(shSingleQuote).join(" ");
+// Pure script-string builder for the orchestrator's per-agent inner script.
+// Exported so the OSC 1337 emit (OP-233) and the env exports can be
+// asserted directly. Mirror to terminalLaunch.ts buildInnerScript — both
+// launch paths must emit identical OSC bytes so OP-230's session-correlation
+// rule is uniform.
+export function buildAgentInnerScript({
+  args,
+  promptPath,
+}: {
+  args: OrchestrateArgs;
+  promptPath: string;
+}): string {
   const cwdShell = shSingleQuote(args.cwd);
-  const binShell = shSingleQuote(args.binary);
   const promptShell = shSingleQuote(promptPath);
   const issueIdShell = shSingleQuote(args.issueId);
   const agentIdShell = shSingleQuote(args.agentId);
@@ -387,6 +432,14 @@ async function writeAgentInnerScript(args: OrchestrateArgs): Promise<string> {
     `export OP_ISSUE_ID=${issueIdShell}`,
     `export OP_AGENT_ID=${agentIdShell}`,
   ];
+  // OP-233: tag the iTerm session with `user.op_issue` so op-dashboard
+  // (OP-230) can correlate iTerm sessions to op issues. The orchestrator
+  // path always has args.issueId — orchestrator launches are gated on it
+  // upstream (see orchestrateLaunch's caller in terminalLaunch.ts).
+  const b64Issue = Buffer.from(args.issueId, "utf8").toString("base64");
+  lines.push(
+    `printf '\\033]1337;SetUserVar=op_issue=%s\\007' ${shSingleQuote(b64Issue)}`,
+  );
   if (args.debug) {
     lines.push(
       `echo "[op] debug agent launch — interactive shell (issue=${args.issueId} agent=${args.agentId})"`,
@@ -394,11 +447,18 @@ async function writeAgentInnerScript(args: OrchestrateArgs): Promise<string> {
       `exec "$SHELL" -l`,
     );
   } else {
-    lines.push(`PROMPT=$(<${promptShell})`, `exec ${binShell} ${flagsShell} "$PROMPT"`);
+    lines.push(
+      `PROMPT=$(<${promptShell})`,
+      `exec ${buildAgentExecCommand({
+        agentId: args.agentId,
+        binary: args.binary,
+        launchFlags: args.launchFlags,
+        promptRef: '"$PROMPT"',
+      })}`,
+    );
   }
   lines.push("");
-  await fs.writeFile(innerPath, lines.join("\n"), { mode: 0o755 });
-  return innerPath;
+  return lines.join("\n");
 }
 
 // Probe each tracked session in a window. Clear slots whose iTerm session
@@ -448,6 +508,18 @@ export function firstEmptyCell(
   return -1;
 }
 
+// OP-234: assemble the launch-time AgentMetadata block. Only invoked on the
+// fresh-launch paths (split / new-window) — the reattach branch leaves the
+// existing surface's metadata intact because the agent process didn't restart.
+function makeAgentMetadata(args: OrchestrateArgs): AgentMetadata {
+  return {
+    model: args.model,
+    contextWindowSize: args.contextWindowSize,
+    startTime: Date.now(),
+    workdir: args.cwd,
+  };
+}
+
 function pruneWindow(reg: RegistryData, windowId: string): void {
   delete reg.windows[windowId];
   reg.windowOrder = reg.windowOrder.filter((id) => id !== windowId);
@@ -480,6 +552,19 @@ export function labelWithId(issueId: string, issueTitle?: string): string {
   // Match id followed by any non-word char (space, colon, dash…) OR end-of-string.
   if (new RegExp(`^${escapedId}(?:\\W|$)`).test(issueTitle)) return issueTitle;
   return `${issueId} ${issueTitle}`;
+}
+
+// OP-179: append ` [Parent: <PARENT-ID>]` to an already-composed label when
+// the issue has a parent. Returns `label` unchanged when `parentId` is
+// undefined, empty, or whitespace-only (matching `readParentId`'s
+// `raw.trim().length > 0` guard so a `parent:` field that is all spaces
+// doesn't produce a `[Parent:    ]` suffix). Caller is expected to pass an
+// `oscSafe`-stripped parentId — the trimmed value is rendered verbatim into
+// the OSC 1/2 payload.
+export function labelWithParent(label: string, parentId?: string): string {
+  const trimmed = parentId?.trim();
+  if (!trimmed) return label;
+  return `${label} [Parent: ${trimmed}]`;
 }
 
 // iTerm's `create window with default profile command "..."` takes a bash

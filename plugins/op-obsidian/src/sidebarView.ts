@@ -13,6 +13,41 @@ import { tmuxWindowName } from "./terminalLaunch";
 export const OP_SIDEBAR_VIEW_TYPE = "op-sidebar";
 
 type TabId = "issues" | "in-flight" | "resolved";
+type SidebarSearchKey = "project" | "status" | "priority" | "agent" | "has";
+type SidebarSearchMatchTier = 0 | 1 | 2 | 3;
+
+interface SidebarSearchFilter {
+  key: SidebarSearchKey;
+  value: string;
+}
+
+export const SIDEBAR_SEARCH_HELP = [
+  {
+    key: "project:<slug|PREFIX>",
+    description: "Match a project by slug or issue prefix.",
+    example: "project:OP",
+  },
+  {
+    key: "status:<open|in-progress|blocked|resolved|wontfix>",
+    description: "Filter by issue status.",
+    example: "status:blocked",
+  },
+  {
+    key: "priority:<low|med|high>",
+    description: "Filter by priority.",
+    example: "priority:high",
+  },
+  {
+    key: "agent:<name|none>",
+    description: "Filter by attached agent, or rows without one.",
+    example: "agent:copilot",
+  },
+  {
+    key: "has:<pr|github|agent|commits>",
+    description: "Require a populated field on the issue.",
+    example: "has:pr",
+  },
+] as const;
 
 const TABS: Array<{ id: TabId; label: string }> = [
   { id: "issues", label: "Issues" },
@@ -160,7 +195,8 @@ export class OpSidebarView extends ItemView {
       this.tabButtons.set(t.id, btn);
     }
 
-    this.filterInput = root.createEl("input", {
+    const filterRow = root.createDiv({ cls: "op-sidebar__filter-row" });
+    this.filterInput = filterRow.createEl("input", {
       cls: "op-sidebar__filter",
       attr: {
         type: "search",
@@ -173,6 +209,15 @@ export class OpSidebarView extends ItemView {
       this.filterQuery = this.filterInput.value;
       this.scheduleRender();
     });
+    const filterHelp = filterRow.createEl("button", {
+      cls: "op-sidebar__filter-help",
+      text: "?",
+      attr: {
+        type: "button",
+        "aria-label": "Sidebar search help",
+      },
+    });
+    setTooltip(filterHelp, sidebarSearchHelpText(), { delay: 250 });
 
     this.bodyEl = root.createDiv({ cls: "op-sidebar__body" });
 
@@ -962,6 +1007,10 @@ function isResolved(e: IssueEntry): boolean {
  *                   tmux window is still live (per OP-156 §5). Unknown-tmux
  *                   (`undefined`/`null`) does not hide rows — same rule as
  *                   {@link OpSidebarView.isAgentBadgeStale}.
+ *                   The folder-resolved check runs BEFORE the status check so a
+ *                   row that lives in `RESOLVED ISSUES/` but still carries a
+ *                   non-terminal `status:` (data drift like OP-197) is treated
+ *                   as resolved — the folder is the source of truth here.
  *  - `resolved`   → resolved/wontfix, sorted by resolved-date desc, sliced to
  *                   `opts.recentResolvedLimit`.
  */
@@ -976,12 +1025,13 @@ export function pickIssuesForTab(
   if (tab === "in-flight") {
     return issues
       .filter((e) => {
-        if (e.status === "in-progress" || e.status === "blocked") return true;
-        if (!e.agent) return false;
         if (isResolved(e)) {
+          if (!e.agent) return false;
           if (!opts.liveTmuxWindows) return true;
           return opts.liveTmuxWindows.has(tmuxWindowName(e.id));
         }
+        if (e.status === "in-progress" || e.status === "blocked") return true;
+        if (!e.agent) return false;
         return true;
       })
       .sort(byId);
@@ -1012,6 +1062,14 @@ function stripIdPrefix(title: string, id: string): string {
 
 type MatcherFactory = (query: string) => (text: string) => unknown;
 
+export function sidebarSearchHelpText(): string {
+  return [
+    "Search keys",
+    ...SIDEBAR_SEARCH_HELP.map((item) => `${item.key} — ${item.description} Example: ${item.example}`),
+    "Combine keys with free text, e.g. project:OP sidebar",
+  ].join("\n");
+}
+
 export function filterEntries(
   entries: IssueEntry[],
   query: string,
@@ -1019,11 +1077,154 @@ export function filterEntries(
 ): IssueEntry[] {
   const q = query.trim();
   if (!q) return entries;
-  const match = makeMatcher(q);
-  return entries.filter((e) => {
-    const target = `${e.id} ${stripIdPrefix(e.title, e.id)} ${e.project}`;
-    return match(target) !== null;
-  });
+  const parsed = parseSidebarSearchQuery(q);
+  if (parsed.filters.length === 0) {
+    const legacyMatch = makeMatcher(q);
+    return entries.filter((e) => legacyMatch(fuzzyTarget(e)) !== null);
+  }
+  let filtered = entries;
+  for (const filter of parsed.filters) {
+    filtered = applySidebarSearchFilter(filtered, filter);
+    if (filtered.length === 0) return [];
+  }
+  if (!parsed.textQuery) return filtered;
+  const match = makeMatcher(parsed.textQuery);
+  return filtered.filter((e) => match(fuzzyTarget(e)) !== null);
+}
+
+function fuzzyTarget(entry: IssueEntry): string {
+  return `${entry.id} ${stripIdPrefix(entry.title, entry.id)} ${entry.project}`;
+}
+
+function parseSidebarSearchQuery(query: string): {
+  filters: SidebarSearchFilter[];
+  textQuery: string;
+} {
+  const filters: SidebarSearchFilter[] = [];
+  const text: string[] = [];
+  for (const token of query.split(/\s+/).filter(Boolean)) {
+    const parsed = parseSidebarSearchToken(token);
+    if (parsed) {
+      filters.push(parsed);
+      continue;
+    }
+    text.push(fallbackSearchText(token));
+  }
+  return {
+    filters,
+    textQuery: text.filter(Boolean).join(" "),
+  };
+}
+
+function parseSidebarSearchToken(token: string): SidebarSearchFilter | null {
+  const idx = token.indexOf(":");
+  if (idx <= 0 || idx === token.length - 1) return null;
+  const key = normalizeSearchValue(token.slice(0, idx));
+  const value = token.slice(idx + 1).trim();
+  if (!value) return null;
+  if (!isSidebarSearchKey(key)) return null;
+  return { key, value };
+}
+
+function isSidebarSearchKey(key: string): key is SidebarSearchKey {
+  return key === "project" || key === "status" || key === "priority" || key === "agent" || key === "has";
+}
+
+function fallbackSearchText(token: string): string {
+  const idx = token.indexOf(":");
+  if (idx <= 0 || idx === token.length - 1) return token;
+  return token.slice(idx + 1).trim() || token;
+}
+
+function applySidebarSearchFilter(entries: IssueEntry[], filter: SidebarSearchFilter): IssueEntry[] {
+  const ranked = entries.map((entry) => ({
+    entry,
+    tier: sidebarSearchFilterTier(entry, filter),
+  }));
+  const bestTier = ranked.reduce<SidebarSearchMatchTier>(
+    (best, item) => (item.tier > best ? item.tier : best),
+    0,
+  );
+  if (bestTier === 0) return [];
+  return ranked.filter((item) => item.tier === bestTier).map((item) => item.entry);
+}
+
+function sidebarSearchFilterTier(entry: IssueEntry, filter: SidebarSearchFilter): SidebarSearchMatchTier {
+  return bestCandidateMatchTier(sidebarSearchCandidates(entry, filter), filter.value);
+}
+
+function sidebarSearchCandidates(entry: IssueEntry, filter: SidebarSearchFilter): string[] {
+  switch (filter.key) {
+    case "project":
+      return compactUnique([issuePrefix(entry.id), entry.project]);
+    case "status":
+      return compactUnique([entry.status, statusAlias(entry.status)]);
+    case "priority":
+      return compactUnique([entry.priority, priorityAlias(entry.priority)]);
+    case "agent":
+      return entry.agent ? [entry.agent] : ["none", "unassigned"];
+    case "has":
+      return hasCandidates(entry);
+  }
+}
+
+function bestCandidateMatchTier(
+  candidates: string[],
+  rawQuery: string,
+): SidebarSearchMatchTier {
+  const query = rawQuery.trim();
+  if (!query) return 0;
+  if (candidates.some((candidate) => candidate.trim() === query)) return 3;
+  const normalizedQuery = normalizeSearchValue(query);
+  if (!normalizedQuery) return 0;
+  if (candidates.some((candidate) => normalizeSearchValue(candidate) === normalizedQuery)) return 2;
+  if (candidates.some((candidate) => normalizeSearchValue(candidate).includes(normalizedQuery))) return 1;
+  return 0;
+}
+
+function hasCandidates(entry: IssueEntry): string[] {
+  const out: string[] = [];
+  if (entry.pr) out.push("pr");
+  if (entry.githubIssue) out.push("github", "gh", "github-issue");
+  if (entry.agent) out.push("agent");
+  if (entry.commits?.length) out.push("commit", "commits");
+  return out;
+}
+
+function compactUnique(values: Array<string | undefined>): string[] {
+  return [...new Set(values.map((value) => value?.trim()).filter((value): value is string => !!value))];
+}
+
+function issuePrefix(id: string): string {
+  return id.split("-")[0] ?? "";
+}
+
+function statusAlias(status: string | undefined): string | undefined {
+  const normalized = normalizeIssueStatus(status);
+  if (!normalized) return undefined;
+  return normalized === status?.trim() ? undefined : normalized;
+}
+
+function priorityAlias(priority: string | undefined): string | undefined {
+  const normalized = normalizePriority(priority);
+  if (!normalized) return undefined;
+  return normalized === priority?.trim() ? undefined : normalized;
+}
+
+function normalizeIssueStatus(status: string | undefined): string {
+  const normalized = normalizeSearchValue(status);
+  if (normalized === "inprogress") return "in-progress";
+  return normalized;
+}
+
+function normalizePriority(priority: string | undefined): string {
+  const normalized = normalizeSearchValue(priority);
+  if (normalized === "medium") return "med";
+  return normalized;
+}
+
+function normalizeSearchValue(value: string | undefined): string {
+  return value?.trim().toLowerCase() ?? "";
 }
 
 function ghIssueNumber(url: string): number | undefined {

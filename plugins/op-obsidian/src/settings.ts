@@ -32,8 +32,27 @@ import {
   type SkippedBinding,
 } from "./hotkeyPreset";
 import { existsSync } from "fs";
+import * as os from "os";
 import * as path from "path";
 import type OpPlugin from "./main";
+import {
+  buildAutoLaunchPaths,
+  buildDashboardUrl,
+  type DashboardTarget as DashboardTargetType,
+} from "./dashboardOpen";
+import {
+  installDaemon as installDashboardDaemon,
+  installDashboardDependencies,
+} from "./dashboardSetupModal";
+import {
+  formatUptime,
+  getDashboardLogPath,
+  probeDaemonStatus,
+  readDashboardToken,
+  revealDashboardLog,
+  type DaemonStatus,
+} from "./dashboardInstall";
+import { BUNDLED_DASHBOARD_ASSETS } from "./dashboardBundledAssets";
 import { applyProjectOrder, listProjects } from "./projects";
 import { AGENT_IDS, type AgentId } from "./agentProfiles";
 import type { ITermPlacement } from "./terminalLaunch";
@@ -46,12 +65,17 @@ import { execFileSync } from "child_process";
 import { README_PATH } from "./firstRunReadme";
 import {
   EXTRA_PREAMBLE_MAX,
+  CLAUDE_SESSION_COLORS,
   type SidebarTab,
   type SidebarDensity,
   type OpSettings,
+  type WorkflowMode,
+  DASHBOARD_PORT_MAX,
+  DASHBOARD_PORT_MIN,
   DEFAULT_SETTINGS,
   mergeSettings,
   matchSettingRow,
+  sanitizeSessionDecorationPalette,
 } from "./settingsPure";
 
 export {
@@ -68,6 +92,9 @@ export type {
   AgentsSettings,
   DeveloperSettings,
   FlowSettings,
+  SessionDecorationSettings,
+  DashboardSettings,
+  DashboardTarget,
   OpSettings,
   WorkflowMode,
 } from "./settingsPure";
@@ -92,9 +119,11 @@ type SectionId =
   | "workingDirs"
   | "orchestrator"
   | "profileOverlays"
+  | "sessionDecoration"
   | "worktreeEnforcement"
   | "flowChaining"
   | "github"
+  | "dashboard"
   | "developer";
 
 /** Subset of SectionId covering only the collapsible Advanced subsections. */
@@ -127,7 +156,13 @@ const ADVANCED_SECTIONS: ReadonlyArray<{
     id: "profileOverlays",
     title: "Profile overlays (JSON per agent)",
     blurb:
-      "JSON patches merged on top of the built-in agent profile. Allowed keys: binary, launchFlags, promptPreamble, skillTrigger, label.",
+      "JSON patches merged on top of the built-in agent profile. Includes post-launch command templates for agents that support session decoration.",
+  },
+  {
+    id: "sessionDecoration",
+    title: "Session decoration",
+    blurb:
+      "Auto-color and auto-rename Claude sessions after launch, with optional /remote-control and a configurable Claude color palette.",
   },
   {
     id: "worktreeEnforcement",
@@ -146,6 +181,12 @@ const ADVANCED_SECTIONS: ReadonlyArray<{
     title: "GitHub integration",
     blurb:
       "Auto-create a GitHub issue on op-new and auto-close it on op-resolve. Requires the gh CLI installed and authenticated.",
+  },
+  {
+    id: "dashboard",
+    title: "Dashboard",
+    blurb:
+      "Localhost iTerm2 browser-tab dashboard for live observation and steering of launched agents. Configures the OP-230 daemon (port + open-in target) and exposes Install / Restart / Logs / Regenerate-token controls.",
   },
   {
     id: "developer",
@@ -177,6 +218,15 @@ export class OpSettingsTab extends PluginSettingTab {
    */
   private dragInFlight = false;
 
+  /**
+   * OP-235 review fix #1+#2: scoped to renderDashboard()'s lifetime so its
+   * fire-and-forget probe promises don't paint the badge after the section
+   * has been re-rendered or the tab has been closed. Aborted on each fresh
+   * renderDashboard call and on hide(); callbacks check `signal.aborted`
+   * before mutating DOM so racing probes drop their results.
+   */
+  private dashboardAbort: AbortController | null = null;
+
   constructor(app: App, private plugin: OpPlugin) {
     super(app, plugin);
   }
@@ -185,6 +235,11 @@ export class OpSettingsTab extends PluginSettingTab {
 
   display(): void {
     const { containerEl } = this;
+    // OP-235 review fix #1: cancel any in-flight dashboard probes from a
+    // prior display() so their callbacks don't paint into the about-to-be-
+    // emptied container.
+    this.dashboardAbort?.abort();
+    this.dashboardAbort = null;
     containerEl.empty();
     containerEl.addClass("op-settings");
     this.sectionEls.clear();
@@ -266,6 +321,17 @@ export class OpSettingsTab extends PluginSettingTab {
     if (this.filterQuery) this.applyFilter();
   }
 
+  /**
+   * OP-235 review fix #1: when the Settings tab closes (or the user navigates
+   * away to another tab), abort any in-flight dashboard probes so their
+   * resolved callbacks drop their DOM mutations rather than painting into
+   * detached elements.
+   */
+  hide(): void {
+    this.dashboardAbort?.abort();
+    this.dashboardAbort = null;
+  }
+
   // ─── Section mounting / targeted re-render ──────────────────────────────
 
   /** Create a wrapper element for the section, register it, and render. */
@@ -314,9 +380,11 @@ export class OpSettingsTab extends PluginSettingTab {
       case "workingDirs":
       case "orchestrator":
       case "profileOverlays":
+      case "sessionDecoration":
       case "worktreeEnforcement":
       case "flowChaining":
       case "github":
+      case "dashboard":
       case "developer":
         return this.renderAdvancedSection(id, el);
       default: {
@@ -338,12 +406,16 @@ export class OpSettingsTab extends PluginSettingTab {
         return this.renderOrchestrator(el);
       case "profileOverlays":
         return this.renderProfileOverlays(el);
+      case "sessionDecoration":
+        return this.renderSessionDecoration(el);
       case "worktreeEnforcement":
         return this.renderWorktreeEnforcement(el);
       case "flowChaining":
         return this.renderFlowChaining(el);
       case "github":
         return this.renderGithub(el);
+      case "dashboard":
+        return this.renderDashboard(el);
       case "developer":
         return this.renderDeveloper(el);
       default: {
@@ -526,6 +598,13 @@ export class OpSettingsTab extends PluginSettingTab {
   // ─── Workflows section renderer (OP-201) ────────────────────────────────
 
   private renderWorkflows(containerEl: HTMLElement): void {
+    // OP-219: workflowMode dropdown — the master toggle gating whether the
+    // module engine drives injection at all. Rendered first so it's visible
+    // before any module-specific UI; on change re-renders the whole section
+    // so the "Workflow modules disabled" callouts in the launch preview /
+    // module list reflect the new mode immediately.
+    this.renderWorkflowModeRow(containerEl);
+
     const result = loadModules(this.app);
     const { modules, diagnostics } = result;
 
@@ -558,6 +637,29 @@ export class OpSettingsTab extends PluginSettingTab {
       "Tokens you can reference in a module body via {{name}}. These are computed per-launch from the issue, the agent profile, and the launch context — they sit at Launch override (the highest precedence). User-declared {{vars.<name>}} are a separate namespace declared in a module's `vars:` block.",
     );
     this.renderAvailableVariables(varsCollapsible.body);
+  }
+
+  private renderWorkflowModeRow(parentEl: HTMLElement): void {
+    const s = this.plugin.settings;
+    const row = new Setting(parentEl)
+      .setName("Workflow mode")
+      .setDesc(
+        "Master toggle for prompt composition. Modules: the launcher composes the prompt from workflow-module files in this vault (post-OP-208 default). Legacy: the launcher inlines the project's WORKFLOW.md as-is and ignores any modules. Existing installs that explicitly set this stay on whatever they had — the OP-208 cutover only flipped the default for installs that never wrote a value.",
+      )
+      .addDropdown((dd) => {
+        dd.addOption("modules", "Modules (default)");
+        dd.addOption("legacy", "Legacy (inline WORKFLOW.md)");
+        dd.setValue(s.workflowMode);
+        dd.onChange(async (value) => {
+          s.workflowMode = value as WorkflowMode;
+          await this.plugin.saveSettings();
+          // Re-render the whole section so the empty-state copy, module
+          // list, and preview disclosures pick up the new mode without a
+          // settings-tab close/reopen.
+          this.rerenderSection("workflows");
+        });
+      });
+    row.settingEl.dataset.opRow = "workflowMode";
   }
 
   private renderWorkflowsEmptyState(parentEl: HTMLElement): void {
@@ -1454,7 +1556,7 @@ export class OpSettingsTab extends PluginSettingTab {
 
     containerEl.createEl("p", {
       text:
-        "Overlays are a JSON patch merged on top of the built-in profile for each agent. Allowed keys: `binary` (string — absolute path or PATH lookup), `launchFlags` (string[] appended to the command line), `promptPreamble` (string prepended to every prompt), `skillTrigger` (string — first line of the prompt), `label` (string for the sidebar badge). Example: `{ \"binary\": \"/opt/homebrew/bin/claude\", \"launchFlags\": [\"--dangerously-skip-permissions\"] }`.",
+        "Overlays are a JSON patch merged on top of the built-in profile for each agent. Allowed keys include `binary`, `launchFlags`, `promptPreamble`, `skillTrigger`, `label`, `postLaunchCommands`, the per-mode `*PostLaunchCommands` arrays, and `postLaunchReadinessRegex`. Example: `{ \"binary\": \"/opt/homebrew/bin/claude\", \"postLaunchCommands\": [\"/rename {{name}}\"] }`.",
       cls: "setting-item-description",
     });
 
@@ -1527,7 +1629,8 @@ export class OpSettingsTab extends PluginSettingTab {
           if (!result.ok || !result.overlay) {
             userError(
               `${id} overlay: ${result.errors.join("; ")}`,
-              "Allowed keys: binary, launchFlags (string[]), promptPreamble, skillTrigger, label.",
+              "Allowed keys: binary, launchFlags (string[]), promptPreamble, skillTrigger, label, postLaunchCommands (string[]), per-mode *PostLaunchCommands (string[]), postLaunchReadinessRegex.",
+              "Allowed keys: binary, launchFlags (string[]), promptPreamble, skillTrigger, label, postLaunchCommands (string[]), per-mode *PostLaunchCommands (string[]), postLaunchReadinessRegex.",
             );
             return;
           }
@@ -1545,6 +1648,95 @@ export class OpSettingsTab extends PluginSettingTab {
       });
       banner = setting.settingEl.createDiv({ cls: "op-overlay-validation" });
     }
+  }
+
+  private renderSessionDecoration(containerEl: HTMLElement): void {
+    const s = this.plugin.settings;
+    new Setting(containerEl)
+      .setName("Auto-color sessions")
+      .setDesc(
+        "After Claude launches, send `/color <name>` in the tmux-backed REPL. Colors stay unique within a given iTerm window unless the palette is exhausted.",
+      )
+      .addToggle((t) =>
+        t.setValue(s.sessionDecoration.autoColor).onChange(async (v) => {
+          s.sessionDecoration.autoColor = v;
+          await this.plugin.saveSettings();
+        }),
+      );
+
+    new Setting(containerEl)
+      .setName("Auto-rename sessions")
+      .setDesc("After Claude launches, send `/rename <name>` using the session name template below.")
+      .addToggle((t) =>
+        t.setValue(s.sessionDecoration.autoRename).onChange(async (v) => {
+          s.sessionDecoration.autoRename = v;
+          await this.plugin.saveSettings();
+        }),
+      );
+
+    new Setting(containerEl)
+      .setName("Auto-engage Remote Control")
+      .setDesc(
+        "Sends `/remote-control` after launch so the session appears at claude.ai/code. Requires browser confirmation the first time.",
+      )
+      .addToggle((t) =>
+        t.setValue(s.sessionDecoration.autoRemoteControl).onChange(async (v) => {
+          s.sessionDecoration.autoRemoteControl = v;
+          await this.plugin.saveSettings();
+        }),
+      );
+
+    new Setting(containerEl)
+      .setName("Color palette")
+      .setDesc(
+        `Comma-separated Claude prompt-bar colors. Valid values: ${CLAUDE_SESSION_COLORS.join(", ")}. Invalid entries are dropped; if none remain, the default eight are restored.`,
+      )
+      .addText((t) => {
+        t.setValue(s.sessionDecoration.palette.join(", "));
+        t.inputEl.style.width = "100%";
+        t.inputEl.addEventListener("blur", async () => {
+          const raw = t.getValue();
+          const parts = raw.split(",");
+          const sanitized = sanitizeSessionDecorationPalette(parts);
+          const unknown = parts
+            .map((part) => part.trim().toLowerCase())
+            .filter((part) => part.length > 0 && !CLAUDE_SESSION_COLORS.includes(part as typeof CLAUDE_SESSION_COLORS[number]));
+          if (unknown.length > 0) {
+            notify(`op: dropped invalid session colors: ${unknown.join(", ")}`, 7000);
+          }
+          s.sessionDecoration.palette = sanitized.length > 0 ? sanitized : [...CLAUDE_SESSION_COLORS];
+          t.setValue(s.sessionDecoration.palette.join(", "));
+          await this.plugin.saveSettings();
+        });
+      });
+
+    new Setting(containerEl)
+      .setName("Session name template")
+      .setDesc("Template for `/rename`. Available variables: `{{id}}`, `{{title}}`, `{{agent}}`, `{{parent}}`.")
+      .addText((t) => {
+        t.setValue(s.sessionDecoration.nameTemplate);
+        t.inputEl.style.width = "100%";
+        t.inputEl.addEventListener("blur", async () => {
+          const next = t.getValue().trim();
+          s.sessionDecoration.nameTemplate = next || DEFAULT_SETTINGS.sessionDecoration.nameTemplate;
+          t.setValue(s.sessionDecoration.nameTemplate);
+          await this.plugin.saveSettings();
+        });
+      });
+
+    const advanced = new OpCollapsible(containerEl, "Advanced…", { startOpen: false });
+    new Setting(advanced.body)
+      .setName("Inter-command delay (ms)")
+      .setDesc("Delay between each post-launch tmux `send-keys` command.")
+      .addText((t) =>
+        t.setValue(String(s.sessionDecoration.interCommandDelayMs)).onChange(async (v) => {
+          const n = parseInt(v, 10);
+          if (Number.isFinite(n) && n >= 0) {
+            s.sessionDecoration.interCommandDelayMs = n;
+            await this.plugin.saveSettings();
+          }
+        }),
+      );
   }
 
   private renderWorktreeEnforcement(containerEl: HTMLElement): void {
@@ -1640,6 +1832,299 @@ export class OpSettingsTab extends PluginSettingTab {
       );
   }
 
+  /**
+   * OP-235: Dashboard subsection (per OP-217 §"New settings subsection").
+   * Five rows — port, target, daemon-status, token, install. Designed to
+   * compose with OP-232's already-landed surface: the "Install daemon"
+     * button calls OP-232's exported `installDaemon(assets, targetPath)`;
+   * the daemon-status row uses a richer `probeDaemonStatus` than the
+   * boolean OP-232 healthz probe so the badge can render uptime/version.
+   *
+   * Daemon-offline degrades gracefully: status shows "◯ not running";
+   * Restart and Regenerate disable. Logs and Install stay enabled — they're
+   * useful precisely when the daemon hasn't started.
+   */
+  private renderDashboard(containerEl: HTMLElement): void {
+    const s = this.plugin.settings;
+    const homedir = os.homedir();
+    const paths = buildAutoLaunchPaths(homedir);
+    const logPath = getDashboardLogPath(homedir);
+
+    // OP-235 review fix #1+#2: scope every async probe to a fresh
+    // AbortController. `display()`, `hide()`, and the start of
+    // `renderDashboard()` itself all abort the prior controller before
+    // wiring a new one, which means even a rapid re-render mid-fetch can't
+    // see two probes' resolutions race onto the same statusBadge.
+    this.dashboardAbort?.abort();
+    const abort = new AbortController();
+    this.dashboardAbort = abort;
+
+    // ── Port ───────────────────────────────────────────────────────────────
+    new Setting(containerEl)
+      .setName("Port")
+      .setDesc(
+        `Localhost port the OP-230 daemon binds to. Default 49217. Allowed range ${DASHBOARD_PORT_MIN}–${DASHBOARD_PORT_MAX}. Restart iTerm2 after changing — the daemon reads this on startup.`,
+      )
+      .addText((t) => {
+        t.inputEl.type = "number";
+        t.inputEl.min = String(DASHBOARD_PORT_MIN);
+        t.inputEl.max = String(DASHBOARD_PORT_MAX);
+        t.setValue(String(s.dashboard.port)).onChange(async (raw) => {
+          const n = parseInt(raw, 10);
+          if (
+            Number.isFinite(n) &&
+            n >= DASHBOARD_PORT_MIN &&
+            n <= DASHBOARD_PORT_MAX
+          ) {
+            s.dashboard.port = n;
+            await this.plugin.saveSettings();
+          }
+        });
+      });
+
+    // ── Open in (radio: system / iTerm browser tab) ───────────────────────
+    const targetSetting = new Setting(containerEl)
+      .setName("Open in")
+      .setDesc(
+        "Where the `op-dashboard` command opens the URL. iTerm browser tab requires the iTerm2 3.6 browser plugin (`brew install --cask itermbrowserplugin`); System browser opens the user's default browser via `window.open()`.",
+      );
+    const radioWrap = targetSetting.controlEl.createDiv({
+      cls: "op-dashboard-radio",
+    });
+    const radioName = "op-dashboard-target";
+    const renderRadio = (value: DashboardTargetType, label: string): void => {
+      const wrap = radioWrap.createEl("label", {
+        cls: "op-dashboard-radio__option",
+      });
+      const input = wrap.createEl("input", {
+        attr: { type: "radio", name: radioName, value },
+      });
+      input.checked = s.dashboard.target === value;
+      input.addEventListener("change", async () => {
+        if (input.checked) {
+          s.dashboard.target = value;
+          await this.plugin.saveSettings();
+        }
+      });
+      wrap.createSpan({ text: ` ${label}` });
+    };
+    renderRadio("system-browser", "System browser");
+    renderRadio("iterm-browser-tab", "iTerm browser tab");
+
+    // ── Daemon status ──────────────────────────────────────────────────────
+    const statusSetting = new Setting(containerEl)
+      .setName("Daemon status")
+      .setDesc("Live probe of GET /healthz on the configured port.");
+    const statusBadge = statusSetting.controlEl.createSpan({
+      cls: "op-dashboard-status",
+      text: "● probing…",
+    });
+    // Both refs live up here so the single `refreshStatus()` defined below
+    // can flip both `disabled` flags from one probe — closes the race the
+    // adversarial review flagged.
+    let restartBtn: HTMLButtonElement | null = null;
+    let regenBtn: HTMLButtonElement | null = null;
+    statusSetting
+      .addButton((b) => {
+        b.setButtonText("Restart")
+          .setTooltip(
+            "POST /restart on the daemon — restarts in place if the daemon supports it.",
+          )
+          .onClick(async () => {
+            const token = readDashboardToken(paths.tokenPath);
+            try {
+              const url = `http://127.0.0.1:${s.dashboard.port}/restart`;
+              const res = await fetch(url, {
+                method: "POST",
+                headers: token ? { "X-Op-Token": token } : {},
+              });
+              if (res.status === 404) {
+                notify(
+                  "Restart endpoint not yet implemented in the daemon. Restart iTerm2 to restart the daemon.",
+                );
+              } else if (!res.ok) {
+                notify(`Restart failed (HTTP ${res.status}).`);
+              } else {
+                notify("Daemon restart requested.");
+              }
+            } catch {
+              notify(
+                "Could not reach the daemon — restart iTerm2 to (re)start it.",
+              );
+            }
+            await refreshStatus();
+          });
+        restartBtn = b.buttonEl;
+      })
+      .addButton((b) =>
+        b
+          .setButtonText("Logs")
+          .setTooltip(`Reveal ${logPath} in Finder.`)
+          .onClick(async () => {
+            try {
+              await revealDashboardLog(logPath);
+            } catch (err) {
+              notify(
+                `Could not reveal log file: ${(err as Error).message}. Path: ${logPath}`,
+              );
+            }
+          }),
+      );
+
+    const refreshStatus = async (): Promise<void> => {
+      const token = readDashboardToken(paths.tokenPath);
+      const status: DaemonStatus = await probeDaemonStatus(
+        s.dashboard.port,
+        token,
+        { signal: abort.signal },
+      );
+      // OP-235 review fix #1+#2: bail before any DOM write if the section
+      // has been re-rendered or the tab has closed since the probe started.
+      // The badge/button references would point at detached elements
+      // otherwise, leaking memory and producing stale UI.
+      if (abort.signal.aborted) return;
+      statusBadge.empty();
+      if (status.authError) {
+        statusBadge.setText("● running (token mismatch)");
+        statusBadge.addClass("op-dashboard-status--warn");
+        statusBadge.removeClass("op-dashboard-status--ok");
+        statusBadge.removeClass("op-dashboard-status--off");
+      } else if (status.running) {
+        const uptime =
+          typeof status.uptimeSec === "number"
+            ? formatUptime(status.uptimeSec)
+            : "—";
+        const ver = status.version ? ` v${status.version}` : "";
+        statusBadge.setText(`● running${ver} · uptime ${uptime}`);
+        statusBadge.addClass("op-dashboard-status--ok");
+        statusBadge.removeClass("op-dashboard-status--warn");
+        statusBadge.removeClass("op-dashboard-status--off");
+      } else {
+        statusBadge.setText("◯ not running");
+        statusBadge.addClass("op-dashboard-status--off");
+        statusBadge.removeClass("op-dashboard-status--ok");
+        statusBadge.removeClass("op-dashboard-status--warn");
+      }
+      // Both buttons disable when the daemon is offline since their POST
+      // endpoints require it. Updating both from the single probe (rather
+      // than firing a second probe further down) closes the race the
+      // adversarial review flagged: two concurrent probes returning out of
+      // order could leave Restart/Regenerate disagreeing about liveness.
+      if (restartBtn) restartBtn.disabled = !status.running;
+      if (regenBtn) regenBtn.disabled = !status.running;
+    };
+
+    // ── Token ──────────────────────────────────────────────────────────────
+    const tokenSetting = new Setting(containerEl)
+      .setName("Token")
+      .setDesc(
+        "Read from the daemon-managed 0600 token file. Regenerate writes a new token via the daemon (invalidates open dashboards with WS close code 4401). Copy URL puts the full http://127.0.0.1:<port>?token=… into the clipboard.",
+      );
+    const tokenInput = tokenSetting.controlEl.createEl("input", {
+      cls: "op-dashboard-token",
+      attr: { type: "password", readonly: "readonly", spellcheck: "false" },
+    });
+    const refreshToken = (): void => {
+      const tok = readDashboardToken(paths.tokenPath);
+      tokenInput.value = tok ?? "";
+      tokenInput.placeholder = tok ? "" : "(daemon not yet started)";
+    };
+    tokenSetting
+      .addButton((b) => {
+        b.setButtonText("Regenerate")
+          .setTooltip("POST /regenerate-token — invalidates open dashboards.")
+          .onClick(async () => {
+            const token = readDashboardToken(paths.tokenPath);
+            try {
+              const url = `http://127.0.0.1:${s.dashboard.port}/regenerate-token`;
+              const res = await fetch(url, {
+                method: "POST",
+                headers: token ? { "X-Op-Token": token } : {},
+              });
+              if (res.status === 404) {
+                notify(
+                  "Regenerate endpoint not yet implemented in the daemon.",
+                );
+              } else if (!res.ok) {
+                notify(`Regenerate failed (HTTP ${res.status}).`);
+              } else {
+                notify(
+                  "Token regenerated. Open dashboards have been invalidated.",
+                );
+              }
+            } catch {
+              notify("Could not reach the daemon to regenerate the token.");
+            }
+            refreshToken();
+          });
+        regenBtn = b.buttonEl;
+      })
+      .addButton((b) =>
+        b
+          .setButtonText("Copy URL")
+          .setTooltip("Copy the dashboard URL (with token) to the clipboard.")
+          .onClick(async () => {
+            const tok = readDashboardToken(paths.tokenPath);
+            const url = tok
+              ? buildDashboardUrl(s.dashboard.port, tok)
+              : `http://127.0.0.1:${s.dashboard.port}/`;
+            try {
+              await navigator.clipboard.writeText(url);
+              notify(
+                tok
+                  ? "Dashboard URL copied to clipboard."
+                  : "URL copied — but no token is available yet (daemon not started).",
+              );
+            } catch {
+              notify(`Clipboard write failed. URL: ${url}`);
+            }
+          }),
+      );
+    refreshToken();
+    // OP-235 review fix #2: a single initial probe drives both Restart and
+    // Regenerate's `disabled` flag through `refreshStatus()`. Earlier drafts
+    // fired a second `probeDaemonStatus` here, which raced against the
+    // status badge's probe and could leave the two controls disagreeing
+    // about liveness.
+    void refreshStatus();
+
+    // ── Install daemon ─────────────────────────────────────────────────────
+    new Setting(containerEl)
+      .setName("Install daemon")
+      .setDesc(
+        "Install the bundled `op-dashboard.py` plus its `client/index.html` sibling into ~/Library/Application Support/iTerm2/Scripts/AutoLaunch/, then install `aiohttp` into iTerm's bundled Python runtime. Same install path as OP-232's Setup modal. Restart iTerm2 after install/upgrade.",
+      )
+      .addButton((b) =>
+        b
+          .setButtonText("Install / upgrade")
+          .setCta()
+          .onClick(async () => {
+            const result = installDashboardDaemon(
+              BUNDLED_DASHBOARD_ASSETS,
+              paths.daemonPath,
+            );
+            if (!result.ok) {
+              notify(
+                `Install failed: ${result.reason ?? "unknown error"}. Source: ${BUNDLED_DASHBOARD_ASSETS.sourceLabel}.`,
+              );
+              await refreshStatus();
+              return;
+            }
+            const deps = await installDashboardDependencies(os.homedir());
+            if (deps.ok) {
+              notify(
+                `Installed daemon/client assets to ${paths.autoLaunchDir} and aiohttp into ${deps.runtimesInstalled} iTerm runtime${deps.runtimesInstalled === 1 ? "" : "s"}. Restart iTerm2 to launch it.`,
+              );
+            } else {
+              notify(
+                `Installed daemon assets, but couldn't install aiohttp into iTerm's bundled Python runtime: ${deps.reason}`,
+              );
+            }
+            await refreshStatus();
+          }),
+      );
+  }
+
   private renderDeveloper(containerEl: HTMLElement): void {
     const s = this.plugin.settings;
     new Setting(containerEl)
@@ -1683,7 +2168,7 @@ export class OpSettingsTab extends PluginSettingTab {
     );
     addTerm(
       "Profile overlay",
-      "Per-agent JSON patch merged on top of the built-in agent profile. Keys: `binary`, `launchFlags` (string[]), `promptPreamble`, `skillTrigger`, `label`. Unknown keys are flagged but saved.",
+      "Per-agent JSON patch merged on top of the built-in agent profile. Keys: `binary`, `launchFlags` (string[]), `promptPreamble`, `skillTrigger`, `label`, `postLaunchCommands` / mode-specific variants (string[]), and `postLaunchReadinessRegex`. Unknown keys are flagged but saved.",
     );
     addTerm(
       "Working directory",

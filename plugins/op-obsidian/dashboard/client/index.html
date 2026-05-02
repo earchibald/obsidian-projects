@@ -1,0 +1,631 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>op dashboard</title>
+  <style>
+    /* Dense terminal aesthetic. 6–8 rows visible at MacBook 13" without scroll. */
+    :root {
+      --bg: #0f1115;
+      --bg-elev: #161922;
+      --bg-row: #1b1f2a;
+      --border: #2a2f3d;
+      --fg: #d8dde6;
+      --fg-dim: #8a93a4;
+      --fg-faint: #5a6172;
+      --accent: #6cc8ff;
+      --running: #4ade80;
+      --waiting: #fbbf24;
+      --idle: #94a3b8;
+      --exited: #f87171;
+      --warn: #fb923c;
+      --tail-bg: #0a0c11;
+      --shadow: 0 1px 0 rgba(255,255,255,.02), 0 4px 12px rgba(0,0,0,.25);
+      --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+      --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+    }
+    @media (prefers-color-scheme: light) {
+      :root {
+        --bg: #f7f8fa; --bg-elev: #ffffff; --bg-row: #ffffff;
+        --border: #e2e6ec; --fg: #1a1f2a; --fg-dim: #5a6272; --fg-faint: #95a0b0;
+        --tail-bg: #f0f2f6;
+        --shadow: 0 1px 0 rgba(0,0,0,.02), 0 1px 4px rgba(0,0,0,.06);
+      }
+    }
+    * { box-sizing: border-box; }
+    html, body { height: 100%; }
+    body {
+      margin: 0; background: var(--bg); color: var(--fg);
+      font: 13px/1.4 var(--sans);
+    }
+
+    header.topbar {
+      display: flex; align-items: center; gap: 1.25em;
+      padding: .55em 1em; border-bottom: 1px solid var(--border);
+      background: var(--bg-elev); position: sticky; top: 0; z-index: 5;
+    }
+    header.topbar h1 {
+      font-size: 12px; font-weight: 600; letter-spacing: .04em;
+      text-transform: lowercase; margin: 0; color: var(--fg-dim);
+    }
+    .conn { display: flex; align-items: center; gap: .4em; font-family: var(--mono); font-size: 12px; }
+    .conn .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--idle); }
+    .conn.live .dot { background: var(--running); box-shadow: 0 0 6px var(--running); }
+    .conn.connecting .dot { background: var(--waiting); animation: pulse 1.2s infinite; }
+    .conn.disconnected .dot { background: var(--exited); }
+    @keyframes pulse { 50% { opacity: .35; } }
+
+    .toolbar {
+      display: flex; align-items: center; gap: .75em; flex: 1; flex-wrap: wrap;
+    }
+    .chips { display: flex; gap: .25em; }
+    .chip {
+      font: 11px var(--mono); color: var(--fg-dim);
+      background: transparent; border: 1px solid var(--border);
+      border-radius: 999px; padding: .2em .6em; cursor: pointer;
+      transition: background .12s, color .12s, border-color .12s;
+    }
+    .chip:hover { color: var(--fg); border-color: var(--fg-faint); }
+    .chip[aria-pressed="true"] {
+      background: var(--accent); color: #06121b; border-color: var(--accent);
+      font-weight: 600;
+    }
+    select.sort {
+      font: 11px var(--mono); background: transparent; color: var(--fg-dim);
+      border: 1px solid var(--border); border-radius: 4px; padding: .2em .4em;
+    }
+    select.sort:focus { color: var(--fg); border-color: var(--accent); outline: none; }
+
+    .reconnect-banner {
+      display: none;
+      padding: .55em 1em; border-bottom: 1px solid var(--border);
+      background: rgba(251, 146, 60, .10); color: var(--warn);
+      font: 12px var(--mono);
+    }
+    body.disconnected .reconnect-banner { display: block; }
+    body.disconnected main { opacity: .55; pointer-events: none; }
+    body.disconnected main .send input { background: var(--bg-row); }
+
+    main { padding: .5em 1em 4em; max-width: 1200px; margin: 0 auto; }
+
+    .empty {
+      text-align: center; color: var(--fg-dim); padding: 4em 1em;
+      font-family: var(--mono); font-size: 13px;
+    }
+    .empty kbd {
+      font-family: var(--mono); background: var(--bg-row);
+      padding: .1em .4em; border-radius: 3px; border: 1px solid var(--border);
+    }
+
+    article.row {
+      background: var(--bg-row); border: 1px solid var(--border);
+      border-radius: 6px; margin: .4em 0; padding: .55em .8em;
+      box-shadow: var(--shadow);
+      display: grid; gap: .35em;
+      grid-template-columns: auto 1fr auto;
+      grid-template-areas:
+        "badge head meta"
+        "tail tail tail"
+        "controls controls controls";
+    }
+    article.row.exited { opacity: .6; }
+    article.row.stale { border-color: var(--exited); }
+
+    .badge {
+      grid-area: badge; align-self: center;
+      width: 1.4em; height: 1.4em; display: inline-flex;
+      align-items: center; justify-content: center;
+      font-family: var(--mono); font-size: 14px;
+    }
+    .badge.running { color: var(--running); }
+    .badge.waiting_user, .badge.waiting_review { color: var(--waiting); }
+    .badge.idle { color: var(--idle); }
+    .badge.exited { color: var(--exited); }
+
+    .head {
+      grid-area: head; display: flex; align-items: baseline; gap: .6em;
+      min-width: 0;
+    }
+    .head .id {
+      font: 600 13px var(--mono); color: var(--fg);
+    }
+    .head .state {
+      font: 11px var(--mono); color: var(--fg-dim);
+      text-transform: uppercase; letter-spacing: .04em;
+    }
+    .head .activity {
+      font: 11px var(--mono); color: var(--fg-faint);
+    }
+    .head .workdir {
+      font: 11px var(--mono); color: var(--fg-faint);
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+      max-width: 32em; flex: 1;
+    }
+
+    .meta {
+      grid-area: meta; display: flex; align-items: center; gap: .8em;
+      font: 11px var(--mono); color: var(--fg-dim); white-space: nowrap;
+    }
+    .meta .ctx[data-low="true"] { color: var(--warn); }
+
+    .tail {
+      grid-area: tail;
+      background: var(--tail-bg); border: 1px solid var(--border);
+      border-radius: 4px; padding: .35em .55em;
+      font: 11px/1.35 var(--mono); color: var(--fg-dim);
+      max-height: 8.5em; overflow: auto;
+      white-space: pre-wrap; word-break: break-word;
+    }
+    .tail:empty::before {
+      content: "no scrollback yet"; color: var(--fg-faint); font-style: italic;
+    }
+
+    .controls {
+      grid-area: controls; display: flex; align-items: center; gap: .4em;
+      flex-wrap: wrap;
+    }
+    .send {
+      flex: 1; min-width: 16em; display: flex; align-items: stretch;
+      border: 1px solid var(--border); border-radius: 4px;
+      background: var(--bg-elev); transition: border-color .12s;
+    }
+    .send:focus-within { border-color: var(--accent); }
+    .send input {
+      flex: 1; background: transparent; border: 0; outline: 0;
+      color: var(--fg); font: 12px var(--mono); padding: .35em .55em;
+    }
+    .send input::placeholder { color: var(--fg-faint); }
+    .send button {
+      background: transparent; color: var(--fg-dim); border: 0;
+      border-left: 1px solid var(--border);
+      padding: 0 .8em; font: 12px var(--mono); cursor: pointer;
+    }
+    .send button:hover { color: var(--fg); }
+
+    button.action {
+      background: transparent; color: var(--fg-dim);
+      border: 1px solid var(--border); border-radius: 4px;
+      padding: .3em .65em; font: 11px var(--mono); cursor: pointer;
+      transition: color .12s, border-color .12s;
+    }
+    button.action:hover { color: var(--fg); border-color: var(--fg-faint); }
+    button.action.danger:hover { color: var(--exited); border-color: var(--exited); }
+
+    .toast-region {
+      position: fixed; right: 1em; bottom: 1em; display: flex; flex-direction: column;
+      gap: .4em; z-index: 50; pointer-events: none;
+    }
+    .toast {
+      background: var(--bg-elev); border: 1px solid var(--exited);
+      color: var(--fg); border-radius: 4px; padding: .5em .75em;
+      font: 12px var(--mono); box-shadow: var(--shadow);
+      max-width: 28em; pointer-events: auto;
+      animation: toast-in .15s ease-out;
+    }
+    .toast .code { color: var(--exited); margin-right: .4em; }
+    @keyframes toast-in { from { opacity: 0; transform: translateY(6px); } }
+
+    .auth-error {
+      display: none; padding: 1em; margin: 2em auto; max-width: 36em;
+      border: 1px solid var(--exited); border-radius: 6px;
+      background: rgba(248, 113, 113, .08); color: var(--fg);
+      font: 13px var(--sans); text-align: center;
+    }
+    .auth-error code {
+      font-family: var(--mono); background: var(--tail-bg);
+      padding: .15em .4em; border-radius: 3px;
+    }
+  </style>
+</head>
+<body>
+  <header class="topbar">
+    <h1>op dashboard</h1>
+    <span class="conn connecting" data-hook="conn">
+      <span class="dot" aria-hidden="true"></span>
+      <span data-hook="conn-label">connecting…</span>
+      <span data-hook="port" style="color: var(--fg-faint); margin-left: .5em;"></span>
+    </span>
+    <div class="toolbar">
+      <div class="chips" role="group" aria-label="filter">
+        <button class="chip" data-filter="all" aria-pressed="true">all</button>
+        <button class="chip" data-filter="running">running</button>
+        <button class="chip" data-filter="needs-me">needs me</button>
+        <button class="chip" data-filter="idle">idle</button>
+        <button class="chip" data-filter="exited">exited</button>
+      </div>
+      <label style="font: 11px var(--mono); color: var(--fg-dim);">
+        sort:
+        <select class="sort" data-hook="sort">
+          <option value="activity">by activity</option>
+          <option value="needs-me">needs me first</option>
+          <option value="id">by issue id</option>
+          <option value="started">by start time</option>
+        </select>
+      </label>
+    </div>
+  </header>
+
+  <div class="reconnect-banner" data-hook="banner">
+    Disconnected from daemon — restart iTerm2 to recover.
+  </div>
+
+  <main data-hook="list">
+    <div class="empty" data-hook="empty">
+      No agents running. Launch one with <kbd>op-open-agent</kbd>
+      or by clicking the chip on an issue note.
+    </div>
+  </main>
+
+  <div class="auth-error" data-hook="auth-error">
+    <p><strong>Missing token.</strong></p>
+    <p>Open this dashboard via <code>op-dashboard</code> in Obsidian — the plugin
+       supplies the auth token. Pasting the URL without <code>?token=…</code>
+       will not work.</p>
+  </div>
+
+  <div class="toast-region" data-hook="toasts" aria-live="polite"></div>
+
+  <script>
+  // ---- token + endpoint ---------------------------------------------------
+  // Plugin opens http://127.0.0.1:<port>?token=<token>. The SPA itself doesn't
+  // require the token to load (the daemon serves / unauthenticated — it's
+  // chrome), but the WS upgrade does. If absent, render the auth-error block
+  // instead of trying to connect.
+  const params = new URLSearchParams(location.search);
+  const token = params.get("token") || "";
+  const $port = document.querySelector('[data-hook="port"]');
+  $port.textContent = "port " + (location.port || "—");
+
+  if (!token) {
+    document.querySelector('[data-hook="auth-error"]').style.display = "block";
+  }
+
+  // ---- state --------------------------------------------------------------
+  const state = {
+    sessions: new Map(),                // issue_id -> session
+    rows: new Map(),                    // issue_id -> row DOM root
+    filter: "all",
+    sort: "activity",
+    conn: "connecting",                 // connecting | live | disconnected
+    retry: { attempts: 0, max: 12, timer: null },
+  };
+
+  // URL hash persists filter + sort across reloads. Format: #filter=…&sort=….
+  function readHash() {
+    const h = new URLSearchParams(location.hash.replace(/^#/, ""));
+    if (h.get("filter")) state.filter = h.get("filter");
+    if (h.get("sort")) state.sort = h.get("sort");
+  }
+  function writeHash() {
+    const h = new URLSearchParams({ filter: state.filter, sort: state.sort });
+    history.replaceState(null, "", "#" + h.toString());
+  }
+  readHash();
+
+  // Sync controls to state on load.
+  for (const chip of document.querySelectorAll(".chip")) {
+    chip.setAttribute("aria-pressed", String(chip.dataset.filter === state.filter));
+  }
+  document.querySelector('[data-hook="sort"]').value = state.sort;
+
+  // ---- WebSocket ----------------------------------------------------------
+  let ws = null;
+  function connect() {
+    if (!token) return;                          // never connect without token
+    const proto = location.protocol === "https:" ? "wss:" : "ws:";
+    const url = `${proto}//${location.host}/ws?token=${encodeURIComponent(token)}`;
+    setConn("connecting");
+    try {
+      ws = new WebSocket(url);
+    } catch (e) {
+      scheduleRetry();
+      return;
+    }
+    ws.onopen = () => {
+      setConn("live");
+      state.retry.attempts = 0;
+      if (state.retry.timer) { clearTimeout(state.retry.timer); state.retry.timer = null; }
+    };
+    ws.onmessage = (ev) => {
+      let frame;
+      try { frame = JSON.parse(ev.data); } catch { return; }
+      handleFrame(frame);
+    };
+    ws.onclose = (ev) => {
+      // 4401 = token mismatch. v1: surface as disconnected — token-refresh
+      // deep link is OP-217.6 plugin-side scope.
+      if (ev.code === 4401) toast("auth", "Token rejected — reopen via op-dashboard.");
+      scheduleRetry();
+    };
+    ws.onerror = () => { /* close handler runs the retry */ };
+  }
+
+  function scheduleRetry() {
+    if (state.retry.timer) return;
+    state.retry.attempts++;
+    if (state.retry.attempts > state.retry.max) {
+      setConn("disconnected", /*final=*/true);
+      return;
+    }
+    setConn("disconnected");
+    state.retry.timer = setTimeout(() => {
+      state.retry.timer = null;
+      connect();
+    }, 5000);                                    // 5s × 12 = 60s window
+  }
+
+  function setConn(label, final) {
+    state.conn = label;
+    const $c = document.querySelector('[data-hook="conn"]');
+    $c.classList.remove("live", "connecting", "disconnected");
+    $c.classList.add(label);
+    document.querySelector('[data-hook="conn-label"]').textContent =
+      label === "live" ? "live" :
+      label === "connecting" ? "connecting…" :
+      final ? "disconnected — restart iTerm2" : "disconnected";
+    document.body.classList.toggle("disconnected", label === "disconnected");
+  }
+
+  // ---- Frame reducer ------------------------------------------------------
+  function handleFrame(f) {
+    switch (f.type) {
+      case "snapshot":
+        state.sessions = new Map();
+        for (const s of f.sessions || []) state.sessions.set(s.issue_id, s);
+        render();
+        break;
+      case "session_added":
+      case "session_updated":
+        if (f.session && f.session.issue_id) {
+          state.sessions.set(f.session.issue_id, f.session);
+          renderRow(f.session.issue_id);
+        }
+        break;
+      case "session_removed":
+        if (f.issue_id) {
+          state.sessions.delete(f.issue_id);
+          const node = state.rows.get(f.issue_id);
+          if (node) { node.remove(); state.rows.delete(f.issue_id); }
+          updateEmpty();
+        }
+        break;
+      case "error":
+        toast(f.code || "error", f.message || "(no message)", f.issue_id);
+        break;
+    }
+  }
+
+  // ---- Render -------------------------------------------------------------
+  const $list = document.querySelector('[data-hook="list"]');
+  const $empty = document.querySelector('[data-hook="empty"]');
+
+  function visibleSessions() {
+    const all = [...state.sessions.values()];
+    const filtered = all.filter((s) => {
+      switch (state.filter) {
+        case "all": return true;
+        case "running": return s.state === "running";
+        case "needs-me": return s.state === "waiting_user" || s.state === "waiting_review";
+        case "idle": return s.state === "idle";
+        case "exited": return s.state === "exited";
+      }
+      return true;
+    });
+    filtered.sort(comparator(state.sort));
+    return filtered;
+  }
+
+  function comparator(kind) {
+    switch (kind) {
+      case "id": return (a, b) => idKey(a.issue_id).localeCompare(idKey(b.issue_id), undefined, { numeric: true });
+      case "started": return (a, b) => (parseTs(b.started_at) || 0) - (parseTs(a.started_at) || 0);
+      case "needs-me": return (a, b) => {
+        const aw = needsMe(a) ? 0 : 1, bw = needsMe(b) ? 0 : 1;
+        if (aw !== bw) return aw - bw;
+        return (parseTs(b.last_activity) || 0) - (parseTs(a.last_activity) || 0);
+      };
+      case "activity":
+      default: return (a, b) => (parseTs(b.last_activity) || 0) - (parseTs(a.last_activity) || 0);
+    }
+  }
+  function needsMe(s) { return s.state === "waiting_user" || s.state === "waiting_review"; }
+  function idKey(id) { return String(id || ""); }
+  function parseTs(iso) { if (!iso) return 0; const d = Date.parse(iso); return isNaN(d) ? 0 : d; }
+
+  function render() {
+    const list = visibleSessions();
+    const seen = new Set();
+    let prev = null;
+    for (const s of list) {
+      seen.add(s.issue_id);
+      let node = state.rows.get(s.issue_id);
+      if (!node) {
+        node = createRow(s.issue_id);
+        state.rows.set(s.issue_id, node);
+      }
+      patchRow(node, s);
+      // Insert in sorted order. If already in correct position, no-op.
+      const target = prev ? prev.nextSibling : $list.firstChild;
+      if (node !== target) $list.insertBefore(node, target);
+      prev = node;
+    }
+    // Remove rows whose sessions are gone or filtered out.
+    for (const [id, node] of state.rows) {
+      if (!seen.has(id)) { node.remove(); state.rows.delete(id); }
+    }
+    updateEmpty();
+  }
+
+  function renderRow(issueId) {
+    // Single-session update: re-render only if filter still admits it.
+    const s = state.sessions.get(issueId);
+    if (!s) return;
+    let node = state.rows.get(issueId);
+    if (!visibleSessions().some((x) => x.issue_id === issueId)) {
+      if (node) { node.remove(); state.rows.delete(issueId); updateEmpty(); }
+      return;
+    }
+    if (!node) {
+      // First time visible — fall through to full render so sort order is correct.
+      render();
+      return;
+    }
+    patchRow(node, s);
+    // Re-sort: cheap because the list is small. Only reorder if needed.
+    render();
+  }
+
+  function updateEmpty() {
+    const visible = state.sessions.size > 0 && visibleSessions().length > 0;
+    $empty.style.display = visible ? "none" : "";
+  }
+
+  function createRow(issueId) {
+    const node = document.createElement("article");
+    node.className = "row";
+    node.dataset.issueId = issueId;
+    node.innerHTML = `
+      <span class="badge" data-hook="badge">●</span>
+      <div class="head">
+        <span class="id" data-hook="id"></span>
+        <span class="state" data-hook="state"></span>
+        <span class="activity" data-hook="activity"></span>
+        <span class="workdir" data-hook="workdir"></span>
+      </div>
+      <div class="meta">
+        <span class="agent" data-hook="agent"></span>
+        <span class="model" data-hook="model"></span>
+        <span class="ctx" data-hook="ctx"></span>
+      </div>
+      <pre class="tail" data-hook="tail"></pre>
+      <div class="controls">
+        <form class="send" data-hook="send-form">
+          <input type="text" data-hook="send-input"
+            placeholder="send to pane (Enter to submit)"
+            autocomplete="off" spellcheck="false">
+          <button type="submit" title="send">⏎</button>
+        </form>
+        <button class="action danger" data-hook="quit">/quit</button>
+        <button class="action" data-hook="close">close pane</button>
+        <button class="action" data-hook="reveal" title="reveal pane in iTerm">↗</button>
+      </div>
+    `;
+    // Wire controls — delegated would also work; per-row is fine at N<50.
+    node.querySelector('[data-hook="send-form"]').addEventListener("submit", (e) => {
+      e.preventDefault();
+      const input = node.querySelector('[data-hook="send-input"]');
+      const text = input.value;
+      if (!text) return;
+      send({ type: "send", issue_id: issueId, text });
+      input.value = "";
+    });
+    node.querySelector('[data-hook="quit"]').addEventListener("click", () => {
+      if (confirm(`This will end the agent session for ${issueId}. Continue?`)) {
+        send({ type: "quit", issue_id: issueId });
+      }
+    });
+    node.querySelector('[data-hook="close"]').addEventListener("click", () => {
+      send({ type: "close_pane", issue_id: issueId });
+    });
+    node.querySelector('[data-hook="reveal"]').addEventListener("click", () => {
+      send({ type: "reveal", issue_id: issueId });
+    });
+    return node;
+  }
+
+  function patchRow(node, s) {
+    node.classList.toggle("exited", s.state === "exited");
+    node.classList.toggle("stale", !!s.stale);
+    const $b = node.querySelector('[data-hook="badge"]');
+    $b.className = "badge " + (s.state || "idle");
+    $b.textContent = s.state === "running" ? "●"
+      : (s.state === "waiting_user" || s.state === "waiting_review") ? "⏸"
+      : s.state === "exited" ? "✕"
+      : "◯";
+    setText(node, "id", s.issue_id);
+    setText(node, "state", (s.state || "").replace(/_/g, " "));
+    setText(node, "activity", relativeTime(s.last_activity));
+    setText(node, "workdir", s.workdir || "");
+    setText(node, "agent", s.agent_id || "");
+    setText(node, "model", s.model || "");
+    const $ctx = node.querySelector('[data-hook="ctx"]');
+    if (typeof s.context_pct === "number") {
+      $ctx.textContent = `ctx ${s.context_pct}%`;
+      $ctx.dataset.low = String(s.context_pct >= 80);
+    } else {
+      $ctx.textContent = "ctx —";
+      $ctx.dataset.low = "false";
+    }
+    setText(node, "tail", s.last_capture || "");
+  }
+
+  function setText(node, hook, txt) {
+    const el = node.querySelector(`[data-hook="${hook}"]`);
+    if (el && el.textContent !== txt) el.textContent = txt;
+  }
+
+  function relativeTime(iso) {
+    if (!iso) return "";
+    const t = Date.parse(iso);
+    if (isNaN(t)) return "";
+    const s = Math.max(0, Math.round((Date.now() - t) / 1000));
+    if (s < 5) return "just now";
+    if (s < 60) return `${s}s ago`;
+    if (s < 3600) return `${Math.floor(s / 60)}m ago`;
+    if (s < 86400) return `${Math.floor(s / 3600)}h ago`;
+    return `${Math.floor(s / 86400)}d ago`;
+  }
+
+  // ---- send + toasts ------------------------------------------------------
+  function send(frame) {
+    if (!ws || ws.readyState !== WebSocket.OPEN) {
+      toast("offline", "Not connected to daemon — request dropped.");
+      return;
+    }
+    ws.send(JSON.stringify(frame));
+  }
+
+  const $toasts = document.querySelector('[data-hook="toasts"]');
+  function toast(code, message, issueId) {
+    const node = document.createElement("div");
+    node.className = "toast";
+    node.innerHTML = `<span class="code">${escapeHtml(code)}</span>${escapeHtml(message)}${issueId ? ` <span style="color:var(--fg-faint)">(${escapeHtml(issueId)})</span>` : ""}`;
+    $toasts.appendChild(node);
+    setTimeout(() => node.remove(), 6000);
+  }
+  function escapeHtml(s) {
+    return String(s).replace(/[&<>"]/g, (c) =>
+      ({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;"}[c]));
+  }
+
+  // ---- toolbar wiring -----------------------------------------------------
+  for (const chip of document.querySelectorAll(".chip")) {
+    chip.addEventListener("click", () => {
+      state.filter = chip.dataset.filter;
+      for (const c of document.querySelectorAll(".chip")) {
+        c.setAttribute("aria-pressed", String(c === chip));
+      }
+      writeHash();
+      render();
+    });
+  }
+  document.querySelector('[data-hook="sort"]').addEventListener("change", (e) => {
+    state.sort = e.target.value;
+    writeHash();
+    render();
+  });
+
+  // Repaint relative timestamps every 5s so "just now" doesn't lie forever.
+  setInterval(() => {
+    for (const [id, node] of state.rows) {
+      const s = state.sessions.get(id);
+      if (s) setText(node, "activity", relativeTime(s.last_activity));
+    }
+  }, 5000);
+
+  // ---- go ----------------------------------------------------------------
+  connect();
+  </script>
+</body>
+</html>

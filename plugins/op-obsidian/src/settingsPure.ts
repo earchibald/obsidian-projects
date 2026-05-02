@@ -78,6 +78,25 @@ export interface DeveloperSettings {
   showDevCommands: boolean;
 }
 
+export type DashboardTarget = "iterm-browser-tab" | "system-browser";
+
+export const DASHBOARD_PORT_MIN = 1024;
+export const DASHBOARD_PORT_MAX = 65535;
+export const DASHBOARD_PORT_DEFAULT = 49217;
+
+export interface DashboardSettings {
+  // Port the OP-230 daemon binds on `127.0.0.1`. Default 49217 (per the
+  // OP-217 product spec). OP-235 surfaces the numeric input that writes
+  // here; this issue (OP-232) only reads it when building the dashboard URL.
+  port: number;
+  // Where `op-dashboard` opens the URL. Default `iterm-browser-tab` so users
+  // get the dashboard inside the same iTerm window they already have open
+  // for terminal work; `system-browser` is the documented fallback when the
+  // iTerm browser plugin isn't installed or the iTerm WS API rejects the
+  // browser-profile-property override.
+  target: DashboardTarget;
+}
+
 export interface FlowSettings {
   // When true, the SessionEnd hook auto-launches the next stage per the
   // flowOrchestrator transition matrix. Default false so the v1 ship doesn't
@@ -92,6 +111,26 @@ export interface FlowSettings {
 }
 
 export const FLOW_HEADLESS_TIMEOUT_DEFAULT_MS = 10 * 60 * 1000;
+export const SESSION_DECORATION_INTER_COMMAND_DEFAULT_MS = 300;
+export const CLAUDE_SESSION_COLORS = [
+  "red",
+  "blue",
+  "green",
+  "yellow",
+  "purple",
+  "orange",
+  "pink",
+  "cyan",
+] as const;
+
+export interface SessionDecorationSettings {
+  autoColor: boolean;
+  autoRename: boolean;
+  autoRemoteControl: boolean;
+  palette: string[];
+  nameTemplate: string;
+  interCommandDelayMs: number;
+}
 
 export interface OpSettings {
   defaultAgent: AgentId;
@@ -119,7 +158,18 @@ export interface OpSettings {
   agents: AgentsSettings;
   developer: DeveloperSettings;
   flow: FlowSettings;
+  sessionDecoration: SessionDecorationSettings;
+  /** OP-232: dashboard URL build settings. OP-235 will land the Settings UI
+   *  subsection that surfaces these to the user; OP-232 only consumes them
+   *  in the `op-dashboard` palette command + URI handler. */
+  dashboard: DashboardSettings;
   orchestrator: OrchestratorSettings;
+  /** OP-249: one-shot compatibility bit for the retreat back to legacy iTerm
+   *  `tmux -CC` launches. Older data.json files lack this key; if they also
+   *  had `orchestrator.enabled=true`, `mergeSettings` flips them back to
+   *  legacy once. After the bit is present, explicit user opt-ins are
+   *  preserved across reloads. */
+  legacyITermMigrationCompleted: boolean;
   orchestratorState: RegistryData;
   // User-curated display order for project pickers, by slug. Slugs not in this
   // list (e.g. newly-discovered projects) sort lexically at the tail. Empty
@@ -207,12 +257,25 @@ export const DEFAULT_SETTINGS: OpSettings = {
     autoMerge: false,
     headlessTimeoutMs: FLOW_HEADLESS_TIMEOUT_DEFAULT_MS,
   },
+  sessionDecoration: {
+    autoColor: true,
+    autoRename: true,
+    autoRemoteControl: false,
+    palette: [...CLAUDE_SESSION_COLORS],
+    nameTemplate: "{{id}} {{title}}",
+    interCommandDelayMs: SESSION_DECORATION_INTER_COMMAND_DEFAULT_MS,
+  },
+  dashboard: {
+    port: DASHBOARD_PORT_DEFAULT,
+    target: "iterm-browser-tab",
+  },
   orchestrator: {
     enabled: false,
     maxRows: 3,
     maxCols: 3,
     preferred: "2x3",
   },
+  legacyITermMigrationCompleted: true,
   orchestratorState: emptyRegistry(),
   projectOrder: [],
   recent: [],
@@ -224,11 +287,28 @@ export const DEFAULT_SETTINGS: OpSettings = {
 
 const SIDEBAR_TABS: ReadonlySet<SidebarTab> = new Set(["issues", "in-flight", "resolved"]);
 const SIDEBAR_DENSITIES: ReadonlySet<SidebarDensity> = new Set(["comfortable", "compact"]);
+const KNOWN_SESSION_COLOR_SET: ReadonlySet<string> = new Set(CLAUDE_SESSION_COLORS);
+
+export function sanitizeSessionDecorationPalette(colors: readonly string[]): string[] {
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const raw of colors) {
+    if (typeof raw !== "string") continue;
+    const normalized = raw.trim().toLowerCase();
+    if (!normalized || seen.has(normalized) || !KNOWN_SESSION_COLOR_SET.has(normalized)) continue;
+    seen.add(normalized);
+    out.push(normalized);
+  }
+  return out;
+}
 
 export function mergeSettings(loaded: unknown): OpSettings {
   const base: OpSettings = JSON.parse(JSON.stringify(DEFAULT_SETTINGS));
   if (!loaded || typeof loaded !== "object") return base;
   const l = loaded as Partial<OpSettings>;
+  const hasLegacyITermMigrationCompleted =
+    typeof (l as { legacyITermMigrationCompleted?: unknown }).legacyITermMigrationCompleted ===
+    "boolean";
   if (l.defaultAgent && AGENT_IDS.includes(l.defaultAgent as AgentId)) {
     base.defaultAgent = l.defaultAgent as AgentId;
   }
@@ -303,6 +383,13 @@ export function mergeSettings(loaded: unknown): OpSettings {
       base.orchestrator.preferred = o.preferred as LayoutId;
     }
   }
+  if (hasLegacyITermMigrationCompleted) {
+    base.legacyITermMigrationCompleted = (
+      l as { legacyITermMigrationCompleted: boolean }
+    ).legacyITermMigrationCompleted;
+  } else if (base.orchestrator.enabled) {
+    base.orchestrator.enabled = false;
+  }
   base.orchestratorState = mergeRegistry((l as { orchestratorState?: unknown }).orchestratorState);
   if (l.github && typeof l.github === "object") {
     const g = l.github as Partial<GithubSettings>;
@@ -344,6 +431,42 @@ export function mergeSettings(loaded: unknown): OpSettings {
     if (typeof f.autoMerge === "boolean") base.flow.autoMerge = f.autoMerge;
     if (typeof f.headlessTimeoutMs === "number" && f.headlessTimeoutMs > 0) {
       base.flow.headlessTimeoutMs = Math.floor(f.headlessTimeoutMs);
+    }
+  }
+  if (l.sessionDecoration && typeof l.sessionDecoration === "object" && !Array.isArray(l.sessionDecoration)) {
+    const d = l.sessionDecoration as Partial<SessionDecorationSettings>;
+    if (typeof d.autoColor === "boolean") base.sessionDecoration.autoColor = d.autoColor;
+    if (typeof d.autoRename === "boolean") base.sessionDecoration.autoRename = d.autoRename;
+    if (typeof d.autoRemoteControl === "boolean") {
+      base.sessionDecoration.autoRemoteControl = d.autoRemoteControl;
+    }
+    if (Array.isArray(d.palette)) {
+      const sanitized = sanitizeSessionDecorationPalette(d.palette);
+      if (sanitized.length > 0) base.sessionDecoration.palette = sanitized;
+    }
+    if (typeof d.nameTemplate === "string" && d.nameTemplate.trim().length > 0) {
+      base.sessionDecoration.nameTemplate = d.nameTemplate;
+    }
+    if (
+      typeof d.interCommandDelayMs === "number" &&
+      Number.isFinite(d.interCommandDelayMs) &&
+      d.interCommandDelayMs >= 0
+    ) {
+      base.sessionDecoration.interCommandDelayMs = Math.floor(d.interCommandDelayMs);
+    }
+  }
+  if (l.dashboard && typeof l.dashboard === "object") {
+    const d = l.dashboard as Partial<DashboardSettings>;
+    if (
+      typeof d.port === "number" &&
+      Number.isFinite(d.port) &&
+      d.port >= DASHBOARD_PORT_MIN &&
+      d.port <= DASHBOARD_PORT_MAX
+    ) {
+      base.dashboard.port = Math.floor(d.port);
+    }
+    if (d.target === "iterm-browser-tab" || d.target === "system-browser") {
+      base.dashboard.target = d.target;
     }
   }
   if (typeof l.workflowMode === "string" && WORKFLOW_MODES.has(l.workflowMode as WorkflowMode)) {
