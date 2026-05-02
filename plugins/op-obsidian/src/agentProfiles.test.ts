@@ -2,10 +2,12 @@ import { describe, it, expect } from "vitest";
 import {
   AGENT_IDS,
   BASE_PROFILES,
+  asAgentId,
   isAgentLaunchMode,
   launchFlagsFor,
   mergeProfile,
   normalizeMode,
+  preferredLaunchAgentOverride,
   promptPreambleFor,
   type AgentLaunchMode,
 } from "./agentProfiles";
@@ -38,6 +40,49 @@ describe("normalizeMode", () => {
     for (const m of ["evaluate", "plan", "implement", "review", "finalize"] as const) {
       expect(normalizeMode(m)).toBe(m);
     }
+  });
+});
+
+describe("asAgentId", () => {
+  it("returns a known agent id unchanged", () => {
+    expect(asAgentId("claude")).toBe("claude");
+    expect(asAgentId("gemini")).toBe("gemini");
+    expect(asAgentId("copilot")).toBe("copilot");
+  });
+
+  it("returns undefined for unknown or missing values", () => {
+    expect(asAgentId("bogus")).toBeUndefined();
+    expect(asAgentId("")).toBeUndefined();
+    expect(asAgentId(undefined)).toBeUndefined();
+    expect(asAgentId(null)).toBeUndefined();
+  });
+});
+
+describe("preferredLaunchAgentOverride", () => {
+  it("keeps an explicit override ahead of any stored issue agent", () => {
+    expect(
+      preferredLaunchAgentOverride({
+        agentOverride: "gemini",
+        issueAgent: "copilot",
+      }),
+    ).toBe("gemini");
+  });
+
+  it("reuses the stored issue agent for normal launches", () => {
+    expect(preferredLaunchAgentOverride({ issueAgent: "copilot" })).toBe("copilot");
+  });
+
+  it("suppresses stored issue agents when force-pick is requested", () => {
+    expect(
+      preferredLaunchAgentOverride({
+        issueAgent: "copilot",
+        forcePick: true,
+      }),
+    ).toBeUndefined();
+  });
+
+  it("ignores unknown stored agent values", () => {
+    expect(preferredLaunchAgentOverride({ issueAgent: "bogus" })).toBeUndefined();
   });
 });
 

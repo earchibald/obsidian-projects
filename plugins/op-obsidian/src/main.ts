@@ -1,4 +1,4 @@
-import { Notice, Plugin, TFile, WorkspaceLeaf, type Editor, type MarkdownView } from "obsidian";
+import { Notice, Plugin, TFile, WorkspaceLeaf, parseYaml, type Editor, type MarkdownView } from "obsidian";
 import { OP_SIDEBAR_VIEW_TYPE, OpSidebarView } from "./sidebarView";
 import { revealAgentSession } from "./revealAgentSession";
 import { findAgentTmuxLocation } from "./agentTmuxLocation";
@@ -111,7 +111,14 @@ import { summarizeListVarsPayload } from "./listVarsPure";
 import type { IssueEntry, LifecycleEvent } from "./types";
 import { DEFAULT_SETTINGS, mergeSettings, OpSettingsTab, type OpSettings } from "./settings";
 import { AgentDetector } from "./agentDetect";
-import { AGENT_IDS, isAgentLaunchMode, type AgentId, type AgentLaunchMode } from "./agentProfiles";
+import {
+  AGENT_IDS,
+  asAgentId,
+  isAgentLaunchMode,
+  preferredLaunchAgentOverride,
+  type AgentId,
+  type AgentLaunchMode,
+} from "./agentProfiles";
 import { openAgent, clearAgentOnIssue, resolveProfile } from "./openAgent";
 import { readLaunchVarsFromFrontmatter } from "./varOverridePanelPure";
 import { openLaunchAgentModal } from "./launchAgentModal";
@@ -4114,7 +4121,16 @@ export default class OpPlugin extends Plugin {
       // user can both pick the agent AND set Workflow-variable overrides at
       // the same time. Silent default-agent launches skip the modal — no
       // regression for the zero-friction happy path.
-      let effectiveAgentOverride = opts.agentOverride;
+      // Re-read the note's frontmatter on disk instead of trusting the store
+      // snapshot — issueStore updates are async, and `op-open-agent` can fire
+      // in the gap right after a chip/sidebar action writes `agent:`.
+      const storedIssueAgent = asAgentId(entry.agent);
+      const liveIssueAgent = await readIssueAgentOverride(this.app, entry.path);
+      let effectiveAgentOverride = preferredLaunchAgentOverride({
+        agentOverride: opts.agentOverride,
+        issueAgent: liveIssueAgent ?? entry.agent,
+        forcePick: opts.forcePick,
+      });
       let effectiveLaunchVars = opts.launchVars;
       if (opts.forcePick) {
         const detection = this.detector.get() ?? (await this.detector.refresh());
@@ -4130,7 +4146,8 @@ export default class OpPlugin extends Plugin {
         const result = await openLaunchAgentModal(this.app, {
           project: entry.project,
           installed,
-          defaultAgent: this.settings.defaultAgent,
+          defaultAgent:
+            opts.agentOverride ?? liveIssueAgent ?? storedIssueAgent ?? this.settings.defaultAgent,
           settings: this.settings,
           initialLaunchVars: carried,
           saveSettings: () => this.saveSettings(),
@@ -4139,6 +4156,16 @@ export default class OpPlugin extends Plugin {
         effectiveAgentOverride = result.agentId;
         effectiveLaunchVars = result.launchVars;
       }
+      console.info("[op-obsidian] op-open-agent request", {
+        issueId: entry.id,
+        mode: opts.mode ?? "work",
+        forcePick: !!opts.forcePick,
+        liveIssueAgent: liveIssueAgent ?? null,
+        storedIssueAgent: storedIssueAgent ?? null,
+        requestedOverride: opts.agentOverride ?? null,
+        effectiveOverride: effectiveAgentOverride ?? null,
+        launchVarCount: Object.keys(effectiveLaunchVars ?? {}).length,
+      });
       const res = await openAgent(
         this.app,
         this.store,
@@ -4722,6 +4749,32 @@ function defaultBinaryFor(id: AgentId): string {
   }
 }
 
+async function readIssueAgentOverride(app: Plugin["app"], path: string): Promise<AgentId | undefined> {
+  const file = app.vault.getAbstractFileByPath(path);
+  if (!(file instanceof TFile)) return undefined;
+  const cached = asAgentId(app.metadataCache.getFileCache(file)?.frontmatter?.agent as string | undefined);
+  try {
+    const raw = await app.vault.read(file);
+    return parseIssueAgentFromText(raw) ?? cached;
+  } catch (err) {
+    console.warn("[op-obsidian] failed to read live issue agent", { path, err });
+    return cached;
+  }
+}
+
+function parseIssueAgentFromText(raw: string): AgentId | undefined {
+  const match = raw.match(/^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/);
+  if (!match) return undefined;
+  try {
+    const parsed = parseYaml(match[1]);
+    if (!parsed || typeof parsed !== "object") return undefined;
+    return asAgentId((parsed as Record<string, unknown>).agent as string | undefined);
+  } catch (err) {
+    console.warn("[op-obsidian] failed to parse issue frontmatter", err);
+    return undefined;
+  }
+}
+
 function buildGithubBody(id: string, input: CreateIssueInput): string {
   const lines = [`Tracked as op issue **${id}**.`, ""];
   if (input.scopeBody && input.scopeBody.trim().length > 0) {
@@ -4754,4 +4807,3 @@ function resolveScopeParams(
     ? { scope: parsed.bullets }
     : { scopeBody: parsed.body };
 }
-
