@@ -4,6 +4,22 @@ export type AgentId = "claude" | "gemini" | "copilot";
 
 export const AGENT_IDS: AgentId[] = ["claude", "gemini", "copilot"];
 
+export function asAgentId(value: string | null | undefined): AgentId | undefined {
+  return typeof value === "string" && AGENT_IDS.includes(value as AgentId)
+    ? (value as AgentId)
+    : undefined;
+}
+
+export function preferredLaunchAgentOverride(opts: {
+  agentOverride?: AgentId;
+  issueAgent?: string;
+  forcePick?: boolean;
+}): AgentId | undefined {
+  if (opts.agentOverride) return opts.agentOverride;
+  if (opts.forcePick) return undefined;
+  return asAgentId(opts.issueAgent);
+}
+
 const DEFAULT_PREAMBLE =
   "You were launched to work on an Obsidian Projects issue that was delegated to you. Create an isolated git worktree before making any changes. Never edit the main checkout — the agent that delegated this issue may still hold it open, and any edit there risks branch, build, or vault-sync conflicts. If a PreToolUse guard blocks an edit, create the worktree. Do not bypass the gate with `OP_ALLOW_MAIN_EDIT=1`.";
 

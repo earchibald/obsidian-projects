@@ -5,6 +5,7 @@ import type { IssueEntry } from "./types";
 import type { OpSettings } from "./settings";
 import {
   AGENT_IDS,
+  asAgentId,
   type AgentId,
   type AgentLaunchMode,
   type AgentProfile,
@@ -107,6 +108,13 @@ export interface OpenAgentResult {
   tmuxWindow: string;
 }
 
+type AgentSelectionSource = "override" | "workflow" | "default" | "single-installed" | "picker";
+
+interface AgentSelection {
+  agentId: AgentId;
+  source: AgentSelectionSource;
+}
+
 /**
  * Launch an agent session for `args.entry`.
  *
@@ -178,8 +186,22 @@ export async function openAgent(
     throw err;
   }
 
-  const agentId = resolved?.agent ?? (await pickAgent(app, settings, detection, args));
-  if (!agentId) return undefined;
+  const selection = resolved?.agent
+    ? { agentId: resolved.agent, source: "workflow" as const }
+    : await pickAgent(app, settings, detection, args);
+  if (!selection) return undefined;
+  const agentId = selection.agentId;
+  console.info("[op-obsidian] openAgent selection", {
+    issueId: args.entry.id,
+    mode,
+    selectedAgent: agentId,
+    source: selection.source,
+    requestedOverride: args.agentOverride ?? null,
+    storedIssueAgent: asAgentId(args.entry.agent) ?? null,
+    workflowAgent: resolved?.agent ?? null,
+    defaultAgent: settings.defaultAgent,
+    forcePick: !!args.forcePick,
+  });
 
   const profile = resolveProfile(settings, agentId);
 
@@ -434,8 +456,8 @@ async function pickAgent(
   settings: OpSettings,
   detection: ReturnType<AgentDetector["get"]> | Awaited<ReturnType<AgentDetector["refresh"]>>,
   args: OpenAgentArgs,
-): Promise<AgentId | undefined> {
-  if (args.agentOverride) return args.agentOverride;
+): Promise<AgentSelection | undefined> {
+  if (args.agentOverride) return { agentId: args.agentOverride, source: "override" };
 
   const installed = AGENT_IDS.filter((id) => detection?.[id]?.installed);
   if (installed.length === 0) {
@@ -446,11 +468,20 @@ async function pickAgent(
   const mustPick = args.forcePick || settings.alwaysPick;
   const defaultId = settings.defaultAgent;
 
-  if (!mustPick && installed.includes(defaultId)) return defaultId;
-  if (!mustPick && installed.length === 1) return installed[0];
+  if (!mustPick && installed.includes(defaultId)) {
+    return { agentId: defaultId, source: "default" };
+  }
+  if (!mustPick && installed.length === 1) {
+    return { agentId: installed[0], source: "single-installed" };
+  }
 
   return new Promise((resolve) => {
-    new AgentPickerModal(app, installed, defaultId, (id) => resolve(id)).open();
+    new AgentPickerModal(
+      app,
+      installed,
+      defaultId,
+      (id) => resolve(id ? { agentId: id, source: "picker" } : undefined),
+    ).open();
   });
 }
 
