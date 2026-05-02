@@ -52,7 +52,7 @@ export const SIDEBAR_SEARCH_HELP = [
 const TABS: Array<{ id: TabId; label: string }> = [
   { id: "issues", label: "Issues" },
   { id: "in-flight", label: "In flight" },
-  { id: "resolved", label: "Recently resolved" },
+  { id: "resolved", label: "Resolved" },
 ];
 
 const RELEVANT: ReadonlySet<LifecycleEvent["kind"]> = new Set([
@@ -322,6 +322,10 @@ export class OpSidebarView extends ItemView {
     this.contentEl.toggleClass("op-sidebar--density-comfortable", density !== "compact");
 
     const issues = filterEntries(this.pickFor(this.active), this.filterQuery);
+    const showResolvedTruncation =
+      this.active === "resolved" &&
+      !hasSearchQuery(this.filterQuery) &&
+      countResolvedIssues(this.store.issues()) > issues.length;
     // Preserve selection identity across re-renders by id. Without this, a new
     // issue that sorts before the current selection (e.g. OP-001 arriving
     // while OP-100 is highlighted at index 0) silently shifts the highlight
@@ -487,6 +491,12 @@ export class OpSidebarView extends ItemView {
         }
       }
     }
+    if (showResolvedTruncation) {
+      this.bodyEl.createDiv({
+        cls: "op-sidebar__hint",
+        text: resolvedTruncationHint(this.getSettings().recentResolvedLimit),
+      });
+    }
   }
 
   private renderHeader(): void {
@@ -546,6 +556,7 @@ export class OpSidebarView extends ItemView {
     return pickIssuesForTab(this.store.issues(), tab, {
       liveTmuxWindows: this.liveTmuxWindows,
       recentResolvedLimit: this.getSettings().recentResolvedLimit,
+      includeAllResolved: tab === "resolved" && hasSearchQuery(this.filterQuery),
     });
   }
 
@@ -1006,13 +1017,14 @@ function isResolved(e: IssueEntry): boolean {
  *  - `in-flight`  → in-progress / blocked AND any resolved-with-agent row whose
  *                   tmux window is still live (per OP-156 §5). Unknown-tmux
  *                   (`undefined`/`null`) does not hide rows — same rule as
- *                   {@link OpSidebarView.isAgentBadgeStale}.
- *                   The folder-resolved check runs BEFORE the status check so a
- *                   row that lives in `RESOLVED ISSUES/` but still carries a
+ *                   {@link OpSidebarView.isAgentBadgeStale}. The
+ *                   folder-resolved check runs BEFORE the status check so a row
+ *                   that lives in `RESOLVED ISSUES/` but still carries a
  *                   non-terminal `status:` (data drift like OP-197) is treated
  *                   as resolved — the folder is the source of truth here.
- *  - `resolved`   → resolved/wontfix, sorted by resolved-date desc, sliced to
- *                   `opts.recentResolvedLimit`.
+ *  - `resolved`   → resolved/wontfix, sorted by resolved-date desc. The
+ *                   default view is sliced to `opts.recentResolvedLimit`;
+ *                   `includeAllResolved` lets the search path see the full set.
  */
 export function pickIssuesForTab(
   issues: ReadonlyArray<IssueEntry>,
@@ -1020,6 +1032,7 @@ export function pickIssuesForTab(
   opts: {
     liveTmuxWindows: Set<string> | null | undefined;
     recentResolvedLimit: number;
+    includeAllResolved?: boolean;
   },
 ): IssueEntry[] {
   if (tab === "in-flight") {
@@ -1037,12 +1050,31 @@ export function pickIssuesForTab(
       .sort(byId);
   }
   if (tab === "resolved") {
-    return issues
-      .filter((e) => isResolved(e))
-      .sort(byResolvedDesc)
-      .slice(0, opts.recentResolvedLimit);
+    const resolved = listResolvedIssues(issues);
+    return opts.includeAllResolved ? resolved : resolved.slice(0, opts.recentResolvedLimit);
   }
   return issues.filter((e) => !isResolved(e)).sort(byId);
+}
+
+function hasSearchQuery(query: string): boolean {
+  return query.trim().length > 0;
+}
+
+function countResolvedIssues(issues: ReadonlyArray<IssueEntry>): number {
+  let count = 0;
+  for (const issue of issues) {
+    if (isResolved(issue)) count++;
+  }
+  return count;
+}
+
+function listResolvedIssues(issues: ReadonlyArray<IssueEntry>): IssueEntry[] {
+  return issues.filter((e) => isResolved(e)).sort(byResolvedDesc);
+}
+
+function resolvedTruncationHint(limit: number): string {
+  const noun = limit === 1 ? "issue" : "issues";
+  return `Showing the ${limit} most recently resolved ${noun}. Search to see all resolved results.`;
 }
 
 function byId(a: IssueEntry, b: IssueEntry): number {
