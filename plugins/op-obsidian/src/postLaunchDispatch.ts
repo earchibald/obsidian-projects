@@ -13,7 +13,8 @@ export interface DispatchPostLaunchArgs {
   tmuxSession: string;
   tmuxWindow: string;
   commands: string[];
-  readinessRegex?: RegExp;
+  readinessRegex: RegExp;
+  readinessRegex: RegExp;
   readinessTimeoutMs?: number;
   pollIntervalMs?: number;
   interCommandDelayMs?: number;
@@ -30,25 +31,23 @@ export async function dispatchPostLaunch(args: DispatchPostLaunchArgs): Promise<
   const interCommandDelayMs = args.interCommandDelayMs ?? 300;
 
   let readinessHit = false;
-  if (args.readinessRegex) {
-    const deadline = Date.now() + readinessTimeoutMs;
-    while (Date.now() <= deadline) {
-      try {
-        const { stdout } = await exec(args.tmuxBinary, ["capture-pane", "-p", "-J", "-t", target]);
-        if (args.readinessRegex.test(stdout)) {
-          readinessHit = true;
-          break;
-        }
-      } catch {
-        // Pane creation races are normal right after launch; keep polling until timeout.
+  const deadline = Date.now() + readinessTimeoutMs;
+  while (Date.now() <= deadline) {
+    try {
+      const { stdout } = await exec(args.tmuxBinary, ["capture-pane", "-p", "-J", "-t", target]);
+      if (args.readinessRegex.test(stdout)) {
+        readinessHit = true;
+        break;
       }
-      if (Date.now() > deadline) break;
-      await sleep(pollIntervalMs);
+    } catch {
+      // Pane creation races are normal right after launch; keep polling until timeout.
     }
+    if (Date.now() > deadline) break;
+    await sleep(pollIntervalMs);
+  }
 
-    if (!readinessHit) {
-      console.warn("[op-obsidian] post-launch readiness timeout — sending commands anyway");
-    }
+  if (!readinessHit) {
+    console.warn("[op-obsidian] post-launch readiness timeout — sending commands anyway");
   }
 
   let sent = 0;

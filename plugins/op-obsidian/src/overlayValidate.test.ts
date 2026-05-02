@@ -19,6 +19,20 @@ describe("validateOverlay", () => {
     expect(r.warnings).toEqual([]);
   });
 
+  it("accepts post-launch command keys and readiness regex", () => {
+    const r = validateOverlay({
+      postLaunchCommands: ["/rename {{name}}"],
+      planPostLaunchCommands: ["/rename {{name}} plan"],
+      postLaunchReadinessRegex: "ready",
+    });
+    expect(r.ok).toBe(true);
+    expect(r.overlay).toEqual({
+      postLaunchCommands: ["/rename {{name}}"],
+      planPostLaunchCommands: ["/rename {{name}} plan"],
+      postLaunchReadinessRegex: "ready",
+    });
+  });
+
   it("rejects non-objects", () => {
     expect(validateOverlay(null).ok).toBe(false);
     expect(validateOverlay([]).ok).toBe(false);
@@ -46,5 +60,6 @@ describe("validateOverlay", () => {
   it("errors when post-launch command arrays are not string arrays", () => {
     expect(validateOverlay({ postLaunchCommands: "x" }).ok).toBe(false);
     expect(validateOverlay({ reviewPostLaunchCommands: [1, 2] }).ok).toBe(false);
+    expect(validateOverlay({ postLaunchCommands: [1, 2] }).ok).toBe(false);
   });
 });

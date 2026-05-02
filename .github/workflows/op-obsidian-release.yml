@@ -72,6 +72,10 @@ jobs:
         working-directory: plugins/op-obsidian
         run: npm run build
 
+      - name: Prepare release bundle
+        if: steps.guard.outputs.skip == 'false'
+        run: node scripts/prepare-op-obsidian-release.mjs
+
       - name: Create and push tag
         if: steps.guard.outputs.skip == 'false'
         env:
@@ -93,4 +97,6 @@ jobs:
             --title "op-obsidian v$VERSION" \
             --generate-notes \
             plugins/op-obsidian/main.js \
-            plugins/op-obsidian/manifest.json
+            plugins/op-obsidian/manifest.json \
+            plugins/op-obsidian/styles.css \
+            plugins/op-obsidian/.release/op-obsidian.zip

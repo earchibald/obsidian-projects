@@ -74,6 +74,21 @@ describe("launchFlagsFor (claude base profile)", () => {
   });
 });
 
+describe("launchFlagsFor (copilot base profile)", () => {
+  const p = BASE_PROFILES.copilot;
+
+  it("uses autopilot + allow-all for implement and work launches", () => {
+    expect(launchFlagsFor(p, "implement")).toEqual(["--autopilot", "--allow-all"]);
+    expect(launchFlagsFor(p, "work")).toEqual(["--autopilot", "--allow-all"]);
+  });
+
+  it("keeps autopilot + allow-all on mode-specific launches too", () => {
+    for (const mode of ["evaluate", "plan", "review", "finalize"] as const) {
+      expect(launchFlagsFor(p, mode)).toEqual(["--autopilot", "--allow-all"]);
+    }
+  });
+});
+
 describe("promptPreambleFor (claude base profile)", () => {
   const p = BASE_PROFILES.claude;
 
@@ -133,29 +148,37 @@ describe("mergeProfile", () => {
   });
   it("overlay post-launch command arrays are copied and readiness regex can be overridden", () => {
     const overlay = {
-      postLaunchCommands: ["/rename {{id}}"],
+      postLaunchCommands: ["/rename {{name}}"],
       postLaunchReadinessRegex: "ready",
     };
-    const merged = mergeProfile("copilot", overlay);
+    const merged = mergeProfile("claude", overlay);
     overlay.postLaunchCommands.push("MUTATED");
-    expect(merged.postLaunchCommands).toEqual(["/rename {{id}}"]);
+    expect(merged.postLaunchCommands).toEqual(["/rename {{name}}"]);
     expect(merged.postLaunchReadinessRegex).toBe("ready");
   });
   it("empty overlay arrays clear the built-in defaults", () => {
-    const merged = mergeProfile("copilot", { postLaunchCommands: [] });
+    const merged = mergeProfile("claude", { postLaunchCommands: [] });
     expect(merged.postLaunchCommands).toEqual([]);
   });
 });
 
 describe("postLaunchCommandsFor", () => {
   it("returns the mode-specific command list", () => {
-    expect(postLaunchCommandsFor(BASE_PROFILES.copilot, "plan")).toEqual(
-      BASE_PROFILES.copilot.planPostLaunchCommands,
+    expect(postLaunchCommandsFor(BASE_PROFILES.claude, "plan")).toEqual(
+      BASE_PROFILES.claude.planPostLaunchCommands,
     );
   });
   it("work and implement share the base command list", () => {
-    expect(postLaunchCommandsFor(BASE_PROFILES.copilot, "work")).toEqual(
-      postLaunchCommandsFor(BASE_PROFILES.copilot, "implement"),
+    expect(postLaunchCommandsFor(BASE_PROFILES.claude, "work")).toEqual(
+      postLaunchCommandsFor(BASE_PROFILES.claude, "implement"),
+    );
+  });
+  it("copilot uses the same rename command in plan and implement modes", () => {
+    expect(postLaunchCommandsFor(BASE_PROFILES.copilot, "plan")).toEqual(
+      BASE_PROFILES.copilot.planPostLaunchCommands,
+    );
+    expect(postLaunchCommandsFor(BASE_PROFILES.copilot, "implement")).toEqual(
+      ["/rename {{id}} {{title}}"],
     );
   });
 });
@@ -174,10 +197,10 @@ describe("BASE_PROFILES sanity", () => {
   it("only claude ships custom-agent launch flags out of the box", () => {
     expect(BASE_PROFILES.claude.evaluateLaunchFlags.length).toBeGreaterThan(0);
     expect(BASE_PROFILES.gemini.evaluateLaunchFlags).toEqual([]);
-    expect(BASE_PROFILES.copilot.evaluateLaunchFlags).toEqual([]);
+    expect(BASE_PROFILES.copilot.evaluateLaunchFlags).toEqual(["--autopilot", "--allow-all"]);
   });
-  it("only copilot ships post-launch rename commands out of the box", () => {
-    expect(BASE_PROFILES.claude.postLaunchCommands).toEqual([]);
+  it("claude and copilot ship post-launch commands out of the box", () => {
+    expect(BASE_PROFILES.claude.postLaunchCommands.length).toBeGreaterThan(0);
     expect(BASE_PROFILES.gemini.postLaunchCommands).toEqual([]);
     expect(BASE_PROFILES.copilot.postLaunchCommands).toEqual(["/rename {{id}} {{title}}"]);
     expect(BASE_PROFILES.copilot.postLaunchReadinessRegex).toBe("/ commands\\s+·\\s+\\? help");

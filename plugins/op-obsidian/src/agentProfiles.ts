@@ -105,6 +105,7 @@ const CLAUDE_FINALIZE_LAUNCH_FLAGS = claudeAgentLaunchFlags(
   CLAUDE_FINALIZE_AGENT_NAME,
   CLAUDE_FINALIZE_AGENT_DEFINITION,
 );
+const COPILOT_LAUNCH_FLAGS = ["--autopilot", "--allow-all"];
 
 /**
  * Modes an agent session can launch in. `"work"` is a deprecated alias for
@@ -182,11 +183,13 @@ export interface AgentProfile {
   planPromptPreamble: string;
   reviewPromptPreamble: string;
   finalizePromptPreamble: string;
+  /** Default post-launch commands — also serve as the implement-mode commands. */
   postLaunchCommands: string[];
   evaluatePostLaunchCommands: string[];
   planPostLaunchCommands: string[];
   reviewPostLaunchCommands: string[];
   finalizePostLaunchCommands: string[];
+  /** Regex source polled against tmux capture-pane output before dispatch. */
   postLaunchReadinessRegex?: string;
   skillTrigger: string;
 }
@@ -208,11 +211,12 @@ export const BASE_PROFILES: Readonly<Record<AgentId, AgentProfile>> = Object.fre
     planPromptPreamble: DEFAULT_PLAN_PREAMBLE,
     reviewPromptPreamble: DEFAULT_REVIEW_PREAMBLE,
     finalizePromptPreamble: DEFAULT_FINALIZE_PREAMBLE,
-    postLaunchCommands: [],
-    evaluatePostLaunchCommands: [],
-    planPostLaunchCommands: [],
-    reviewPostLaunchCommands: [],
-    finalizePostLaunchCommands: [],
+    postLaunchCommands: ["/color {{color}}", "/rename {{name}}"],
+    evaluatePostLaunchCommands: ["/color {{color}}", "/rename {{name}}"],
+    planPostLaunchCommands: ["/color {{color}}", "/rename {{name}}"],
+    reviewPostLaunchCommands: ["/color {{color}}", "/rename {{name}}"],
+    finalizePostLaunchCommands: ["/color {{color}}", "/rename {{name}}"],
+    postLaunchReadinessRegex: "\\?\\s+for\\s+shortcuts",
     skillTrigger: "/op:issue {{id}}",
   },
   // Second-class, untested. The dispatch code accepts gemini/copilot but no
@@ -245,11 +249,11 @@ export const BASE_PROFILES: Readonly<Record<AgentId, AgentProfile>> = Object.fre
     id: "copilot",
     label: "Copilot CLI",
     binary: "copilot",
-    launchFlags: [],
-    evaluateLaunchFlags: [],
-    planLaunchFlags: [],
-    reviewLaunchFlags: [],
-    finalizeLaunchFlags: [],
+    launchFlags: [...COPILOT_LAUNCH_FLAGS],
+    evaluateLaunchFlags: [...COPILOT_LAUNCH_FLAGS],
+    planLaunchFlags: [...COPILOT_LAUNCH_FLAGS],
+    reviewLaunchFlags: [...COPILOT_LAUNCH_FLAGS],
+    finalizeLaunchFlags: [...COPILOT_LAUNCH_FLAGS],
     promptPreamble: DEFAULT_PREAMBLE,
     evaluatePromptPreamble: DEFAULT_EVALUATE_PREAMBLE,
     planPromptPreamble: DEFAULT_PLAN_PREAMBLE,

@@ -12,13 +12,13 @@ import { durationForActions, type NoticeAction } from "./actionableNotices";
 const a: NoticeAction = { label: "Open", onClick: () => {} };
 
 describe("durationForActions", () => {
-  it("returns 0 (sticky) when actions are present", () => {
-    expect(durationForActions([a])).toBe(0);
-    expect(durationForActions([a, a])).toBe(0);
+  it("returns 10_000 when actions are present", () => {
+    expect(durationForActions([a])).toBe(10_000);
+    expect(durationForActions([a, a])).toBe(10_000);
   });
 
-  it("returns 5000 when no actions are present", () => {
-    expect(durationForActions([])).toBe(5000);
+  it("returns 10_000 when no actions are present", () => {
+    expect(durationForActions([])).toBe(10_000);
   });
 
   it("honours an explicit duration override", () => {

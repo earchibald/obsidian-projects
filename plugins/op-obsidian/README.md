@@ -20,7 +20,7 @@ The plugin is the typed, in-vault half of the [`op` workflow](../op/). The paire
 2. `BRAT → Add Beta Plugin with frozen version` → `https://github.com/earchibald/obsidian-projects` → pick the latest `op-obsidian-v*` tag.
 3. Enable **Obsidian Projects (op)** under `Settings → Community plugins`.
 
-BRAT will track the monorepo's `op-obsidian-v*` release tags and pull `main.js` + `manifest.json` automatically.
+BRAT will track the monorepo's `op-obsidian-v*` release tags and pull `main.js`, `manifest.json`, and `styles.css` automatically. The release job also publishes `op-obsidian.zip`, which preserves the runtime `dashboard/` tree for manual installs and release validation.
 
 ### From source
 
@@ -31,7 +31,7 @@ npm install
 npm run build
 ```
 
-Then copy `main.js` and `manifest.json` into `<vault>/.obsidian/plugins/op-obsidian/` and enable the plugin. The repo's `CLAUDE.md` documents the exact reload dance used during development.
+Then copy `main.js`, `manifest.json`, `styles.css`, and the `dashboard/` folder into `<vault>/.obsidian/plugins/op-obsidian/` and enable the plugin. The repo's `CLAUDE.md` documents the exact reload dance used during development.
 
 ## Command reference
 

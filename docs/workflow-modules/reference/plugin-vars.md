@@ -47,6 +47,7 @@ The issue id is {{id}} — branch is {{branch}}, today is {{today}}.
 | `{{project}}` | `obsidian-projects` | The project slug the issue belongs to. |
 | `{{status}}` | `in-progress` | The issue's lifecycle status (open, in-progress, blocked, resolved, wontfix). |
 | `{{priority}}` | `high` | The issue's priority (low, med, high) — undefined if not set. |
+| `{{slug}}` | `add-slug-plugin-var-extract-shared` | Branch-safe kebab-cased slug derived from `title` (lowercase, capped at 40 chars on a `-` boundary, leading `NN[a-z]?:` task-prefix stripped) — undefined if `title` collapses to empty. |
 | `{{parent}}` | `OP-184` | The parent issue id from frontmatter, or `(none — this is a top-level issue)` when no parent is set. |
 | `{{pr_url}}` | `https://github.com/earchibald/obsidian-projects/pull/232` | The pull-request URL once the issue has one — undefined before the PR opens. |
 | `{{github_issue}}` | `https://github.com/earchibald/obsidian-projects/issues/232` | The mirrored GitHub issue URL when the issue is GH-linked — undefined when local-only. |

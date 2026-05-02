@@ -1,5 +1,11 @@
 import { describe, it, expect } from "vitest";
-import { DEFAULT_SETTINGS, mergeSettings, matchSettingRow } from "./settingsPure";
+import {
+  CLAUDE_SESSION_COLORS,
+  DEFAULT_SETTINGS,
+  mergeSettings,
+  matchSettingRow,
+  sanitizeSessionDecorationPalette,
+} from "./settingsPure";
 import { emptyRegistry, mergeRegistry, type RegistryData } from "./layout/registry";
 
 describe("mergeSettings", () => {
@@ -63,6 +69,33 @@ describe("mergeSettings", () => {
     expect(out.flow.autoMerge).toBe(DEFAULT_SETTINGS.flow.autoMerge);
   });
 
+  it("session decoration defaults, sanitizes palette entries, and keeps full replacement semantics", () => {
+    const out = mergeSettings({
+      sessionDecoration: {
+        autoColor: false,
+        palette: ["RED", "blue", "blue", "bogus"],
+      },
+    });
+    expect(out.sessionDecoration.autoColor).toBe(false);
+    expect(out.sessionDecoration.autoRename).toBe(DEFAULT_SETTINGS.sessionDecoration.autoRename);
+    expect(out.sessionDecoration.palette).toEqual(["red", "blue"]);
+  });
+
+  it("session decoration falls back to defaults for blank template / invalid palette / invalid delay", () => {
+    const out = mergeSettings({
+      sessionDecoration: {
+        palette: ["bogus"],
+        nameTemplate: "   ",
+        interCommandDelayMs: -1,
+      },
+    });
+    expect(out.sessionDecoration.palette).toEqual(DEFAULT_SETTINGS.sessionDecoration.palette);
+    expect(out.sessionDecoration.nameTemplate).toBe(DEFAULT_SETTINGS.sessionDecoration.nameTemplate);
+    expect(out.sessionDecoration.interCommandDelayMs).toBe(
+      DEFAULT_SETTINGS.sessionDecoration.interCommandDelayMs,
+    );
+  });
+
   it("rejects invalid flow.headlessTimeoutMs (non-positive / non-numeric)", () => {
     for (const bad of [0, -1, "300" as unknown as number, NaN]) {
       const out = mergeSettings({ flow: { headlessTimeoutMs: bad } });
@@ -88,6 +121,7 @@ describe("mergeSettings", () => {
 
   it("clamps and floors orchestrator maxRows/maxCols to [1,3]", () => {
     const out = mergeSettings({
+      legacyITermMigrationCompleted: true,
       orchestrator: { maxRows: 2.7, maxCols: 1.9, enabled: true, preferred: "2x2" },
     });
     expect(out.orchestrator.maxRows).toBe(2);
@@ -110,6 +144,21 @@ describe("mergeSettings", () => {
       mergeSettings({ orchestrator: { preferred: "9x9" as unknown as string } }).orchestrator
         .preferred,
     ).toBe(DEFAULT_SETTINGS.orchestrator.preferred);
+  });
+
+  it("migrates pre-legacy-fallback installs off orchestrator when the migration bit is absent", () => {
+    const out = mergeSettings({ orchestrator: { enabled: true } });
+    expect(out.legacyITermMigrationCompleted).toBe(true);
+    expect(out.orchestrator.enabled).toBe(false);
+  });
+
+  it("preserves manual orchestrator opt-in after the legacy-fallback migration has completed", () => {
+    const out = mergeSettings({
+      legacyITermMigrationCompleted: true,
+      orchestrator: { enabled: true },
+    });
+    expect(out.legacyITermMigrationCompleted).toBe(true);
+    expect(out.orchestrator.enabled).toBe(true);
   });
 
   it("view.recentResolvedLimit > 0 and floored; openOnStartup boolean", () => {
@@ -371,6 +420,21 @@ describe("mergeSettings", () => {
     expect(mergeSettings({ defaultAgent: "claude" }).firstRunCompleted).toBe(true);
     expect(mergeSettings({ workingDirs: { "my-project": "/code/my-project" } }).firstRunCompleted).toBe(true);
     expect(mergeSettings({ view: { defaultTab: "issues" } }).firstRunCompleted).toBe(true);
+  });
+});
+
+describe("sanitizeSessionDecorationPalette", () => {
+  it("keeps only known Claude colors, lowercases them, and removes duplicates", () => {
+    expect(sanitizeSessionDecorationPalette(["RED", " blue ", "blue", "bogus"])).toEqual([
+      "red",
+      "blue",
+    ]);
+  });
+
+  it("matches the shipped default palette order", () => {
+    expect(sanitizeSessionDecorationPalette([...CLAUDE_SESSION_COLORS])).toEqual([
+      ...CLAUDE_SESSION_COLORS,
+    ]);
   });
 });
 

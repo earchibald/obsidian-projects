@@ -110,6 +110,7 @@ describe("buildListVarsPayload — golden snapshot", () => {
       "project",
       "status",
       "priority",
+      "slug",
       "parent",
       "pr_url",
       "github_issue",

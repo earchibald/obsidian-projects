@@ -22,6 +22,10 @@ import { dispatchPostLaunch } from "./postLaunchDispatch";
 import { renderTemplate } from "./renderTemplate";
 import { resolveWorkingDir } from "./workingDir";
 import { launchInTerminal } from "./terminalLaunch";
+import { buildRenderContext } from "./pluginVarRegistry";
+import { renderTemplate } from "./renderTemplate";
+import { colorRegistry } from "./colorRegistry";
+import { dispatchPostLaunch } from "./postLaunchDispatch";
 import type { AgentDetector, DetectionMap } from "./agentDetect";
 import { AgentPickerModal } from "./modals";
 import { userError } from "./userError";
@@ -38,7 +42,7 @@ import {
   openRecoveryDialog,
   type RecoveryDialogOutcome,
 } from "./recoveryDialog";
-import { validateModelName } from "./modelRegistry";
+import { contextWindowFor, validateModelName } from "./modelRegistry";
 
 /** Arguments accepted by {@link openAgent}. */
 export interface OpenAgentArgs {
@@ -265,7 +269,7 @@ export async function openAgent(
     await writeLaunchVarsOnIssue(app, args.entry.path, launchVars);
   }
 
-  const { scriptPath, tmuxSession, tmuxWindow } = await launchInTerminal({
+  const { scriptPath, tmuxSession, tmuxWindow, windowId } = await launchInTerminal({
     cwd: wd.path,
     binary: det.path ?? profile.binary,
     launchFlags,
@@ -275,8 +279,21 @@ export async function openAgent(
     tmuxBinary: settings.tmuxBinary,
     issueId: args.entry.id,
     issueTitle: args.entry.title,
+    // OP-179: append ` [Parent: <PARENT-ID>]` to the iTerm tab/window/session
+    // label when this issue has a parent. Sourced from the parsed entry; if
+    // the entry's `parent` is missing (legacy issue not yet re-indexed), fall
+    // back to a fresh metadata-cache read so newly-set parents take effect on
+    // the next launch without an editor round-trip.
+    parentId: args.entry.parent ?? readParentId(app, args.entry.path) ?? undefined,
     agentId,
     backgroundLaunch: settings.backgroundLaunch,
+    // OP-234: forward the resolver's canonical model + its registry-known
+    // context-window budget into the orchestrator so the new SurfaceRef.agent
+    // block records them on launch. Both stay undefined when the launch
+    // bypassed the resolver (agentOverride / forcePick / alwaysPick) — the
+    // dashboard renders `model —` / `ctx —` per OP-217 §UI.
+    model: resolved?.canonicalModel,
+    contextWindowSize: contextWindowFor(resolved?.canonicalModel),
     orchestrator: {
       settings,
       registry: {
@@ -303,18 +320,36 @@ export async function openAgent(
       parent: parentId,
     },
   });
-  const commands = postLaunchCommandsFor(profile, mode)
-    .map((command) => renderTemplate(command, renderContext).text.trim())
-    .filter((command) => command.length > 0);
-  if (commands.length > 0) {
+  const color = colorRegistry.assign({
+    issueId: args.entry.id,
+    parentId,
+    windowKey: resolveSessionDecorationWindowKey(settings, windowId),
+    palette: settings.sessionDecoration.palette,
+  });
+  const sessionName = truncateSessionName(
+    renderTemplate(settings.sessionDecoration.nameTemplate, renderContext).text,
+  );
+  const commands = buildPostLaunchCommands({
+    profile,
+    mode,
+    renderContext,
+    color,
+    name: sessionName,
+  }).filter((command) => shouldSendPostLaunchCommand(command, settings));
+  if (
+    settings.sessionDecoration.autoRemoteControl &&
+    !commands.some((command) => command.trim() === "/remote-control")
+  ) {
+    commands.push("/remote-control");
+  }
+  if (commands.length > 0 && profile.postLaunchReadinessRegex) {
     void dispatchPostLaunch({
       tmuxBinary: settings.tmuxBinary,
       tmuxSession,
       tmuxWindow,
       commands,
-      readinessRegex: profile.postLaunchReadinessRegex
-        ? new RegExp(profile.postLaunchReadinessRegex)
-        : undefined,
+      readinessRegex: new RegExp(profile.postLaunchReadinessRegex),
+      interCommandDelayMs: settings.sessionDecoration.interCommandDelayMs,
     }).catch((err) => {
       console.error("[op-obsidian] post-launch dispatch failed", err);
     });
@@ -340,6 +375,39 @@ export async function openAgent(
     tmuxSession,
     tmuxWindow,
   };
+}
+
+function resolveSessionDecorationWindowKey(settings: OpSettings, windowId: string | undefined): string {
+  if (settings.terminal === "Terminal") return "terminal:default";
+  if (settings.orchestrator.enabled && windowId) return `iterm:${windowId}`;
+  return "iterm:legacy";
+}
+
+function buildPostLaunchCommands(args: {
+  profile: AgentProfile;
+  mode: AgentLaunchMode;
+  renderContext: ReturnType<typeof buildRenderContext>;
+  color: string;
+  name: string;
+}): string[] {
+  return postLaunchCommandsFor(args.profile, args.mode).map((template) =>
+    renderTemplate(template, args.renderContext).text
+      .replace(/\{\{\s*color\s*\}\}/g, args.color)
+      .replace(/\{\{\s*name\s*\}\}/g, args.name),
+  );
+}
+
+function shouldSendPostLaunchCommand(command: string, settings: OpSettings): boolean {
+  const trimmed = command.trim();
+  if (trimmed.startsWith("/color ")) return settings.sessionDecoration.autoColor;
+  if (trimmed.startsWith("/rename ")) return settings.sessionDecoration.autoRename;
+  if (trimmed === "/remote-control") return settings.sessionDecoration.autoRemoteControl;
+  return true;
+}
+
+function truncateSessionName(name: string): string {
+  const collapsed = name.replace(/\s+/g, " ").trim();
+  return collapsed.length <= 40 ? collapsed : collapsed.slice(0, 40).trimEnd();
 }
 
 async function maybeShowITermPrefsNotice(

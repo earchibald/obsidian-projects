@@ -1,4 +1,11 @@
-import { Notice, Plugin, TFile, WorkspaceLeaf, type Editor, type MarkdownView } from "obsidian";
+import {
+  Plugin,
+  TFile,
+  WorkspaceLeaf,
+  requestUrl,
+  type Editor,
+  type MarkdownView,
+} from "obsidian";
 import { OP_SIDEBAR_VIEW_TYPE, OpSidebarView } from "./sidebarView";
 import { revealAgentSession } from "./revealAgentSession";
 import { findAgentTmuxLocation } from "./agentTmuxLocation";
@@ -61,6 +68,7 @@ import { resolveRepoPath } from "./repoPath";
 import { writeUriResponse, type UriResponsePayload } from "./uriResponse";
 import { normalizeUriParams, collectRepeated, parseLaunchVarsFromUri } from "./uriParams";
 import { runResolve, type ResolveArgs } from "./resolve";
+import { healStaleResolvedStatus } from "./healStaleResolvedStatus";
 import { shouldAutoResolve } from "./autoResolveOnStatusChange";
 import {
   findIssueById as findIssueByIdPure,
@@ -141,9 +149,19 @@ import { appendRecency, mostRecent } from "./recencyLog";
 import { deriveTitle, packScope, resolveCaptureProject } from "./quickCapture";
 import { openErrorLog, writeErrorLog } from "./errorLog";
 import { configureClient } from "./iterm/client";
-import { closeWindow as itermCloseWindow } from "./iterm/driver";
+import { closeWindow as itermCloseWindow, openBrowserTab as itermOpenBrowserTab } from "./iterm/driver";
 import { closeTransport } from "./iterm/connection";
-import { existsSync } from "fs";
+import {
+  buildAutoLaunchPaths,
+  buildDashboardUrl,
+  detectSetupGates,
+  HEALTHZ_TIMEOUT_MS,
+  type SetupGatesWithToken,
+} from "./dashboardOpen";
+import { DashboardSetupModal } from "./dashboardSetupModal";
+import { BUNDLED_DASHBOARD_ASSETS } from "./dashboardBundledAssets";
+import * as os from "os";
+import { existsSync, readFileSync } from "fs";
 import { execFile } from "child_process";
 import { promisify } from "util";
 import { PickAndActModal } from "./pickAndActModal";
@@ -164,6 +182,7 @@ import {
   scaffoldFirstRunReadme,
 } from "./firstRunReadme";
 import { applyPreset, defaultPreset } from "./hotkeyPreset";
+import { colorRegistry } from "./colorRegistry";
 
 const pExecFile = promisify(execFile);
 
@@ -226,6 +245,14 @@ export default class OpPlugin extends Plugin {
    * as "alive" to avoid false-stale chips. */
   liveTmuxWindowsCache: Set<string> | null = null;
   private chipLivenessTimer: number | undefined;
+
+  /** OP-232: re-entrancy guard for `runOpenDashboardCommand`. The SPA may
+   *  dispatch `obsidian://op-dashboard-refresh-token` multiple times during
+   *  a WebSocket reconnect; the user may also fire the palette command
+   *  twice in quick succession. Without this guard each invocation would
+   *  open its own Setup modal or browser tab. Idempotency is required by
+   *  OP-217 spec pressure-test #6 and is not bypass-eligible. */
+  private dashboardCommandInFlight = false;
 
   /** Persist the current {@link settings} object to `data.json`. */
   async saveSettings(): Promise<void> {
@@ -399,6 +426,64 @@ export default class OpPlugin extends Plugin {
       ).catch((err) => {
         console.error("[op-obsidian] first-run readme scaffold failed", err);
       });
+      // OP-221: clean up legacy data drift where a pre-OP-221 `runResolve`
+      // race left an issue in `RESOLVED ISSUES/` with a non-terminal
+      // `status:`. Idempotent — no-op on a clean vault. The fix in
+      // `resolve.ts` (rename → write) prevents new drift; this pass heals
+      // historical state.
+      //
+      // `metadataCache.on("resolved")` fires *each time* a batch of pending
+      // parse work completes — including partial batches mid-load on a
+      // large vault. Single-firing on the first event would race the
+      // IssueStore's hydration. Debounce instead: reset a 750ms
+      // quiet-window timer on every `resolved` event; only fire once the
+      // cache has been quiet for that long. The single-fire latch ensures
+      // subsequent per-edit `resolved` events after the heal don't
+      // re-trigger it. The 4s hard ceiling guarantees forward progress on
+      // a vault that never quiets (e.g., open with a sync engine
+      // continuously touching files).
+      let healFired = false;
+      let healDebounce: number | undefined;
+      const HEAL_QUIET_MS = 750;
+      const HEAL_HARD_CEILING_MS = 4000;
+      const fireHeal = () => {
+        if (healFired) return;
+        healFired = true;
+        if (healDebounce !== undefined) window.clearTimeout(healDebounce);
+        // Reading from the live store is correct here: the store hydrates
+        // synchronously inside its own onLayoutReady callback (registered
+        // before this one), so by the time the debounce window settles
+        // the store reflects the on-disk vault state.
+        void healStaleResolvedStatus(this.app, this.store)
+          .then((res) => {
+            if (res.fixed.length > 0) {
+              console.info(
+                `[op-obsidian] healed ${res.fixed.length} stale-status issue(s) in RESOLVED ISSUES/`,
+                res.fixed,
+              );
+            }
+            if (res.errors.length > 0) {
+              console.warn("[op-obsidian] healStaleResolvedStatus errors", res.errors);
+            }
+          })
+          .catch((err) => {
+            console.error("[op-obsidian] healStaleResolvedStatus threw", err);
+          });
+      };
+      const armDebounce = () => {
+        if (healFired) return;
+        if (healDebounce !== undefined) window.clearTimeout(healDebounce);
+        healDebounce = window.setTimeout(fireHeal, HEAL_QUIET_MS);
+      };
+      const ref = this.app.metadataCache.on("resolved", armDebounce);
+      this.registerEvent(ref);
+      // Arm immediately too — if the cache is already settled at
+      // onLayoutReady (small vault), no further `resolved` events fire
+      // and the debounce alone would never trip.
+      armDebounce();
+      // Hard ceiling: even if `resolved` keeps firing (busy vault, sync
+      // engine churn), heal at this point so we make forward progress.
+      window.setTimeout(fireHeal, HEAL_HARD_CEILING_MS);
     });
 
     // OP-151 (§2) + OP-162 (§11): note-level decoration infra. The
@@ -411,6 +496,7 @@ export default class OpPlugin extends Plugin {
       app: this.app,
       isAgentLive: (id, agent) => this.isAgentLiveSync(id, agent),
       getSettings: () => ({
+        defaultAgent: this.settings.defaultAgent,
         view: { disableInlineGithubStatus: this.settings.view.disableInlineGithubStatus },
       }),
       ghCache,
@@ -904,6 +990,16 @@ export default class OpPlugin extends Plugin {
       callback: () => void this.runRemoveDemoCommand(),
     });
 
+    // OP-232: agent dashboard. Opens the dashboard if the daemon is up and
+    // healthy; falls through to the Setup modal otherwise. The daemon and
+    // SPA ship as separate sibling issues (OP-230 / OP-231); on this branch
+    // we only own the Obsidian-side surface.
+    this.addCommand({
+      id: "op-dashboard",
+      name: "op: open agent dashboard",
+      callback: () => void this.runOpenDashboardCommand(),
+    });
+
     // op-dev:* commands are gated by settings.developer.showDevCommands so
     // end-user palettes aren't crowded with plugin-author diagnostics. The
     // toggle takes effect on next plugin reload — Obsidian's addCommand has
@@ -1103,6 +1199,19 @@ export default class OpPlugin extends Plugin {
       this.runUri("op-reset-flow", normalizeUriParams(params), (p) =>
         this.handleOpResetFlowUri(p),
       );
+    });
+
+    // OP-232: dashboard URI handlers. `op-dashboard` is the entry-point used
+    // by external tools (and the dashboard's own "How to open" link); it
+    // mirrors the palette command. `op-dashboard-refresh-token` is dispatched
+    // by the SPA when its WebSocket closes with code 4401 (token rotated
+    // since the tab was opened) — we re-read the token file and re-open the
+    // dashboard URL in the configured target.
+    this.registerObsidianProtocolHandler("op-dashboard", () => {
+      void this.runOpenDashboardCommand();
+    });
+    this.registerObsidianProtocolHandler("op-dashboard-refresh-token", () => {
+      void this.runOpenDashboardCommand();
     });
 
     if (this.settings.developer.showDevCommands) {
@@ -1634,14 +1743,14 @@ export default class OpPlugin extends Plugin {
       this.settings.recent = this.settings.recent.slice(staleCount);
       await this.saveSettings();
       if (staleCount === 1) {
-        new Notice(`op: ${staleIds[0]} is no longer in the vault — cleared from recency log.`);
+        notify(`op: ${staleIds[0]} is no longer in the vault — cleared from recency log.`);
       } else {
-        new Notice(`op: cleared ${staleCount} stale entries from recency log.`);
+        notify(`op: cleared ${staleCount} stale entries from recency log.`);
       }
     }
     const head = this.settings.recent[0] as (typeof this.settings.recent)[number] | undefined;
     if (!head) {
-      new Notice("op: no recent issues to resume — touch one via op:work or op:open-agent first.");
+      notify("op: no recent issues to resume — touch one via op:work or op:open-agent first.");
       return;
     }
     const entry = this.store.byId(head.id);
@@ -1791,13 +1900,13 @@ export default class OpPlugin extends Plugin {
       text = (await navigator.clipboard.readText()) ?? "";
     } catch (err) {
       console.warn("[op-obsidian] clipboard read failed", err);
-      new Notice("op: clipboard unavailable — fill the form manually.");
+      notify("op: clipboard unavailable — fill the form manually.");
       text = "";
     }
     // readText() resolves with "" when the clipboard is empty (no rejection).
     // Surface a Notice so the user understands why the modal opened blank.
     if (!text.trim()) {
-      new Notice("op: clipboard was empty — fill the form manually.");
+      notify("op: clipboard was empty — fill the form manually.");
     }
     const file = this.app.workspace.getActiveFile();
     const title = deriveTitle(text);
@@ -2051,7 +2160,7 @@ export default class OpPlugin extends Plugin {
       const projects = listProjects(this.app);
       const result = findIssue(this.store, { raw, projects });
       if (result.matches.length === 0) {
-        new Notice(
+        notify(
           `op: no match for ${result.interpretation}. Try an ID (e.g. OP-12) or a title fragment.`,
         );
         return;
@@ -2079,10 +2188,10 @@ export default class OpPlugin extends Plugin {
       });
       const cleanedNote = res.cleaned.length ? ` · cleaned ${res.cleaned.join(", ")}` : "";
       const changeNote = res.changed ? "linked" : "already linked";
-      new Notice(`op: ${src.id} ${relation} → ${dst.id} (${changeNote})${cleanedNote}`);
+      notify(`op: ${src.id} ${relation} → ${dst.id} (${changeNote})${cleanedNote}`);
     } catch (err: any) {
       console.error("[op-obsidian] op-set-link failed", err);
-      new Notice(`op-set-link failed: ${err?.message ?? err}`);
+      notify(`op-set-link failed: ${err?.message ?? err}`);
     }
   }
 
@@ -2102,12 +2211,12 @@ export default class OpPlugin extends Plugin {
     if (linked.length === 0) {
       const dangling = listDanglingLinkedIds(this.app, this.store, srcEntry.id, relation);
       if (dangling.length > 0) {
-        new Notice(
+        notify(
           `op: ${srcEntry.id} has no resolvable ${relation} links` +
             ` (${dangling.length} dangling — run 'op: check issue link drift' to repair)`,
         );
       } else {
-        new Notice(`op: ${srcEntry.id} has no ${relation} links to remove`);
+        notify(`op: ${srcEntry.id} has no ${relation} links to remove`);
       }
       return;
     }
@@ -2132,10 +2241,10 @@ export default class OpPlugin extends Plugin {
         relation,
       });
       const changeNote = res.changed ? "removed" : "already absent";
-      new Notice(`op: ${src.id} ${relation} ✗ ${dst.id} (${changeNote})`);
+      notify(`op: ${src.id} ${relation} ✗ ${dst.id} (${changeNote})`);
     } catch (err: any) {
       console.error("[op-obsidian] op-remove-link failed", err);
-      new Notice(`op-remove-link failed: ${err?.message ?? err}`);
+      notify(`op-remove-link failed: ${err?.message ?? err}`);
     }
   }
 
@@ -2445,6 +2554,22 @@ export default class OpPlugin extends Plugin {
             ]
           : [],
       });
+
+      // OP-221: when `processFrontMatter` failed after the rename
+      // succeeded, the file is moved but its status/resolved frontmatter
+      // wasn't written. Warn the user so they know the heal pass will
+      // reconcile it on next reload — silently returning success would
+      // mask the inconsistency.
+      if (result.frontmatterWriteError && result.issueId) {
+        notify(
+          `op: ${result.issueId} resolved (file moved) but frontmatter write failed — will heal on next reload`,
+        );
+        console.warn(
+          "[op-obsidian] resolve frontmatterWriteError",
+          result.issueId,
+          result.frontmatterWriteError,
+        );
+      }
 
       // §5: surface a second, actionable Notice when `agent:` survived the
       // resolve (live tmux window) or when tmux was unreachable. [Open agent]
@@ -3412,7 +3537,7 @@ export default class OpPlugin extends Plugin {
     try {
       const repoPath = resolveRepoPath(this.app, this.settings, entry.project);
       if (!repoPath) {
-        new Notice(`op: no repo_path for ${entry.project} — cannot append commit`);
+        notify(`op: no repo_path for ${entry.project} — cannot append commit`);
         return;
       }
       const { stdout: shaRaw } = await pExecFile(
@@ -3428,18 +3553,18 @@ export default class OpPlugin extends Plugin {
       const sha = shaRaw.trim();
       const subject = subjRaw.trim();
       if (!sha || !subject) {
-        new Notice(`op: empty git output in ${repoPath} — skipping append`);
+        notify(`op: empty git output in ${repoPath} — skipping append`);
         return;
       }
       const res = await appendCommit(this.app, entry, { sha, subject });
-      new Notice(
+      notify(
         res.added
           ? `op: appended ${sha} to ${res.issueId}`
           : `op: ${sha} already on ${res.issueId}`,
       );
     } catch (err: any) {
       console.error("[op-obsidian] pick-and-act commit failed", err);
-      new Notice(`op: pick & act commit failed — ${err?.message ?? err}`);
+      notify(`op: pick & act commit failed — ${err?.message ?? err}`);
     }
   }
 
@@ -3461,7 +3586,7 @@ export default class OpPlugin extends Plugin {
       )
       .sort((a, b) => issueIdNumericSuffix(a.id) - issueIdNumericSuffix(b.id));
     if (peers.length === 0) {
-      new Notice(`op: no other open issues in ${current.project}`);
+      notify(`op: no other open issues in ${current.project}`);
       return;
     }
     const idx = peers.findIndex((e) => e.path === current.path);
@@ -3472,7 +3597,7 @@ export default class OpPlugin extends Plugin {
     }
     const next = peers[(idx + direction + peers.length) % peers.length];
     if (next.path === current.path) {
-      new Notice(`op: only one open issue in ${current.project}`);
+      notify(`op: only one open issue in ${current.project}`);
       return;
     }
     void this.openIssue(next);
@@ -4310,6 +4435,7 @@ export default class OpPlugin extends Plugin {
       return { ok: true, command: "op-agent-ended", issueId: id, cleared: false };
     }
     await clearAgentOnIssue(this.app, entry.path);
+    colorRegistry.release(id);
     // V1: the SessionEnd shell hook can't pass an exit code, so any URI hit is
     // treated as a clean exit. Crashes don't fire SessionEnd at all, so they
     // leave `flow:` pinned automatically. Future: hook reads `reason` from
@@ -4604,7 +4730,7 @@ export default class OpPlugin extends Plugin {
   private async runReopenCommand(path: string): Promise<void> {
     const file = this.app.vault.getAbstractFileByPath(path);
     if (!(file instanceof TFile)) {
-      new Notice(`op: reopen — file not found at ${path}`);
+      notify(`op: reopen — file not found at ${path}`);
       return;
     }
     await this.app.fileManager.processFrontMatter(file, (fm) => {
@@ -4619,11 +4745,11 @@ export default class OpPlugin extends Plugin {
       try {
         await this.app.fileManager.renameFile(file, newPath);
       } catch (err: any) {
-        new Notice(`op: reopen — move failed (${err?.message ?? err})`);
+        notify(`op: reopen — move failed (${err?.message ?? err})`);
         return;
       }
     }
-    new Notice("op: issue reopened");
+    notify("op: issue reopened");
     dispatchChipRefresh(this.app);
   }
 
@@ -4640,7 +4766,7 @@ export default class OpPlugin extends Plugin {
     await this.app.fileManager.processFrontMatter(file, (fm) => {
       fm.priority = next;
     });
-    new Notice(`op: priority → ${next}`);
+    notify(`op: priority → ${next}`);
   }
 
   /** OP-161 chip helper — scaffold the demo project. */
@@ -4648,9 +4774,9 @@ export default class OpPlugin extends Plugin {
     try {
       const result = await scaffoldDemoProject(this.app);
       if (!result.created) {
-        new Notice("op: demo project already present at " + DEMO_PROJECT_FOLDER);
+        notify("op: demo project already present at " + DEMO_PROJECT_FOLDER);
       } else {
-        new Notice("op: demo project scaffolded at " + DEMO_PROJECT_FOLDER);
+        notify("op: demo project scaffolded at " + DEMO_PROJECT_FOLDER);
         const status = this.app.vault.getAbstractFileByPath(result.statusPath);
         if (status instanceof TFile) {
           await this.app.workspace.getLeaf(false).openFile(status);
@@ -4658,7 +4784,7 @@ export default class OpPlugin extends Plugin {
       }
     } catch (err: any) {
       console.error("[op-obsidian] start-tour failed", err);
-      new Notice("op: start tour failed — " + (err?.message ?? err));
+      notify("op: start tour failed — " + (err?.message ?? err));
     }
   }
 
@@ -4667,14 +4793,118 @@ export default class OpPlugin extends Plugin {
     try {
       const result = await removeDemoProject(this.app);
       if (!result.removed) {
-        new Notice("op: demo project not found (already removed?).");
+        notify("op: demo project not found (already removed?).");
       } else {
-        new Notice("op: demo project trashed.");
+        notify("op: demo project trashed.");
       }
     } catch (err: any) {
       console.error("[op-obsidian] remove-demo failed", err);
-      new Notice("op: remove demo failed — " + (err?.message ?? err));
+      notify("op: remove demo failed — " + (err?.message ?? err));
     }
+  }
+
+  /**
+   * OP-232: open the agent dashboard. Probes the four setup gates; on full
+   * pass, reads the token, builds `http://127.0.0.1:<port>/?token=<token>`,
+   * and opens it via the configured target (`iterm-browser-tab` with a
+   * system-browser fallback, or `system-browser` directly). Otherwise opens
+   * the Setup modal.
+   *
+   * Wired from:
+   *   - palette command `op-dashboard`
+   *   - URI handlers `obsidian://op-dashboard` and
+   *     `obsidian://op-dashboard-refresh-token` (the SPA dispatches the
+   *     latter after a WS close-code-4401; the new tab supersedes the stale
+   *     one — self-healing).
+   */
+  private async runOpenDashboardCommand(): Promise<void> {
+    // OP-232: re-entrancy guard. The SPA dispatches refresh-token URI on
+    // every WS reconnect attempt — without this guard each call would race
+    // its own gate probe and stack a Setup modal (or open a duplicate
+    // browser tab) on top of the previous one. The flag flips back in the
+    // `finally` so a second invocation after the first completes still
+    // works. See `dashboardCommandInFlight` field comment for spec rationale.
+    if (this.dashboardCommandInFlight) return;
+    this.dashboardCommandInFlight = true;
+    try {
+      await this.runOpenDashboardCommandInner();
+    } finally {
+      this.dashboardCommandInFlight = false;
+    }
+  }
+
+  private async runOpenDashboardCommandInner(): Promise<void> {
+    const port = this.settings.dashboard.port;
+    const target = this.settings.dashboard.target;
+
+    const gates = await detectSetupGates({
+      homedir: () => os.homedir(),
+      platform: () => process.platform,
+      pathExists: (p) => existsSync(p),
+      probeHealthz: (url, timeoutMs) => probeDashboardHealthz(url, timeoutMs),
+      port,
+      readToken: (p) => {
+        try {
+          return readFileSync(p, "utf8");
+        } catch {
+          return null;
+        }
+      },
+    });
+
+    const allPass =
+      gates.platformSupported &&
+      gates.daemonInstalled &&
+      gates.daemonAlive &&
+      !!gates.token;
+
+    if (!allPass) {
+      this.openDashboardSetupModal(gates);
+      return;
+    }
+
+    const url = buildDashboardUrl(gates.port, gates.token!);
+    if (target === "system-browser") {
+      this.openInSystemBrowser(url);
+      return;
+    }
+    // target === "iterm-browser-tab"
+    const result = await itermOpenBrowserTab(url);
+    if (!result.ok) {
+      console.warn(
+        `[op-obsidian] op-dashboard: iTerm browser tab failed (${result.reason}); falling back to system browser`,
+      );
+      notify(
+        `op: opening dashboard in system browser (iTerm: ${result.reason ?? "unavailable"})`,
+        4000,
+      );
+      this.openInSystemBrowser(url);
+    }
+  }
+
+  private openDashboardSetupModal(gates: SetupGatesWithToken): void {
+    new DashboardSetupModal(
+      this.app,
+      {
+        probeHealthz: (url, timeoutMs) => probeDashboardHealthz(url, timeoutMs),
+        bundledAssets: BUNDLED_DASHBOARD_ASSETS,
+        port: this.settings.dashboard.port,
+      },
+      () => void this.runOpenDashboardCommand(),
+    ).open();
+    // `gates` is currently only used to render the modal; the modal re-runs
+    // detection on `onOpen` to pick up any state change between this command
+    // and the modal landing. Kept as a parameter for future "show last
+    // probe" affordances without changing the call sites.
+    void gates;
+  }
+
+  private openInSystemBrowser(url: string): void {
+    if (typeof window !== "undefined" && typeof window.open === "function") {
+      window.open(url);
+      return;
+    }
+    notify(`op: dashboard URL ${url}`, 8000);
   }
 
   /**
@@ -4691,6 +4921,44 @@ export default class OpPlugin extends Plugin {
     const live = this.liveTmuxWindowsCache;
     if (!live) return null;
     return live.has(tmuxWindowName(id));
+  }
+}
+
+/**
+ * OP-232: probe the OP-230 daemon's `/healthz` endpoint with a hard 1-second
+ * budget. Returns true only on `{ok: true}` JSON; ECONNREFUSED, 401,
+ * timeout, parse errors, or any non-2xx are all surfaced as false.
+ *
+ * Uses Obsidian's `requestUrl` so we get the same network stack as the rest
+ * of the plugin (no Node/Electron mismatch). `requestUrl` doesn't expose a
+ * native cancel, so the timeout is enforced via `Promise.race` against a
+ * `setTimeout` rejection.
+ */
+async function probeDashboardHealthz(url: string, timeoutMs: number): Promise<boolean> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const probe = (async () => {
+    try {
+      const resp = await requestUrl({
+        url,
+        method: "GET",
+        // `requestUrl` returns the response body even on non-2xx; surface
+        // those as failures by checking `status` ourselves.
+        throw: false,
+      });
+      if (resp.status !== 200) return false;
+      const body = resp.json as { ok?: unknown } | undefined;
+      return body?.ok === true;
+    } catch {
+      return false;
+    }
+  })();
+  const timeout = new Promise<boolean>((resolve) => {
+    timer = setTimeout(() => resolve(false), timeoutMs);
+  });
+  try {
+    return await Promise.race([probe, timeout]);
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
   }
 }
 
@@ -4754,4 +5022,3 @@ function resolveScopeParams(
     ? { scope: parsed.bullets }
     : { scopeBody: parsed.body };
 }
-

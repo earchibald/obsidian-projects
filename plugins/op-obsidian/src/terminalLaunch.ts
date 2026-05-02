@@ -5,6 +5,7 @@ import * as path from "path";
 import { promisify } from "util";
 
 import { activeWindowId, createTab, createWindow } from "./iterm/driver";
+import { slugify } from "./slug";
 
 const pExecFile = promisify(execFile);
 
@@ -36,6 +37,10 @@ export interface LaunchArgs {
   // Human-readable title forwarded to the orchestrator for the iTerm
   // session/pane title (e.g. the issue note's file basename).
   issueTitle?: string;
+  // OP-179: parent issue id forwarded to the orchestrator. When set, the
+  // iTerm tab/window/session label gets a ` [Parent: <PARENT-ID>]` suffix so
+  // a child issue's pane is visibly tagged with its umbrella.
+  parentId?: string;
   agentId: string;
   // Override the tmux window name (sanitized to tmux-safe chars). Used by
   // entry-less launches that have no `issueId` — the workflow editor
@@ -58,12 +63,26 @@ export interface LaunchArgs {
   // skips the `ActivateRequest`. No effect on Terminal.app — Terminal has
   // no equivalent non-activating launch path. Defaults to false.
   backgroundLaunch?: boolean;
+  // OP-234: forwarded into `OrchestrateArgs` so the orchestrator can record
+  // them on the new `SurfaceRef.agent` block. Only consumed on the
+  // orchestrator path (iTerm + orchestrator.enabled); the legacy tmux -CC
+  // attach path doesn't track per-agent metadata.
+  model?: string;
+  contextWindowSize?: number;
 }
 
 export interface LaunchResult {
   scriptPath: string;
   tmuxSession: string;
   tmuxWindow: string;
+  windowId?: string;
+}
+
+interface BuildAgentExecCommandArgs {
+  agentId: string;
+  binary: string;
+  launchFlags: string[];
+  promptRef: string;
 }
 
 export async function launchInTerminal(args: LaunchArgs): Promise<LaunchResult> {
@@ -91,6 +110,7 @@ export async function launchInTerminal(args: LaunchArgs): Promise<LaunchResult> 
       {
         issueId: args.issueId,
         issueTitle: args.issueTitle,
+        parentId: args.parentId,
         agentId: args.agentId,
         cwd: args.cwd,
         binary: args.binary,
@@ -100,6 +120,8 @@ export async function launchInTerminal(args: LaunchArgs): Promise<LaunchResult> 
         tmuxBinary: args.tmuxBinary,
         baseTmuxSession: SHARED_TMUX_SESSION,
         backgroundLaunch: args.backgroundLaunch,
+        model: args.model,
+        contextWindowSize: args.contextWindowSize,
       },
       args.orchestrator.settings,
       args.orchestrator.registry,
@@ -108,6 +130,7 @@ export async function launchInTerminal(args: LaunchArgs): Promise<LaunchResult> 
       scriptPath: r.scriptPath,
       tmuxSession: r.tmuxSession,
       tmuxWindow: r.tmuxWindow,
+      windowId: r.windowId,
     };
   }
 
@@ -208,48 +231,10 @@ async function writeLaunchScripts({
 
   await fs.writeFile(promptPath, args.prompt, { mode: 0o600 });
 
-  const flagsShell = args.launchFlags.map(shSingleQuote).join(" ");
-  const cwdShell = shSingleQuote(args.cwd);
-  const binShell = shSingleQuote(args.binary);
-  const promptShell = shSingleQuote(promptPath);
   const tmuxShell = shSingleQuote(args.tmuxBinary);
   const sessShell = shSingleQuote(session);
 
-  // Inner: cd + read prompt from side-file (bash 3.2 heredoc-in-$() bug
-  // otherwise, see OP-25) + exec the agent binary.
-  //
-  // Obsidian's launch PATH omits /opt/homebrew/bin and ~/.local/bin, so
-  // `claude`'s statusLine (commonly `npx -y ccstatusline@latest`) silently
-  // fails to resolve in spawned agent windows. Prepend the usual user-shell
-  // dirs so statusline and other CLI tools behave as in a normal terminal.
-  // See OP-41.
-  const agentIdShell = shSingleQuote(args.agentId);
-  const innerLines = [
-    "#!/bin/bash",
-    "set -e",
-    `cd ${cwdShell}`,
-    `export PATH="/opt/homebrew/bin:/usr/local/bin:$HOME/.local/bin:$HOME/bin:$PATH"`,
-  ];
-  if (args.issueId) {
-    innerLines.push(`export OP_ISSUE_ID=${shSingleQuote(args.issueId)}`);
-  }
-  innerLines.push(`export OP_AGENT_ID=${agentIdShell}`);
-  if (args.debug) {
-    // Launch the agent binary interactively with no initial prompt so
-    // the launch flow (PATH, env, tmux window) can be exercised end-to-end
-    // while a human drives the session.
-    innerLines.push(
-      `echo "[op] debug agent launch — no prompt (issue=${args.issueId ?? "<none>"} agent=${args.agentId})"`,
-      `exec ${binShell} ${flagsShell}`,
-    );
-  } else {
-    innerLines.push(
-      `PROMPT=$(<${promptShell})`,
-      `exec ${binShell} ${flagsShell} "$PROMPT"`,
-    );
-  }
-  innerLines.push("");
-  const inner = innerLines.join("\n");
+  const inner = buildInnerScript({ args, promptPath });
   await fs.writeFile(innerPath, inner, { mode: 0o755 });
 
   // Outer (Terminal.app only): ensure session/window exists, then attach.
@@ -269,6 +254,78 @@ async function writeLaunchScripts({
   await fs.writeFile(outerPath, outer, { mode: 0o755 });
 
   return { innerPath, outerPath };
+}
+
+interface InnerScriptArgs {
+  args: LaunchArgs;
+  promptPath: string;
+}
+
+// Build the inner agent script that runs inside the tmux pane: cd, env
+// exports, optional iTerm session-tag emit (OP-233), then exec the agent
+// binary. Pure string-building — no fs — so it's exercised by unit tests
+// without touching disk.
+export function buildInnerScript({ args, promptPath }: InnerScriptArgs): string {
+  const cwdShell = shSingleQuote(args.cwd);
+  const promptShell = shSingleQuote(promptPath);
+  const agentIdShell = shSingleQuote(args.agentId);
+
+  // Inner: cd + read prompt from side-file (bash 3.2 heredoc-in-$() bug
+  // otherwise, see OP-25) + exec the agent binary.
+  //
+  // Obsidian's launch PATH omits /opt/homebrew/bin and ~/.local/bin, so
+  // `claude`'s statusLine (commonly `npx -y ccstatusline@latest`) silently
+  // fails to resolve in spawned agent windows. Prepend the usual user-shell
+  // dirs so statusline and other CLI tools behave as in a normal terminal.
+  // See OP-41.
+  const innerLines = [
+    "#!/bin/bash",
+    "set -e",
+    `cd ${cwdShell}`,
+    `export PATH="/opt/homebrew/bin:/usr/local/bin:$HOME/.local/bin:$HOME/bin:$PATH"`,
+  ];
+  if (args.issueId) {
+    innerLines.push(`export OP_ISSUE_ID=${shSingleQuote(args.issueId)}`);
+  }
+  innerLines.push(`export OP_AGENT_ID=${agentIdShell}`);
+  // OP-233: tag the iTerm session with `user.op_issue` so op-dashboard
+  // (OP-230) can correlate iTerm sessions to op issues. We compute the
+  // base64 at script-build time (Node Buffer) so the runtime script doesn't
+  // depend on `base64` being on PATH and to avoid platform-specific line
+  // wrapping. `\007` (BEL) terminates the OSC; `\033` is ESC. Under tmux
+  // -CC iTerm parses pane bytes directly, so we don't wrap in a tmux
+  // passthrough sequence — that wrap would also need allow-passthrough.
+  // Terminal.app silently ignores OSC 1337, so the emit is harmless there.
+  if (args.issueId) {
+    const b64 = Buffer.from(args.issueId, "utf8").toString("base64");
+    innerLines.push(`printf '\\033]1337;SetUserVar=op_issue=%s\\007' ${shSingleQuote(b64)}`);
+  }
+  if (args.debug) {
+    // Launch the agent binary interactively with no initial prompt so
+    // the launch flow (PATH, env, tmux window) can be exercised end-to-end
+    // while a human drives the session.
+    innerLines.push(
+      `echo "[op] debug agent launch — no prompt (issue=${args.issueId ?? "<none>"} agent=${args.agentId})"`,
+      `exec ${buildAgentExecCommand({
+        agentId: args.agentId,
+        binary: args.binary,
+        launchFlags: args.launchFlags,
+        promptRef: "",
+      })}`,
+    );
+  } else {
+    innerLines.push(
+      `PROMPT=$(<${promptShell})`,
+      `exec ${buildAgentExecCommand({
+        agentId: args.agentId,
+        binary: args.binary,
+        launchFlags: args.launchFlags,
+        promptRef: '"$PROMPT"',
+      })}`,
+    );
+  }
+  innerLines.push("");
+  return innerLines.join("\n");
 }
 
 interface PrepArgs {
@@ -308,16 +365,34 @@ export function buildITermAttachCommand(tmuxBinary: string, session: string): st
   return `${shSingleQuote(tmuxBinary)} -CC attach -t ${shSingleQuote(session)}`;
 }
 
+export function buildAgentExecCommand({
+  agentId,
+  binary,
+  launchFlags,
+  promptRef,
+}: BuildAgentExecCommandArgs): string {
+  const parts = [
+    shSingleQuote(binary),
+    ...launchFlags.map(shSingleQuote),
+  ];
+  if (promptRef) {
+    if (agentId === "copilot") {
+      parts.push("-i", promptRef);
+    } else {
+      parts.push(promptRef);
+    }
+  }
+  return parts.join(" ");
+}
+
 // Sanitize arbitrary text into a tmux-safe window name. tmux uses `:`
 // as the session:window separator in target specs, so we map it (and
 // anything other than alnum/dash/underscore) to a dash, collapse runs,
-// and trim. Falls back to "agent" for empty input.
+// and trim. Falls back to "agent" for empty input. Case is preserved
+// because users grep tmux windows by issue id (`OP-220`), which is
+// upper-case by convention.
 export function tmuxWindowName(issueId: string): string {
-  const safe = issueId
-    .replace(/[^A-Za-z0-9_-]+/g, "-")
-    .replace(/-+/g, "-")
-    .replace(/^-|-$/g, "");
-  return safe || "agent";
+  return slugify(issueId, { allowUnderscore: true, fallback: "agent" });
 }
 
 function shSingleQuote(s: string): string {

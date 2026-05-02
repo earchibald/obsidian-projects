@@ -1,6 +1,7 @@
-import { App, Modal, Notice, Setting } from "obsidian";
+import { App, Modal, Setting } from "obsidian";
 import type { IssueEntry } from "./types";
 import type { OpSettings } from "./settings";
+import { notify } from "./notificationLog";
 import {
   AGENT_IDS,
   type AgentId,
@@ -139,7 +140,7 @@ export class PreviewWorkflowModal extends Modal {
         b.setButtonText("Copy to clipboard").onClick(async () => {
           const text = this.composed?.text ?? "";
           const ok = await copyToClipboard(text);
-          new Notice(ok ? "Composed prompt copied to clipboard" : "Copy failed — clipboard unavailable");
+          notify(ok ? "Composed prompt copied to clipboard" : "Copy failed — clipboard unavailable");
         }),
       )
       .addButton((b) => b.setButtonText("Close").setCta().onClick(() => this.close()));

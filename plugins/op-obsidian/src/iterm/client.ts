@@ -241,6 +241,88 @@ export async function selectSession(sessionId: string): Promise<void> {
   }
 }
 
+// OP-232: best-effort "open <url> in an iTerm browser tab" path.
+//
+// iTerm 3.6 introduced in-app browser tabs via the iTermBrowserPlugin bundle.
+// The Python API exposes `Window.async_create_browser_tab(url=…)`; the
+// underlying protobuf surface is `CreateTabRequest` with profile properties
+// that select a browser-typed profile. The exact property keys aren't part
+// of the public protobuf we ship in `proto/api.generated.ts`, so this is a
+// best-effort path: we set a handful of candidate keys (iTerm ignores
+// unrecognized keys silently) and return `{ ok: false, reason }` on any
+// failure so the caller can fall back to `window.open(url)`.
+//
+// Returns without throwing — the OP-232 happy path catches the result and
+// decides whether to fall through to the system browser.
+export interface OpenBrowserTabResult {
+  ok: boolean;
+  /** Populated when `ok` is false — short, single-line reason for logging
+   *  and the system-browser-fallback Notice. */
+  reason?: string;
+}
+
+export async function openBrowserTab(url: string): Promise<OpenBrowserTabResult> {
+  let windowId: string | undefined;
+  try {
+    windowId = await activeWindowId();
+  } catch (err) {
+    return { ok: false, reason: `iTerm WS not reachable: ${describeErr(err)}` };
+  }
+  if (!windowId) {
+    return { ok: false, reason: "no active iTerm window" };
+  }
+
+  try {
+    const reply = await call({
+      createTabRequest: iterm2.CreateTabRequest.create({
+        windowId,
+        customProfileProperties: browserTabProfileProperties(url),
+      }),
+    });
+    const sub = reply.createTabResponse;
+    if (!sub) return { ok: false, reason: "iTerm createTabResponse missing" };
+    if (sub.status !== undefined && sub.status !== iterm2.CreateTabResponse.Status.OK) {
+      return { ok: false, reason: `iTerm createTab status=${sub.status}` };
+    }
+    if (!sub.sessionId) {
+      return { ok: false, reason: "iTerm createTab returned no sessionId" };
+    }
+    return { ok: true };
+  } catch (err) {
+    return { ok: false, reason: describeErr(err) };
+  }
+}
+
+/** Profile-property overlay candidate keys for iTerm browser-tab creation.
+ *  Exported for unit tests. iTerm ignores unrecognized keys silently, so
+ *  setting a superset is safe; OP-236 will narrow this once smoke confirms
+ *  which keys actually take effect on a real iTerm 3.6 install. */
+export function browserTabProfileProperties(url: string): iterm2.ProfileProperty[] {
+  return [
+    iterm2.ProfileProperty.create({
+      key: "Custom Command",
+      jsonValue: JSON.stringify("No"),
+    }),
+    iterm2.ProfileProperty.create({
+      key: "URL",
+      jsonValue: JSON.stringify(url),
+    }),
+    iterm2.ProfileProperty.create({
+      key: "Initial URL",
+      jsonValue: JSON.stringify(url),
+    }),
+    iterm2.ProfileProperty.create({
+      key: "Profile Type",
+      jsonValue: JSON.stringify("Browser"),
+    }),
+  ];
+}
+
+function describeErr(err: unknown): string {
+  if (err instanceof Error) return err.message.split("\n")[0];
+  return String(err);
+}
+
 // Close an iTerm window by id. force=true bypasses the "process still running"
 // confirmation iTerm normally shows — needed because the window's PTYs are
 // still attached to the dead view scripts. NOT_FOUND is treated as success
