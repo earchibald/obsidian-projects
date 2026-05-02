@@ -127,7 +127,7 @@ const ADVANCED_SECTIONS: ReadonlyArray<{
     id: "profileOverlays",
     title: "Profile overlays (JSON per agent)",
     blurb:
-      "JSON patches merged on top of the built-in agent profile. Allowed keys: binary, launchFlags, promptPreamble, skillTrigger, label.",
+      "JSON patches merged on top of the built-in agent profile. Allowed keys: binary, launchFlags, promptPreamble, skillTrigger, label, postLaunchCommands, evaluatePostLaunchCommands, planPostLaunchCommands, reviewPostLaunchCommands, finalizePostLaunchCommands, postLaunchReadinessRegex.",
   },
   {
     id: "worktreeEnforcement",
@@ -1454,7 +1454,7 @@ export class OpSettingsTab extends PluginSettingTab {
 
     containerEl.createEl("p", {
       text:
-        "Overlays are a JSON patch merged on top of the built-in profile for each agent. Allowed keys: `binary` (string — absolute path or PATH lookup), `launchFlags` (string[] appended to the command line), `promptPreamble` (string prepended to every prompt), `skillTrigger` (string — first line of the prompt), `label` (string for the sidebar badge). Example: `{ \"binary\": \"/opt/homebrew/bin/claude\", \"launchFlags\": [\"--dangerously-skip-permissions\"] }`.",
+        "Overlays are a JSON patch merged on top of the built-in profile for each agent. Allowed keys: `binary` (string — absolute path or PATH lookup), `launchFlags` (string[] appended to the command line), `promptPreamble` (string prepended to every prompt), `skillTrigger` (string — first line of the prompt), `label` (string for the sidebar badge), `postLaunchCommands` / `evaluatePostLaunchCommands` / `planPostLaunchCommands` / `reviewPostLaunchCommands` / `finalizePostLaunchCommands` (string[] slash commands sent after launch), and `postLaunchReadinessRegex` (string regex matched against the tmux pane before dispatch). Example: `{ \"binary\": \"/opt/homebrew/bin/copilot\", \"postLaunchCommands\": [\"/rename {{id}}\"] }`.",
       cls: "setting-item-description",
     });
 
@@ -1527,7 +1527,7 @@ export class OpSettingsTab extends PluginSettingTab {
           if (!result.ok || !result.overlay) {
             userError(
               `${id} overlay: ${result.errors.join("; ")}`,
-              "Allowed keys: binary, launchFlags (string[]), promptPreamble, skillTrigger, label.",
+              "Allowed keys: binary, launchFlags (string[]), promptPreamble, skillTrigger, label, postLaunchCommands/evaluatePostLaunchCommands/planPostLaunchCommands/reviewPostLaunchCommands/finalizePostLaunchCommands (string[]), postLaunchReadinessRegex.",
             );
             return;
           }
@@ -1683,7 +1683,7 @@ export class OpSettingsTab extends PluginSettingTab {
     );
     addTerm(
       "Profile overlay",
-      "Per-agent JSON patch merged on top of the built-in agent profile. Keys: `binary`, `launchFlags` (string[]), `promptPreamble`, `skillTrigger`, `label`. Unknown keys are flagged but saved.",
+      "Per-agent JSON patch merged on top of the built-in agent profile. Keys: `binary`, `launchFlags` (string[]), `promptPreamble`, `skillTrigger`, `label`, `postLaunchCommands` / mode-specific variants (string[]), and `postLaunchReadinessRegex`. Unknown keys are flagged but saved.",
     );
     addTerm(
       "Working directory",

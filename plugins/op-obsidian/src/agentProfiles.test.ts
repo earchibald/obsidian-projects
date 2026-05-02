@@ -6,6 +6,7 @@ import {
   launchFlagsFor,
   mergeProfile,
   normalizeMode,
+  postLaunchCommandsFor,
   promptPreambleFor,
   type AgentLaunchMode,
 } from "./agentProfiles";
@@ -112,6 +113,8 @@ describe("mergeProfile", () => {
       expect(merged.evaluatePromptPreamble).toBe(base.evaluatePromptPreamble);
       expect(merged.reviewPromptPreamble).toBe(base.reviewPromptPreamble);
       expect(merged.finalizePromptPreamble).toBe(base.finalizePromptPreamble);
+      expect(merged.postLaunchCommands).toEqual(base.postLaunchCommands);
+      expect(merged.postLaunchReadinessRegex).toBe(base.postLaunchReadinessRegex);
     }
   });
   it("partial overlay only replaces the specified fields", () => {
@@ -127,6 +130,33 @@ describe("mergeProfile", () => {
     const merged = mergeProfile("claude", overlay);
     overlay.evaluateLaunchFlags.push("MUTATED");
     expect(merged.evaluateLaunchFlags).toEqual(["--custom"]);
+  });
+  it("overlay post-launch command arrays are copied and readiness regex can be overridden", () => {
+    const overlay = {
+      postLaunchCommands: ["/rename {{id}}"],
+      postLaunchReadinessRegex: "ready",
+    };
+    const merged = mergeProfile("copilot", overlay);
+    overlay.postLaunchCommands.push("MUTATED");
+    expect(merged.postLaunchCommands).toEqual(["/rename {{id}}"]);
+    expect(merged.postLaunchReadinessRegex).toBe("ready");
+  });
+  it("empty overlay arrays clear the built-in defaults", () => {
+    const merged = mergeProfile("copilot", { postLaunchCommands: [] });
+    expect(merged.postLaunchCommands).toEqual([]);
+  });
+});
+
+describe("postLaunchCommandsFor", () => {
+  it("returns the mode-specific command list", () => {
+    expect(postLaunchCommandsFor(BASE_PROFILES.copilot, "plan")).toEqual(
+      BASE_PROFILES.copilot.planPostLaunchCommands,
+    );
+  });
+  it("work and implement share the base command list", () => {
+    expect(postLaunchCommandsFor(BASE_PROFILES.copilot, "work")).toEqual(
+      postLaunchCommandsFor(BASE_PROFILES.copilot, "implement"),
+    );
   });
 });
 
@@ -145,5 +175,11 @@ describe("BASE_PROFILES sanity", () => {
     expect(BASE_PROFILES.claude.evaluateLaunchFlags.length).toBeGreaterThan(0);
     expect(BASE_PROFILES.gemini.evaluateLaunchFlags).toEqual([]);
     expect(BASE_PROFILES.copilot.evaluateLaunchFlags).toEqual([]);
+  });
+  it("only copilot ships post-launch rename commands out of the box", () => {
+    expect(BASE_PROFILES.claude.postLaunchCommands).toEqual([]);
+    expect(BASE_PROFILES.gemini.postLaunchCommands).toEqual([]);
+    expect(BASE_PROFILES.copilot.postLaunchCommands).toEqual(["/rename {{id}} {{title}}"]);
+    expect(BASE_PROFILES.copilot.postLaunchReadinessRegex).toBe("/ commands\\s+·\\s+\\? help");
   });
 });

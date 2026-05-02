@@ -3,9 +3,19 @@ import { validateOverlay } from "./overlayValidate";
 
 describe("validateOverlay", () => {
   it("accepts a well-formed overlay", () => {
-    const r = validateOverlay({ binary: "claude", launchFlags: ["--x"], label: "X" });
+    const r = validateOverlay({
+      binary: "claude",
+      launchFlags: ["--x"],
+      postLaunchCommands: ["/rename {{id}}"],
+      label: "X",
+    });
     expect(r.ok).toBe(true);
-    expect(r.overlay).toEqual({ binary: "claude", launchFlags: ["--x"], label: "X" });
+    expect(r.overlay).toEqual({
+      binary: "claude",
+      launchFlags: ["--x"],
+      postLaunchCommands: ["/rename {{id}}"],
+      label: "X",
+    });
     expect(r.warnings).toEqual([]);
   });
 
@@ -31,5 +41,10 @@ describe("validateOverlay", () => {
   it("errors when launchFlags is not string array", () => {
     expect(validateOverlay({ launchFlags: "x" }).ok).toBe(false);
     expect(validateOverlay({ launchFlags: [1, 2] }).ok).toBe(false);
+  });
+
+  it("errors when post-launch command arrays are not string arrays", () => {
+    expect(validateOverlay({ postLaunchCommands: "x" }).ok).toBe(false);
+    expect(validateOverlay({ reviewPostLaunchCommands: [1, 2] }).ok).toBe(false);
   });
 });

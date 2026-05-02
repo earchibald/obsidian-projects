@@ -11,10 +11,15 @@ import {
   launchFlagsFor,
   mergeProfile,
   modeToWorkflowStep,
+  normalizeMode,
+  postLaunchCommandsFor,
 } from "./agentProfiles";
 import { buildPrompt } from "./promptBuild";
 import { gitBranchAt } from "./gitBranch";
+import { buildRenderContext } from "./pluginVarRegistry";
 import { workIssue } from "./workIssue";
+import { dispatchPostLaunch } from "./postLaunchDispatch";
+import { renderTemplate } from "./renderTemplate";
 import { resolveWorkingDir } from "./workingDir";
 import { launchInTerminal } from "./terminalLaunch";
 import type { AgentDetector, DetectionMap } from "./agentDetect";
@@ -283,6 +288,37 @@ export async function openAgent(
       },
     },
   });
+
+  const renderContext = buildRenderContext({
+    entry: args.entry,
+    profile,
+    launch: {
+      mode: normalizeMode(mode),
+      model: resolved?.canonicalModel,
+      branch,
+      repo_path: wd.path,
+      vault_path: vaultBasePath ?? "",
+      vault_name: app.vault.getName(),
+      today: new Date().toISOString().slice(0, 10),
+      parent: parentId,
+    },
+  });
+  const commands = postLaunchCommandsFor(profile, mode)
+    .map((command) => renderTemplate(command, renderContext).text.trim())
+    .filter((command) => command.length > 0);
+  if (commands.length > 0) {
+    void dispatchPostLaunch({
+      tmuxBinary: settings.tmuxBinary,
+      tmuxSession,
+      tmuxWindow,
+      commands,
+      readinessRegex: profile.postLaunchReadinessRegex
+        ? new RegExp(profile.postLaunchReadinessRegex)
+        : undefined,
+    }).catch((err) => {
+      console.error("[op-obsidian] post-launch dispatch failed", err);
+    });
+  }
 
   // OP-155 §4 Step 4: first iTerm launch — surface the one-time prefs Notice
   // and persist the bit. Flip the bit synchronously *before* yielding to the
