@@ -43,6 +43,7 @@ import {
   OpSidebarView,
   pickIssuesForTab,
   prNumber,
+  sidebarSearchHelpText,
   shouldShowProjectChip,
   TMUX_PROBE_INTERVAL_MS,
   type OpSidebarHooks,
@@ -75,9 +76,28 @@ const subseqMatcher = (q: string) => (text: string) => {
 
 describe("filterEntries", () => {
   const items = [
-    entry({ id: "OP-1", title: "OP-1 sidebar fuzzy filter" }),
-    entry({ id: "OP-2", title: "OP-2 settings tab cleanup" }),
-    entry({ id: "JB-9", title: "JB-9 link escaping", project: "jira-bases" }),
+    entry({
+      id: "OP-1",
+      title: "OP-1 sidebar fuzzy filter",
+      priority: "high",
+      agent: "copilot",
+      pr: "https://github.com/owner/repo/pull/1",
+    }),
+    entry({
+      id: "OP-2",
+      title: "OP-2 settings tab cleanup",
+      status: "blocked",
+      githubIssue: "https://github.com/owner/repo/issues/2",
+    }),
+    entry({
+      id: "JB-9",
+      title: "JB-9 link escaping",
+      project: "jira-bases",
+      status: "in-progress",
+      priority: "low",
+      agent: "claude",
+      commits: ["abc1234 initial import"],
+    }),
   ];
 
   it("returns all entries when query is empty", () => {
@@ -100,6 +120,33 @@ describe("filterEntries", () => {
     expect(out.map((e) => e.id)).toEqual(["JB-9"]);
   });
 
+  it("parses project filters by prefix", () => {
+    const out = filterEntries(items, "project:OP", subseqMatcher);
+    expect(out.map((e) => e.id)).toEqual(["OP-1", "OP-2"]);
+  });
+
+  it("combines project filters with free-text fuzzy matching", () => {
+    const out = filterEntries(items, "project:OP filter", subseqMatcher);
+    expect(out.map((e) => e.id)).toEqual(["OP-1"]);
+  });
+
+  it("parses status, priority, and agent filters", () => {
+    expect(filterEntries(items, "status:blocked", subseqMatcher).map((e) => e.id)).toEqual(["OP-2"]);
+    expect(filterEntries(items, "priority:high", subseqMatcher).map((e) => e.id)).toEqual(["OP-1"]);
+    expect(filterEntries(items, "agent:claude", subseqMatcher).map((e) => e.id)).toEqual(["JB-9"]);
+  });
+
+  it("parses has:* filters", () => {
+    expect(filterEntries(items, "has:pr", subseqMatcher).map((e) => e.id)).toEqual(["OP-1"]);
+    expect(filterEntries(items, "has:github", subseqMatcher).map((e) => e.id)).toEqual(["OP-2"]);
+    expect(filterEntries(items, "has:commits", subseqMatcher).map((e) => e.id)).toEqual(["JB-9"]);
+  });
+
+  it("treats unsupported key:value tokens as plain text when structured filters are present", () => {
+    const out = filterEntries(items, "project:OP title:filter", subseqMatcher);
+    expect(out.map((e) => e.id)).toEqual(["OP-1"]);
+  });
+
   it("returns empty when nothing matches", () => {
     expect(filterEntries(items, "zzznotpresent", subseqMatcher)).toEqual([]);
   });
@@ -107,6 +154,18 @@ describe("filterEntries", () => {
   it("preserves input order", () => {
     const out = filterEntries(items, "op", subseqMatcher);
     expect(out.map((e) => e.id)).toEqual(["OP-1", "OP-2"]);
+  });
+});
+
+describe("sidebarSearchHelpText", () => {
+  it("lists supported structured keys and a combined example", () => {
+    const text = sidebarSearchHelpText();
+    expect(text).toContain("project:<slug|PREFIX>");
+    expect(text).toContain("status:<open|in-progress|blocked|resolved|wontfix>");
+    expect(text).toContain("priority:<low|med|high>");
+    expect(text).toContain("agent:<name|none>");
+    expect(text).toContain("has:<pr|github|agent|commits>");
+    expect(text).toContain("project:OP sidebar");
   });
 });
 

@@ -13,6 +13,40 @@ import { tmuxWindowName } from "./terminalLaunch";
 export const OP_SIDEBAR_VIEW_TYPE = "op-sidebar";
 
 type TabId = "issues" | "in-flight" | "resolved";
+type SidebarSearchKey = "project" | "status" | "priority" | "agent" | "has";
+
+interface SidebarSearchFilter {
+  key: SidebarSearchKey;
+  value: string;
+}
+
+export const SIDEBAR_SEARCH_HELP = [
+  {
+    key: "project:<slug|PREFIX>",
+    description: "Match a project by slug or issue prefix.",
+    example: "project:OP",
+  },
+  {
+    key: "status:<open|in-progress|blocked|resolved|wontfix>",
+    description: "Filter by issue status.",
+    example: "status:blocked",
+  },
+  {
+    key: "priority:<low|med|high>",
+    description: "Filter by priority.",
+    example: "priority:high",
+  },
+  {
+    key: "agent:<name|none>",
+    description: "Filter by attached agent, or rows without one.",
+    example: "agent:copilot",
+  },
+  {
+    key: "has:<pr|github|agent|commits>",
+    description: "Require a populated field on the issue.",
+    example: "has:pr",
+  },
+] as const;
 
 const TABS: Array<{ id: TabId; label: string }> = [
   { id: "issues", label: "Issues" },
@@ -160,7 +194,8 @@ export class OpSidebarView extends ItemView {
       this.tabButtons.set(t.id, btn);
     }
 
-    this.filterInput = root.createEl("input", {
+    const filterRow = root.createDiv({ cls: "op-sidebar__filter-row" });
+    this.filterInput = filterRow.createEl("input", {
       cls: "op-sidebar__filter",
       attr: {
         type: "search",
@@ -173,6 +208,15 @@ export class OpSidebarView extends ItemView {
       this.filterQuery = this.filterInput.value;
       this.scheduleRender();
     });
+    const filterHelp = filterRow.createEl("button", {
+      cls: "op-sidebar__filter-help",
+      text: "?",
+      attr: {
+        type: "button",
+        "aria-label": "Sidebar search help",
+      },
+    });
+    setTooltip(filterHelp, sidebarSearchHelpText(), { delay: 250 });
 
     this.bodyEl = root.createDiv({ cls: "op-sidebar__body" });
 
@@ -1017,6 +1061,14 @@ function stripIdPrefix(title: string, id: string): string {
 
 type MatcherFactory = (query: string) => (text: string) => unknown;
 
+export function sidebarSearchHelpText(): string {
+  return [
+    "Search keys",
+    ...SIDEBAR_SEARCH_HELP.map((item) => `${item.key} — ${item.description} Example: ${item.example}`),
+    "Combine keys with free text, e.g. project:OP sidebar",
+  ].join("\n");
+}
+
 export function filterEntries(
   entries: IssueEntry[],
   query: string,
@@ -1024,11 +1076,126 @@ export function filterEntries(
 ): IssueEntry[] {
   const q = query.trim();
   if (!q) return entries;
-  const match = makeMatcher(q);
+  const parsed = parseSidebarSearchQuery(q);
+  if (parsed.filters.length === 0) {
+    const legacyMatch = makeMatcher(q);
+    return entries.filter((e) => legacyMatch(fuzzyTarget(e)) !== null);
+  }
+  const match = parsed.textQuery ? makeMatcher(parsed.textQuery) : undefined;
   return entries.filter((e) => {
-    const target = `${e.id} ${stripIdPrefix(e.title, e.id)} ${e.project}`;
-    return match(target) !== null;
+    if (!parsed.filters.every((filter) => matchesSidebarSearchFilter(e, filter))) return false;
+    if (!match) return true;
+    return match(fuzzyTarget(e)) !== null;
   });
+}
+
+function fuzzyTarget(entry: IssueEntry): string {
+  return `${entry.id} ${stripIdPrefix(entry.title, entry.id)} ${entry.project}`;
+}
+
+function parseSidebarSearchQuery(query: string): {
+  filters: SidebarSearchFilter[];
+  textQuery: string;
+} {
+  const filters: SidebarSearchFilter[] = [];
+  const text: string[] = [];
+  for (const token of query.split(/\s+/).filter(Boolean)) {
+    const parsed = parseSidebarSearchToken(token);
+    if (parsed) {
+      filters.push(parsed);
+      continue;
+    }
+    text.push(fallbackSearchText(token));
+  }
+  return {
+    filters,
+    textQuery: text.filter(Boolean).join(" "),
+  };
+}
+
+function parseSidebarSearchToken(token: string): SidebarSearchFilter | null {
+  const idx = token.indexOf(":");
+  if (idx <= 0 || idx === token.length - 1) return null;
+  const key = normalizeSearchValue(token.slice(0, idx));
+  const value = token.slice(idx + 1).trim();
+  if (!value) return null;
+  if (!isSidebarSearchKey(key)) return null;
+  return { key, value };
+}
+
+function isSidebarSearchKey(key: string): key is SidebarSearchKey {
+  return key === "project" || key === "status" || key === "priority" || key === "agent" || key === "has";
+}
+
+function fallbackSearchText(token: string): string {
+  const idx = token.indexOf(":");
+  if (idx <= 0 || idx === token.length - 1) return token;
+  return token.slice(idx + 1).trim() || token;
+}
+
+function matchesSidebarSearchFilter(entry: IssueEntry, filter: SidebarSearchFilter): boolean {
+  const value = normalizeSearchValue(filter.value);
+  switch (filter.key) {
+    case "project":
+      return matchesProjectFilter(entry, value);
+    case "status":
+      return normalizeIssueStatus(entry.status) === normalizeIssueStatus(value);
+    case "priority":
+      return normalizePriority(entry.priority) === normalizePriority(value);
+    case "agent":
+      return matchesAgentFilter(entry, value);
+    case "has":
+      return matchesHasFilter(entry, value);
+  }
+}
+
+function matchesProjectFilter(entry: IssueEntry, value: string): boolean {
+  const slug = normalizeSearchValue(entry.project);
+  const prefix = normalizeSearchValue(issuePrefix(entry.id));
+  return prefix === value || slug === value || slug.includes(value);
+}
+
+function matchesAgentFilter(entry: IssueEntry, value: string): boolean {
+  if (value === "none" || value === "unassigned") return !entry.agent;
+  return normalizeSearchValue(entry.agent) === value;
+}
+
+function matchesHasFilter(entry: IssueEntry, value: string): boolean {
+  switch (value) {
+    case "pr":
+      return !!entry.pr;
+    case "github":
+    case "gh":
+    case "github-issue":
+      return !!entry.githubIssue;
+    case "agent":
+      return !!entry.agent;
+    case "commit":
+    case "commits":
+      return !!entry.commits?.length;
+    default:
+      return false;
+  }
+}
+
+function issuePrefix(id: string): string {
+  return id.split("-")[0] ?? "";
+}
+
+function normalizeIssueStatus(status: string | undefined): string {
+  const normalized = normalizeSearchValue(status);
+  if (normalized === "inprogress") return "in-progress";
+  return normalized;
+}
+
+function normalizePriority(priority: string | undefined): string {
+  const normalized = normalizeSearchValue(priority);
+  if (normalized === "medium") return "med";
+  return normalized;
+}
+
+function normalizeSearchValue(value: string | undefined): string {
+  return value?.trim().toLowerCase() ?? "";
 }
 
 function ghIssueNumber(url: string): number | undefined {
