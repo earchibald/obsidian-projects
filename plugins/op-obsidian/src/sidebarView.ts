@@ -14,6 +14,7 @@ export const OP_SIDEBAR_VIEW_TYPE = "op-sidebar";
 
 type TabId = "issues" | "in-flight" | "resolved";
 type SidebarSearchKey = "project" | "status" | "priority" | "agent" | "has";
+type SidebarSearchMatchTier = 0 | 1 | 2 | 3;
 
 interface SidebarSearchFilter {
   key: SidebarSearchKey;
@@ -1081,12 +1082,14 @@ export function filterEntries(
     const legacyMatch = makeMatcher(q);
     return entries.filter((e) => legacyMatch(fuzzyTarget(e)) !== null);
   }
-  const match = parsed.textQuery ? makeMatcher(parsed.textQuery) : undefined;
-  return entries.filter((e) => {
-    if (!parsed.filters.every((filter) => matchesSidebarSearchFilter(e, filter))) return false;
-    if (!match) return true;
-    return match(fuzzyTarget(e)) !== null;
-  });
+  let filtered = entries;
+  for (const filter of parsed.filters) {
+    filtered = applySidebarSearchFilter(filtered, filter);
+    if (filtered.length === 0) return [];
+  }
+  if (!parsed.textQuery) return filtered;
+  const match = makeMatcher(parsed.textQuery);
+  return filtered.filter((e) => match(fuzzyTarget(e)) !== null);
 }
 
 function fuzzyTarget(entry: IssueEntry): string {
@@ -1133,53 +1136,79 @@ function fallbackSearchText(token: string): string {
   return token.slice(idx + 1).trim() || token;
 }
 
-function matchesSidebarSearchFilter(entry: IssueEntry, filter: SidebarSearchFilter): boolean {
-  const value = normalizeSearchValue(filter.value);
+function applySidebarSearchFilter(entries: IssueEntry[], filter: SidebarSearchFilter): IssueEntry[] {
+  const ranked = entries.map((entry) => ({
+    entry,
+    tier: sidebarSearchFilterTier(entry, filter),
+  }));
+  const bestTier = ranked.reduce<SidebarSearchMatchTier>(
+    (best, item) => (item.tier > best ? item.tier : best),
+    0,
+  );
+  if (bestTier === 0) return [];
+  return ranked.filter((item) => item.tier === bestTier).map((item) => item.entry);
+}
+
+function sidebarSearchFilterTier(entry: IssueEntry, filter: SidebarSearchFilter): SidebarSearchMatchTier {
+  return bestCandidateMatchTier(sidebarSearchCandidates(entry, filter), filter.value);
+}
+
+function sidebarSearchCandidates(entry: IssueEntry, filter: SidebarSearchFilter): string[] {
   switch (filter.key) {
     case "project":
-      return matchesProjectFilter(entry, value);
+      return compactUnique([issuePrefix(entry.id), entry.project]);
     case "status":
-      return normalizeIssueStatus(entry.status) === normalizeIssueStatus(value);
+      return compactUnique([entry.status, statusAlias(entry.status)]);
     case "priority":
-      return normalizePriority(entry.priority) === normalizePriority(value);
+      return compactUnique([entry.priority, priorityAlias(entry.priority)]);
     case "agent":
-      return matchesAgentFilter(entry, value);
+      return entry.agent ? [entry.agent] : ["none", "unassigned"];
     case "has":
-      return matchesHasFilter(entry, value);
+      return hasCandidates(entry);
   }
 }
 
-function matchesProjectFilter(entry: IssueEntry, value: string): boolean {
-  const slug = normalizeSearchValue(entry.project);
-  const prefix = normalizeSearchValue(issuePrefix(entry.id));
-  return prefix === value || slug === value || slug.includes(value);
+function bestCandidateMatchTier(
+  candidates: string[],
+  rawQuery: string,
+): SidebarSearchMatchTier {
+  const query = rawQuery.trim();
+  if (!query) return 0;
+  if (candidates.some((candidate) => candidate.trim() === query)) return 3;
+  const normalizedQuery = normalizeSearchValue(query);
+  if (!normalizedQuery) return 0;
+  if (candidates.some((candidate) => normalizeSearchValue(candidate) === normalizedQuery)) return 2;
+  if (candidates.some((candidate) => normalizeSearchValue(candidate).includes(normalizedQuery))) return 1;
+  return 0;
 }
 
-function matchesAgentFilter(entry: IssueEntry, value: string): boolean {
-  if (value === "none" || value === "unassigned") return !entry.agent;
-  return normalizeSearchValue(entry.agent) === value;
+function hasCandidates(entry: IssueEntry): string[] {
+  const out: string[] = [];
+  if (entry.pr) out.push("pr");
+  if (entry.githubIssue) out.push("github", "gh", "github-issue");
+  if (entry.agent) out.push("agent");
+  if (entry.commits?.length) out.push("commit", "commits");
+  return out;
 }
 
-function matchesHasFilter(entry: IssueEntry, value: string): boolean {
-  switch (value) {
-    case "pr":
-      return !!entry.pr;
-    case "github":
-    case "gh":
-    case "github-issue":
-      return !!entry.githubIssue;
-    case "agent":
-      return !!entry.agent;
-    case "commit":
-    case "commits":
-      return !!entry.commits?.length;
-    default:
-      return false;
-  }
+function compactUnique(values: Array<string | undefined>): string[] {
+  return [...new Set(values.map((value) => value?.trim()).filter((value): value is string => !!value))];
 }
 
 function issuePrefix(id: string): string {
   return id.split("-")[0] ?? "";
+}
+
+function statusAlias(status: string | undefined): string | undefined {
+  const normalized = normalizeIssueStatus(status);
+  if (!normalized) return undefined;
+  return normalized === status?.trim() ? undefined : normalized;
+}
+
+function priorityAlias(priority: string | undefined): string | undefined {
+  const normalized = normalizePriority(priority);
+  if (!normalized) return undefined;
+  return normalized === priority?.trim() ? undefined : normalized;
 }
 
 function normalizeIssueStatus(status: string | undefined): string {

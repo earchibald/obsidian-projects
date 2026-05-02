@@ -79,6 +79,7 @@ describe("filterEntries", () => {
     entry({
       id: "OP-1",
       title: "OP-1 sidebar fuzzy filter",
+      project: "obsidian-projects",
       priority: "high",
       agent: "copilot",
       pr: "https://github.com/owner/repo/pull/1",
@@ -86,8 +87,24 @@ describe("filterEntries", () => {
     entry({
       id: "OP-2",
       title: "OP-2 settings tab cleanup",
+      project: "obsidian-projects",
       status: "blocked",
       githubIssue: "https://github.com/owner/repo/issues/2",
+    }),
+    entry({
+      id: "OPD-3",
+      title: "OPD-3 demo issue",
+      project: "op-demo",
+      status: "open",
+      priority: "med",
+    }),
+    entry({
+      id: "DEV-4",
+      title: "DEV-4 docs examples",
+      project: "obsidian-plugin-development",
+      status: "in-progress",
+      priority: "med",
+      agent: "copilot-helper",
     }),
     entry({
       id: "JB-9",
@@ -101,8 +118,8 @@ describe("filterEntries", () => {
   ];
 
   it("returns all entries when query is empty", () => {
-    expect(filterEntries(items, "", subseqMatcher)).toHaveLength(3);
-    expect(filterEntries(items, "   ", subseqMatcher)).toHaveLength(3);
+    expect(filterEntries(items, "", subseqMatcher)).toHaveLength(5);
+    expect(filterEntries(items, "   ", subseqMatcher)).toHaveLength(5);
   });
 
   it("filters to fuzzy-matching entries by title", () => {
@@ -125,6 +142,25 @@ describe("filterEntries", () => {
     expect(out.map((e) => e.id)).toEqual(["OP-1", "OP-2"]);
   });
 
+  it("prefers exact project matches over broader substring matches", () => {
+    const out = filterEntries(items, "project:OP", subseqMatcher);
+    expect(out.map((e) => e.id)).toEqual(["OP-1", "OP-2"]);
+  });
+
+  it("falls back from exact to case-insensitive exact for project filters", () => {
+    expect(filterEntries(items, "project:op", subseqMatcher).map((e) => e.id)).toEqual(["OP-1", "OP-2"]);
+    expect(filterEntries(items, "project:opd", subseqMatcher).map((e) => e.id)).toEqual(["OPD-3"]);
+  });
+
+  it("falls back to substring matching only when exact tiers miss", () => {
+    expect(filterEntries(items, "project:op-de", subseqMatcher).map((e) => e.id)).toEqual(["OPD-3"]);
+    expect(filterEntries(items, "project:obsidi", subseqMatcher).map((e) => e.id)).toEqual([
+      "OP-1",
+      "OP-2",
+      "DEV-4",
+    ]);
+  });
+
   it("combines project filters with free-text fuzzy matching", () => {
     const out = filterEntries(items, "project:OP filter", subseqMatcher);
     expect(out.map((e) => e.id)).toEqual(["OP-1"]);
@@ -134,6 +170,14 @@ describe("filterEntries", () => {
     expect(filterEntries(items, "status:blocked", subseqMatcher).map((e) => e.id)).toEqual(["OP-2"]);
     expect(filterEntries(items, "priority:high", subseqMatcher).map((e) => e.id)).toEqual(["OP-1"]);
     expect(filterEntries(items, "agent:claude", subseqMatcher).map((e) => e.id)).toEqual(["JB-9"]);
+  });
+
+  it("applies the same exact/CI exact/substring fallback to non-project keys", () => {
+    expect(filterEntries(items, "status:Blocked", subseqMatcher).map((e) => e.id)).toEqual(["OP-2"]);
+    expect(filterEntries(items, "status:prog", subseqMatcher).map((e) => e.id)).toEqual(["DEV-4", "JB-9"]);
+    expect(filterEntries(items, "agent:copilot", subseqMatcher).map((e) => e.id)).toEqual(["OP-1"]);
+    expect(filterEntries(items, "agent:copilot-helper", subseqMatcher).map((e) => e.id)).toEqual(["DEV-4"]);
+    expect(filterEntries(items, "agent:helper", subseqMatcher).map((e) => e.id)).toEqual(["DEV-4"]);
   });
 
   it("parses has:* filters", () => {
@@ -153,7 +197,7 @@ describe("filterEntries", () => {
 
   it("preserves input order", () => {
     const out = filterEntries(items, "op", subseqMatcher);
-    expect(out.map((e) => e.id)).toEqual(["OP-1", "OP-2"]);
+    expect(out.map((e) => e.id)).toEqual(["OP-1", "OP-2", "OPD-3", "DEV-4"]);
   });
 });
 
