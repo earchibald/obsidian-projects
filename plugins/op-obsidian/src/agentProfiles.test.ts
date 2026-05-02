@@ -173,6 +173,14 @@ describe("postLaunchCommandsFor", () => {
       postLaunchCommandsFor(BASE_PROFILES.claude, "implement"),
     );
   });
+  it("copilot uses the same rename command in plan and implement modes", () => {
+    expect(postLaunchCommandsFor(BASE_PROFILES.copilot, "plan")).toEqual(
+      BASE_PROFILES.copilot.planPostLaunchCommands,
+    );
+    expect(postLaunchCommandsFor(BASE_PROFILES.copilot, "implement")).toEqual(
+      ["/rename {{id}} {{title}}"],
+    );
+  });
 });
 
 describe("BASE_PROFILES sanity", () => {
@@ -191,9 +199,10 @@ describe("BASE_PROFILES sanity", () => {
     expect(BASE_PROFILES.gemini.evaluateLaunchFlags).toEqual([]);
     expect(BASE_PROFILES.copilot.evaluateLaunchFlags).toEqual(["--autopilot", "--allow-all"]);
   });
-  it("only claude ships post-launch commands out of the box", () => {
+  it("claude and copilot ship post-launch commands out of the box", () => {
     expect(BASE_PROFILES.claude.postLaunchCommands.length).toBeGreaterThan(0);
     expect(BASE_PROFILES.gemini.postLaunchCommands).toEqual([]);
-    expect(BASE_PROFILES.copilot.postLaunchCommands).toEqual([]);
+    expect(BASE_PROFILES.copilot.postLaunchCommands).toEqual(["/rename {{id}} {{title}}"]);
+    expect(BASE_PROFILES.copilot.postLaunchReadinessRegex).toBe("/ commands\\s+·\\s+\\? help");
   });
 });

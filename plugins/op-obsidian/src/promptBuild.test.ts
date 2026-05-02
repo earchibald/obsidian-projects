@@ -278,6 +278,11 @@ function profile(): AgentProfile {
     planPromptPreamble: "",
     reviewPromptPreamble: "",
     finalizePromptPreamble: "",
+    postLaunchCommands: [],
+    evaluatePostLaunchCommands: [],
+    planPostLaunchCommands: [],
+    reviewPostLaunchCommands: [],
+    finalizePostLaunchCommands: [],
     skillTrigger: "/op:issue {{id}}",
   };
 }

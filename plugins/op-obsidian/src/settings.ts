@@ -1630,6 +1630,7 @@ export class OpSettingsTab extends PluginSettingTab {
             userError(
               `${id} overlay: ${result.errors.join("; ")}`,
               "Allowed keys: binary, launchFlags (string[]), promptPreamble, skillTrigger, label, postLaunchCommands (string[]), per-mode *PostLaunchCommands (string[]), postLaunchReadinessRegex.",
+              "Allowed keys: binary, launchFlags (string[]), promptPreamble, skillTrigger, label, postLaunchCommands (string[]), per-mode *PostLaunchCommands (string[]), postLaunchReadinessRegex.",
             );
             return;
           }
@@ -2167,7 +2168,7 @@ export class OpSettingsTab extends PluginSettingTab {
     );
     addTerm(
       "Profile overlay",
-      "Per-agent JSON patch merged on top of the built-in agent profile. Keys: `binary`, `launchFlags` (string[]), `promptPreamble`, `skillTrigger`, `label`. Unknown keys are flagged but saved.",
+      "Per-agent JSON patch merged on top of the built-in agent profile. Keys: `binary`, `launchFlags` (string[]), `promptPreamble`, `skillTrigger`, `label`, `postLaunchCommands` / mode-specific variants (string[]), and `postLaunchReadinessRegex`. Unknown keys are flagged but saved.",
     );
     addTerm(
       "Working directory",

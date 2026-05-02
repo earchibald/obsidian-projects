@@ -14,6 +14,7 @@ export interface DispatchPostLaunchArgs {
   tmuxWindow: string;
   commands: string[];
   readinessRegex: RegExp;
+  readinessRegex: RegExp;
   readinessTimeoutMs?: number;
   pollIntervalMs?: number;
   interCommandDelayMs?: number;

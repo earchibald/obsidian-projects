@@ -16,7 +16,10 @@ import {
 } from "./agentProfiles";
 import { buildPrompt } from "./promptBuild";
 import { gitBranchAt } from "./gitBranch";
+import { buildRenderContext } from "./pluginVarRegistry";
 import { workIssue } from "./workIssue";
+import { dispatchPostLaunch } from "./postLaunchDispatch";
+import { renderTemplate } from "./renderTemplate";
 import { resolveWorkingDir } from "./workingDir";
 import { launchInTerminal } from "./terminalLaunch";
 import { buildRenderContext } from "./pluginVarRegistry";

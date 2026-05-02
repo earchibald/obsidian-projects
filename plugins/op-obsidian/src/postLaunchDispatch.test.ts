@@ -69,6 +69,7 @@ describe("dispatchPostLaunch", () => {
       tmuxBinary: "tmux",
       tmuxSession: "op-agents",
       tmuxWindow: "OP-3",
+      tmuxWindow: "OP-3",
       commands: [],
       readinessRegex: /ready/,
       exec,
