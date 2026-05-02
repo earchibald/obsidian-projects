@@ -550,7 +550,7 @@ export class OpSettingsTab extends PluginSettingTab {
         d
           .addOption("issues", "Issues")
           .addOption("in-flight", "In flight")
-          .addOption("resolved", "Recently resolved")
+          .addOption("resolved", "Resolved")
           .setValue(s.view.defaultTab)
           .onChange(async (v) => {
             s.view.defaultTab = v as SidebarTab;
@@ -1452,8 +1452,8 @@ export class OpSettingsTab extends PluginSettingTab {
     // Sidebar advanced controls — recently resolved limit, open on startup,
     // density, hover preview — fit alongside other view-flavor controls.
     new Setting(containerEl)
-      .setName("Recently resolved limit")
-      .setDesc("Max issues shown in the Recently resolved tab.")
+      .setName("Resolved default list size")
+      .setDesc("How many recent items the Resolved tab shows before you start searching.")
       .addText((t) =>
         t.setValue(String(s.view.recentResolvedLimit)).onChange(async (v) => {
           const n = parseInt(v, 10);

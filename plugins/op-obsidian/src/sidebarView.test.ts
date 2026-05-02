@@ -28,7 +28,18 @@ vi.mock("obsidian", () => ({
   WorkspaceLeaf: class {},
   setIcon: () => {},
   setTooltip: () => {},
-  prepareFuzzySearch: () => () => null,
+  prepareFuzzySearch: (query: string) => {
+    const needle = query.toLowerCase();
+    return (text: string) => {
+      const haystack = text.toLowerCase();
+      let i = 0;
+      for (const ch of haystack) {
+        if (ch === needle[i]) i++;
+        if (i === needle.length) return { score: -1, matches: [] };
+      }
+      return null;
+    };
+  },
 }));
 
 vi.mock("./staleAgentBadges", () => ({
@@ -299,10 +310,19 @@ describe("pickIssuesForTab", () => {
     expect(tmuxDown.map((e) => e.id).sort()).toEqual(["OP-2", "OP-3", "OP-5", "OP-6"]);
   });
 
-  it("'resolved' tab returns resolved entries sorted by resolved-date desc", () => {
+  it("'resolved' tab returns only the recent resolved slice by default", () => {
     const out = pickIssuesForTab(all, "resolved" as any, {
       liveTmuxWindows: new Set(),
-      recentResolvedLimit: 20,
+      recentResolvedLimit: 2,
+    } as any);
+    expect(out.map((e) => e.id)).toEqual(["OP-6", "OP-5"]);
+  });
+
+  it("'resolved' tab can include all resolved entries for search", () => {
+    const out = pickIssuesForTab(all, "resolved" as any, {
+      liveTmuxWindows: new Set(),
+      recentResolvedLimit: 2,
+      includeAllResolved: true,
     } as any);
     expect(out.map((e) => e.id)).toEqual(["OP-6", "OP-5", "OP-4"]);
   });
@@ -456,11 +476,22 @@ describe("decideKeyAction", () => {
   });
 });
 
-function makeFakeEl(): any {
+function makeFakeEl(tag = "div", options: any = {}): any {
   const _listeners: Record<string, Array<(ev: any) => void>> = {};
+  const classes =
+    typeof options.cls === "string"
+      ? options.cls
+          .split(/\s+/)
+          .map((v: string) => v.trim())
+          .filter(Boolean)
+      : [];
   const el: any = {
+    tag,
+    text: options.text ?? "",
+    value: options.value ?? "",
+    attrs: { ...(options.attr ?? {}) },
     children: [] as any[],
-    classList: new Set<string>(),
+    classList: new Set<string>(classes),
     /** Captured handlers, keyed by event name.  Used by wiring tests. */
     _listeners,
     addClass(c: string) {
@@ -473,27 +504,32 @@ function makeFakeEl(): any {
     empty() {
       this.children.length = 0;
     },
-    createDiv(_o: any) {
-      const child = makeFakeEl();
+    createDiv(o: any) {
+      const child = makeFakeEl("div", o);
       this.children.push(child);
       return child;
     },
-    createEl(_tag: string, _o?: any) {
-      const child = makeFakeEl();
+    createEl(nextTag: string, o?: any) {
+      const child = makeFakeEl(nextTag, o);
       this.children.push(child);
       return child;
     },
-    createSpan(_o: any) {
-      const child = makeFakeEl();
+    createSpan(o: any) {
+      const child = makeFakeEl("span", o);
       this.children.push(child);
       return child;
     },
-    setAttr() {},
+    setAttr(name: string, value: string) {
+      this.attrs[name] = value;
+      if (name === "value") this.value = value;
+    },
     addEventListener(event: string, handler: (ev: any) => void) {
       (_listeners[event] ??= []).push(handler);
     },
     removeEventListener() {},
-    removeClass() {},
+    removeClass(c: string) {
+      this.classList.delete(c);
+    },
     focus() {},
     scrollIntoView() {},
   };
@@ -516,7 +552,7 @@ class FakeBus {
   emit() {}
 }
 
-function makeView(hooks?: OpSidebarHooks): any {
+function makeView(hooks?: OpSidebarHooks, settingsOverride: Record<string, unknown> = {}): any {
   const store = new FakeStore();
   const bus = new FakeBus();
   const view = new OpSidebarView(
@@ -859,6 +895,83 @@ describe("render() selection identity", () => {
     (view as any).render();
     expect((view as any).selectedIndex).toBe(0);
     expect((view as any).displayedIssues[0].id).toBe("OP-1");
+
+    await view.onClose();
+  });
+});
+
+describe("render() resolved tab behavior", () => {
+  function makeResolvedView(issues: IssueEntry[], settingsOverride: Record<string, unknown> = {}): any {
+    const bus = new FakeBus();
+    const store = {
+      byId: () => undefined,
+      issues: () => issues,
+    };
+    return new OpSidebarView(
+      {} as any,
+      store as any,
+      bus as any,
+      () =>
+        ({
+          defaultTab: "resolved",
+          recentResolvedLimit: 1,
+          openOnStartup: false,
+          density: "comfortable",
+          ...settingsOverride,
+        } as any),
+      undefined,
+      undefined,
+      undefined,
+    );
+  }
+
+  it("labels the tab Resolved and shows a truncation hint in the default view", async () => {
+    const issues = [
+      entry({ id: "OP-1", status: "resolved", resolvedFolder: true, resolved: "2026-04-20" }),
+      entry({ id: "OP-2", status: "resolved", resolvedFolder: true, resolved: "2026-04-21" }),
+    ];
+    const view = makeResolvedView(issues);
+
+    await view.onOpen();
+
+    expect(Array.from((view as any).tabButtons.values()).map((btn: any) => btn.text)).toEqual([
+      "Issues",
+      "In flight",
+      "Resolved",
+    ]);
+    expect((view as any).displayedIssues.map((e: IssueEntry) => e.id)).toEqual(["OP-2"]);
+    expect((view as any).bodyEl.children[1].text).toBe(
+      "Showing the 1 most recently resolved issue. Search to see all resolved results.",
+    );
+
+    await view.onClose();
+  });
+
+  it("searches across all resolved issues instead of only the default recent slice", async () => {
+    const issues = [
+      entry({
+        id: "OP-1",
+        title: "OP-1 older resolved needle",
+        status: "resolved",
+        resolvedFolder: true,
+        resolved: "2026-04-20",
+      }),
+      entry({
+        id: "OP-2",
+        title: "OP-2 newer resolved",
+        status: "resolved",
+        resolvedFolder: true,
+        resolved: "2026-04-21",
+      }),
+    ];
+    const view = makeResolvedView(issues);
+
+    await view.onOpen();
+    (view as any).filterQuery = "needle";
+    (view as any).render();
+
+    expect((view as any).displayedIssues.map((e: IssueEntry) => e.id)).toEqual(["OP-1"]);
+    expect((view as any).bodyEl.children).toHaveLength(1);
 
     await view.onClose();
   });
