@@ -479,6 +479,22 @@ describe("pretool-worktree-guard.sh — new-file layer", () => {
     expect(r2.code).toBe(0);
   });
 
+  it("OP_ALLOW_MANAGED_EDIT=1 does NOT bypass Layer 3 on new files", async () => {
+    // The two override env vars are independent — a session that wants to
+    // hand-edit a managed note (Layer 2 bypass) must still go through op-new
+    // for new issue creation. Proves Layer 3 fires when Layer 2 is disabled
+    // by env at the call site.
+    const note = path.join(wt, "Projects", "demo", "ISSUES", "DEMO-5 new.md");
+    await fs.mkdir(path.dirname(note), { recursive: true });
+    const r = await runGuard(
+      { OP_ISSUE_ID: "DEMO-5", OP_ALLOW_MANAGED_EDIT: "1" },
+      wt,
+      payload(note),
+    );
+    expect(r.code).toBe(2);
+    expect(r.stderr).toMatch(/refusing creation of new file/);
+  });
+
   it("paths outside Projects/ are unaffected", async () => {
     const out = path.join(wt, "src", "newfile.ts");
     await fs.mkdir(path.dirname(out), { recursive: true });
