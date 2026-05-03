@@ -21,7 +21,7 @@ const FIXTURE_CTX: RenderContext = {
   repo_path: "/Users/me/Projects/obsidian-projects",
   vault_path: "/Users/me/work/Agent-Vault",
   vault_name: "Agent-Vault",
-  branch: "worktree-OP-194",
+  branch: "worktree-OP-194-generic-var-renderer-context-builder",
   today: "2026-04-26",
   agent: "claude",
   model: "claude-opus-4-7",
@@ -252,7 +252,7 @@ describe("buildRenderContext", () => {
   const launch: LaunchContext = {
     mode: "implement",
     model: "claude-opus-4-7",
-    branch: "worktree-OP-194",
+    branch: "worktree-OP-194-generic-var-renderer-context-builder",
     repo_path: "/Users/me/Projects/obsidian-projects",
     vault_path: "/Users/me/work/Agent-Vault",
     vault_name: "Agent-Vault",

@@ -1,7 +1,7 @@
 ## STEP: kickoff
 
 
-You are working on **OP-FIX-1** (Integration fixture issue) in project `fixture-project` on branch `worktree-OP-FIX-1`. Always create an isolated worktree before making changes — no exceptions, including one-line tweaks. The main checkout may be held by the agent that delegated to you.
+You are working on **OP-FIX-1** (Integration fixture issue) in project `fixture-project` on branch `worktree-OP-FIX-1-integration-fixture-issue`. Always create an isolated worktree before making changes — no exceptions, including one-line tweaks. The main checkout may be held by the agent that delegated to you.
 
 
 

@@ -54,7 +54,7 @@ The issue id is {{id}} — branch is {{branch}}, today is {{today}}.
 | `{{repo_path}}` | `/Users/you/Projects/obsidian-projects` | Absolute path to the project's code repository — undefined for meta-only projects. |
 | `{{vault_path}}` | `/Users/you/work/Agent-Vault` | Absolute path to the active Obsidian vault. |
 | `{{vault_name}}` | `Agent-Vault` | Display name of the active Obsidian vault. |
-| `{{branch}}` | `worktree-OP-194` | The git branch the agent is operating on — undefined before the worktree exists or for meta-only projects. |
+| `{{branch}}` | `worktree-OP-220-add-slug-plugin-var-and-extract-shared` | The git branch the agent is operating on — undefined before the worktree exists or for meta-only projects. |
 | `{{today}}` | `2026-04-26` | Today's date in ISO YYYY-MM-DD form, computed by the launching surface. |
 | `{{agent}}` | `claude` | The agent id launching this session (claude, gemini, copilot). |
 | `{{model}}` | `claude-opus-4-7` | The resolved model id for this launch — undefined if the agent has no per-launch model selection. |

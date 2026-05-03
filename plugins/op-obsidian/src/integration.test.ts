@@ -172,7 +172,7 @@ const RENDER_CTX: RenderContext = {
   repo_path: "/repo",
   vault_path: "/vault",
   vault_name: "Agent-Vault",
-  branch: "worktree-OP-FIX-1",
+  branch: "worktree-OP-FIX-1-integration-fixture-issue",
   today: "2026-04-26",
   agent: "claude",
   model: "claude-opus-4-7",

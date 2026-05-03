@@ -174,7 +174,7 @@ export const PLUGIN_VAR_REGISTRY: Readonly<Record<string, PluginVar>> = Object.f
     name: "branch",
     description:
       "The git branch the agent is operating on — undefined before the worktree exists or for meta-only projects.",
-    example: "worktree-OP-194",
+    example: "worktree-OP-220-add-slug-plugin-var-and-extract-shared",
     compute: (ctx) => ctx.branch,
   },
 

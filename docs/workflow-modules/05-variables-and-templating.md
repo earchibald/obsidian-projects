@@ -48,7 +48,7 @@ generated reference docs) reads from there.
 | **Repo / vault** | `{{repo_path}}` | Absolute path to the project's code repo; undefined for meta-only projects. | `/Users/you/Projects/obsidian-projects` |
 |  | `{{vault_path}}` | Absolute path to the active vault. | `/Users/you/work/Agent-Vault` |
 |  | `{{vault_name}}` | Display name of the active vault. | `Agent-Vault` |
-|  | `{{branch}}` | Git branch the agent is on; undefined before the worktree exists. | `worktree-OP-212` |
+|  | `{{branch}}` | Git branch the agent is on; undefined before the worktree exists. | `worktree-OP-220-add-slug-plugin-var-and-extract-shared` |
 | **Run context** | `{{today}}` | ISO `YYYY-MM-DD`, computed by the launching surface. | `2026-04-26` |
 |  | `{{agent}}` | Agent id launching this session. | `claude` |
 |  | `{{model}}` | Resolved model id; undefined when the agent doesn't pick one per launch. | `claude-opus-4-7` |
