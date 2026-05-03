@@ -286,7 +286,7 @@ A reviewer should be able to verify all of these end-to-end:
 6. **State classification.** Triggering a Claude Code interactive prompt (`(y/n)` style) in one of the panes flips that row to `waiting_user` within 30 s.
 7. **Reveal works.** Clicking `↗` on a row brings iTerm to the foreground and selects the pane the agent is running in (existing `revealAgentSession` semantics).
 8. **Disconnect/reconnect.** `kill <daemon-pid>` makes the dashboard show "Disconnected" within 5 s; restarting iTerm2 brings it back live within 10 s of restart completing.
-9. **Token rotation.** Regenerating the token in Settings invalidates the existing browser tab (close code 4401) and re-opening via `op-dashboard` succeeds with the new token.
+9. **Token rotation.** Regenerating the token in Settings hits the daemon's `POST /regenerate-token` endpoint (authenticated by the *current* `X-Op-Token`), which rotates `state.token`, rewrites the 0600 token file, and broadcasts WS close code 4401 to every connected client. Re-opening via `op-dashboard` then succeeds with the new token. Implemented end-to-end in OP-242.
 10. **No JS bridge dependency.** The dashboard works identically when opened in Safari at the same URL — verified by closing the iTerm browser tab, copying the URL into Safari, and confirming all controls function.
 11. **Survives restart.** With three agents running, restart iTerm2; after iTerm2 finishes launching, opening the dashboard re-renders the same three rows (state from tmux + plugin's persisted `orchestratorState`).
 12. **Daemon never silently installed.** Removing `op-dashboard.py` from AutoLaunch and re-invoking `op-dashboard` produces the Setup modal — never a silent re-install.
