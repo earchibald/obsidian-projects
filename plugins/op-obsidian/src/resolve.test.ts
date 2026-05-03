@@ -32,7 +32,7 @@ vi.mock("./projects", () => ({
   ],
 }));
 
-import { runResolve } from "./resolve";
+import { runResolve, handleResolveModalEnter } from "./resolve";
 import type { IssueEntry } from "./types";
 
 interface Recorded {
@@ -287,5 +287,49 @@ describe("runResolve — graceful failure when frontmatter write throws", () => 
     const res = await runResolve(app, store, { path: e.path, confirmed: true });
     expect(res.ok).toBe(true);
     expect(res.frontmatterWriteError).toBeUndefined();
+  });
+});
+
+describe("handleResolveModalEnter", () => {
+  function fakeEvt(target: { tagName?: string } | null) {
+    let prevented = false;
+    return {
+      evt: { target, preventDefault: () => (prevented = true) },
+      get prevented() {
+        return prevented;
+      },
+    };
+  }
+
+  it("calls onConfirm and preventDefault for a non-input target", () => {
+    const onConfirm = vi.fn();
+    const e = fakeEvt({ tagName: "DIV" });
+    handleResolveModalEnter(e.evt, onConfirm);
+    expect(onConfirm).toHaveBeenCalledOnce();
+    expect(e.prevented).toBe(true);
+  });
+
+  it("skips when an INPUT is focused", () => {
+    const onConfirm = vi.fn();
+    const e = fakeEvt({ tagName: "INPUT" });
+    handleResolveModalEnter(e.evt, onConfirm);
+    expect(onConfirm).not.toHaveBeenCalled();
+    expect(e.prevented).toBe(false);
+  });
+
+  it("skips when a TEXTAREA is focused", () => {
+    const onConfirm = vi.fn();
+    const e = fakeEvt({ tagName: "TEXTAREA" });
+    handleResolveModalEnter(e.evt, onConfirm);
+    expect(onConfirm).not.toHaveBeenCalled();
+    expect(e.prevented).toBe(false);
+  });
+
+  it("confirms when target is null", () => {
+    const onConfirm = vi.fn();
+    const e = fakeEvt(null);
+    handleResolveModalEnter(e.evt, onConfirm);
+    expect(onConfirm).toHaveBeenCalledOnce();
+    expect(e.prevented).toBe(true);
   });
 });
