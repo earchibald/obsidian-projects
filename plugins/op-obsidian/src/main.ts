@@ -69,7 +69,7 @@ import { resolveRepoPath } from "./repoPath";
 import { writeUriResponse, type UriResponsePayload } from "./uriResponse";
 import { normalizeUriParams, collectRepeated, parseLaunchVarsFromUri } from "./uriParams";
 import { runResolve, type ResolveArgs } from "./resolve";
-import { healStaleResolvedStatus } from "./healStaleResolvedStatus";
+import { healFrontmatter } from "./healFrontmatter";
 import { shouldAutoResolve } from "./autoResolveOnStatusChange";
 import {
   findIssueById as findIssueByIdPure,
@@ -434,11 +434,12 @@ export default class OpPlugin extends Plugin {
       ).catch((err) => {
         console.error("[op-obsidian] first-run readme scaffold failed", err);
       });
-      // OP-221: clean up legacy data drift where a pre-OP-221 `runResolve`
-      // race left an issue in `RESOLVED ISSUES/` with a non-terminal
-      // `status:`. Idempotent — no-op on a clean vault. The fix in
-      // `resolve.ts` (rename → write) prevents new drift; this pass heals
-      // historical state.
+      // OP-247 (generalizes OP-221): scan plugin-managed notes for
+      // frontmatter drift and auto-repair every class derivable from path /
+      // filename / file metadata. Idempotent — no-op on a clean vault. The
+      // fix in `resolve.ts` (rename → write) still prevents new drift in
+      // `runResolve`; this pass heals historical state and any drift
+      // introduced by manual edits, hand-moved files, or external tooling.
       //
       // `metadataCache.on("resolved")` fires *each time* a batch of pending
       // parse work completes — including partial batches mid-load on a
@@ -462,20 +463,20 @@ export default class OpPlugin extends Plugin {
         // synchronously inside its own onLayoutReady callback (registered
         // before this one), so by the time the debounce window settles
         // the store reflects the on-disk vault state.
-        void healStaleResolvedStatus(this.app, this.store)
+        void healFrontmatter(this.app)
           .then((res) => {
             if (res.fixed.length > 0) {
               console.info(
-                `[op-obsidian] healed ${res.fixed.length} stale-status issue(s) in RESOLVED ISSUES/`,
+                `[op-obsidian] healed frontmatter on ${res.fixed.length} note(s)`,
                 res.fixed,
               );
             }
             if (res.errors.length > 0) {
-              console.warn("[op-obsidian] healStaleResolvedStatus errors", res.errors);
+              console.warn("[op-obsidian] healFrontmatter errors", res.errors);
             }
           })
           .catch((err) => {
-            console.error("[op-obsidian] healStaleResolvedStatus threw", err);
+            console.error("[op-obsidian] healFrontmatter threw", err);
           });
       };
       const armDebounce = () => {
