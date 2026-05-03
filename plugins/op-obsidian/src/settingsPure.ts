@@ -70,6 +70,17 @@ export interface AgentsSettings {
   enforceWorktree: boolean;
 }
 
+/**
+ * OP-259: managed-note pretool guard layer. When `managedNoteGuard` is true,
+ * the PreToolUse hook script refuses agent Edit/Write/MultiEdit/NotebookEdit
+ * on any vault `*.md` whose frontmatter carries `op_managed: true`. Default
+ * **off** — Phase 6 (OP-218) will flip the default once the additive endpoints
+ * have soaked. Override per-call via the `OP_ALLOW_MANAGED_EDIT=1` env var.
+ */
+export interface AgentDisciplineSettings {
+  managedNoteGuard: boolean;
+}
+
 export interface DeveloperSettings {
   // When true, `op-dev:*` debugging commands appear in the command palette.
   // Default false so end-user palettes aren't crowded with plugin-author
@@ -194,6 +205,7 @@ export interface OpSettings {
   view: ViewSettings;
   github: GithubSettings;
   agents: AgentsSettings;
+  agentDiscipline: AgentDisciplineSettings;
   developer: DeveloperSettings;
   flow: FlowSettings;
   sessionDecoration: SessionDecorationSettings;
@@ -286,6 +298,11 @@ export const DEFAULT_SETTINGS: OpSettings = {
   },
   agents: {
     enforceWorktree: false,
+  },
+  agentDiscipline: {
+    // OP-259: managed-note pretool guard layer. Default off — Phase 6 of
+    // OP-218 owns the flip after a release of soak.
+    managedNoteGuard: false,
   },
   developer: {
     showDevCommands: false,
@@ -442,6 +459,12 @@ export function mergeSettings(loaded: unknown): OpSettings {
     const a = l.agents as Partial<AgentsSettings>;
     if (typeof a.enforceWorktree === "boolean") {
       base.agents.enforceWorktree = a.enforceWorktree;
+    }
+  }
+  if (l.agentDiscipline && typeof l.agentDiscipline === "object") {
+    const ad = l.agentDiscipline as Partial<AgentDisciplineSettings>;
+    if (typeof ad.managedNoteGuard === "boolean") {
+      base.agentDiscipline.managedNoteGuard = ad.managedNoteGuard;
     }
   }
   if (l.developer && typeof l.developer === "object") {

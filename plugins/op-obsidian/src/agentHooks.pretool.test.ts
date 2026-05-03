@@ -188,3 +188,150 @@ describe("pretool-worktree-guard.sh — runtime behavior", () => {
     expect(r.code).toBe(0);
   });
 });
+
+// OP-259: managed-note refusal layer. Exercises the layer in isolation by
+// installing it in a worktree (so the worktree layer is a no-op) and feeding
+// the script a Claude-Code-style PreToolUse JSON payload on stdin.
+describe("pretool-worktree-guard.sh — managed-note layer", () => {
+  let scriptPath: string;
+  let repo: string;
+  let wt: string;
+
+  async function runGuard(
+    env: NodeJS.ProcessEnv,
+    cwd: string,
+    stdin: string,
+  ): Promise<{ code: number; stderr: string }> {
+    try {
+      execFileSync("bash", [scriptPath], {
+        cwd,
+        env: { ...process.env, ...env },
+        input: stdin,
+        stdio: ["pipe", "pipe", "pipe"],
+      });
+      return { code: 0, stderr: "" };
+    } catch (err: any) {
+      return { code: err.status ?? -1, stderr: String(err.stderr ?? "") };
+    }
+  }
+
+  function payload(filePath: string): string {
+    return JSON.stringify({
+      session_id: "s",
+      tool_name: "Edit",
+      tool_input: { file_path: filePath, old_string: "a", new_string: "b" },
+    });
+  }
+
+  beforeEach(async () => {
+    const res = await installAgentHooks({
+      enforceWorktree: true,
+      managedNoteGuard: true,
+    });
+    scriptPath = res.guardScriptPath;
+    repo = await mkTmp("op-managed-repo-");
+    execFileSync("git", ["init", "-q", "-b", "main", repo]);
+    execFileSync("git", ["-C", repo, "config", "user.email", "t@t"]);
+    execFileSync("git", ["-C", repo, "config", "user.name", "t"]);
+    await fs.writeFile(path.join(repo, "f.txt"), "hi\n");
+    execFileSync("git", ["-C", repo, "add", "."]);
+    execFileSync("git", ["-C", repo, "commit", "-q", "-m", "init"]);
+    // Linked worktree → worktree layer is a no-op; managed-note layer alone is
+    // exercised.
+    wt = await mkTmp("op-managed-wt-");
+    await fs.rm(wt, { recursive: true, force: true });
+    execFileSync("git", ["-C", repo, "worktree", "add", "-q", "-b", "wt-x", wt]);
+  });
+
+  afterEach(async () => {
+    await fs.rm(repo, { recursive: true, force: true });
+    await fs.rm(wt, { recursive: true, force: true });
+  });
+
+  it("refuses Edit on a managed note", async () => {
+    const note = path.join(wt, "ISSUES", "OP-9 some issue.md");
+    await fs.mkdir(path.dirname(note), { recursive: true });
+    await fs.writeFile(
+      note,
+      "---\nid: OP-9\nop_managed: true\n---\n\n# OP-9\n",
+    );
+    const r = await runGuard({ OP_ISSUE_ID: "OP-9" }, wt, payload(note));
+    expect(r.code).toBe(2);
+    expect(r.stderr).toMatch(/refusing edit on managed note/);
+    // Path-based hint resolves to the issue endpoints.
+    expect(r.stderr).toMatch(/op-set-tasks/);
+    expect(r.stderr).toMatch(/OP_ALLOW_MANAGED_EDIT=1/);
+  });
+
+  it("OP_ALLOW_MANAGED_EDIT=1 permits the edit", async () => {
+    const note = path.join(wt, "ISSUES", "OP-9 some issue.md");
+    await fs.mkdir(path.dirname(note), { recursive: true });
+    await fs.writeFile(
+      note,
+      "---\nid: OP-9\nop_managed: true\n---\n",
+    );
+    const r = await runGuard(
+      { OP_ISSUE_ID: "OP-9", OP_ALLOW_MANAGED_EDIT: "1" },
+      wt,
+      payload(note),
+    );
+    expect(r.code).toBe(0);
+  });
+
+  it("allows edits on an unmanaged note", async () => {
+    const note = path.join(wt, "ISSUES", "OP-9 some issue.md");
+    await fs.mkdir(path.dirname(note), { recursive: true });
+    await fs.writeFile(note, "---\nid: OP-9\n---\n\n# OP-9\n");
+    const r = await runGuard({ OP_ISSUE_ID: "OP-9" }, wt, payload(note));
+    expect(r.code).toBe(0);
+  });
+
+  it("emits a TASK-specific hint for TASK note paths", async () => {
+    const note = path.join(wt, "TASKS", "OP-9.1 task.md");
+    await fs.mkdir(path.dirname(note), { recursive: true });
+    await fs.writeFile(note, "---\nop_managed: true\n---\n");
+    const r = await runGuard({ OP_ISSUE_ID: "OP-9" }, wt, payload(note));
+    expect(r.code).toBe(2);
+    expect(r.stderr).toMatch(/op-task-set-status|op-task-append-note/);
+  });
+});
+
+// OP-259: when managedNoteGuard is off but enforceWorktree is on, the script
+// must contain the worktree layer and *not* the managed layer — so a managed
+// note in a linked worktree is allowed (the layer is absent entirely).
+describe("installAgentHooks — managed layer is opt-in", () => {
+  it("omits the managed-note layer when managedNoteGuard is false", async () => {
+    const res = await installAgentHooks({
+      enforceWorktree: true,
+      managedNoteGuard: false,
+    });
+    const body = await fs.readFile(res.guardScriptPath, "utf8");
+    expect(body).toMatch(/Layer 1: worktree refusal/);
+    expect(body).not.toMatch(/Layer 2: managed-note refusal/);
+    // The header comment mentions `OP_ALLOW_MANAGED_EDIT` and `op_managed` for
+    // documentation purposes regardless of layer presence — assert against the
+    // actual layer-2 logic strings instead.
+    expect(body).not.toMatch(/refusing edit on managed note/);
+    expect(body).not.toMatch(/Path-based hint/);
+  });
+
+  it("installs the guard hook when only managedNoteGuard is true", async () => {
+    const res = await installAgentHooks({
+      enforceWorktree: false,
+      managedNoteGuard: true,
+    });
+    expect(res.guardInstalled.sort()).toEqual(["claude", "gemini"]);
+    const body = await fs.readFile(res.guardScriptPath, "utf8");
+    expect(body).not.toMatch(/Layer 1: worktree refusal/);
+    expect(body).toMatch(/Layer 2: managed-note refusal/);
+  });
+
+  it("uninstalls the guard when both layers are off", async () => {
+    await installAgentHooks({ enforceWorktree: true, managedNoteGuard: true });
+    const off = await installAgentHooks({
+      enforceWorktree: false,
+      managedNoteGuard: false,
+    });
+    expect(off.guardUninstalled.sort()).toEqual(["claude", "gemini"]);
+  });
+});

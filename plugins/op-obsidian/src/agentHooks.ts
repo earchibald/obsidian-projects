@@ -19,6 +19,11 @@ import * as path from "path";
 
 export interface HookInstallOptions {
   enforceWorktree?: boolean;
+  /** OP-259: when true, the PreToolUse guard script includes the managed-note
+   *  refusal layer. Independent of `enforceWorktree`: either flag (or both)
+   *  triggers the hook install — the script body only contains the layers
+   *  that are enabled. Default off; Phase 6 of OP-218 owns the flip. */
+  managedNoteGuard?: boolean;
 }
 
 export interface HookInstallResult {
@@ -44,7 +49,9 @@ export async function installAgentHooks(
   const scriptPath = path.join(home, SCRIPT_REL);
   const guardScriptPath = path.join(home, GUARD_SCRIPT_REL);
   await writeScript(scriptPath);
-  await writeGuardScript(guardScriptPath);
+  const enforceWorktree = !!options.enforceWorktree;
+  const managedNoteGuard = !!options.managedNoteGuard;
+  await writeGuardScript(guardScriptPath, { enforceWorktree, managedNoteGuard });
 
   const installed: string[] = [];
   const skipped: string[] = [];
@@ -66,7 +73,11 @@ export async function installAgentHooks(
   const guardInstalled: string[] = [];
   const guardUninstalled: string[] = [];
   const guardSkipped: string[] = [];
-  const enforce = !!options.enforceWorktree;
+  // The guard hook is installed when *either* layer is enabled. Within the
+  // installed script, only the enabled layers actually run (writeGuardScript
+  // emits them conditionally), so an enabled flag matrix of {worktree:true,
+  // managed:false} still installs the hook but the managed layer is absent.
+  const wantInstall = enforceWorktree || managedNoteGuard;
 
   const guardStep = async (label: string, fn: () => Promise<"installed" | "removed" | "noop">) => {
     try {
@@ -74,12 +85,12 @@ export async function installAgentHooks(
       if (r === "installed") guardInstalled.push(label);
       else if (r === "removed") guardUninstalled.push(label);
     } catch (err) {
-      console.warn(`[op-obsidian] pretool guard ${enforce ? "install" : "uninstall"} skipped for ${label}:`, err);
+      console.warn(`[op-obsidian] pretool guard ${wantInstall ? "install" : "uninstall"} skipped for ${label}:`, err);
       guardSkipped.push(label);
     }
   };
 
-  if (enforce) {
+  if (wantInstall) {
     await guardStep("claude", () => installClaudePretoolGuard(home, guardScriptPath));
     await guardStep("gemini", () => installGeminiPretoolGuard(home, guardScriptPath));
     // Copilot CLI has no pre-tool gate; record the gap for the caller.
@@ -128,42 +139,122 @@ async function writeScript(scriptPath: string): Promise<void> {
   await fs.chmod(scriptPath, 0o755);
 }
 
-async function writeGuardScript(scriptPath: string): Promise<void> {
+interface GuardScriptLayers {
+  enforceWorktree: boolean;
+  managedNoteGuard: boolean;
+}
+
+async function writeGuardScript(
+  scriptPath: string,
+  layers: GuardScriptLayers,
+): Promise<void> {
   await fs.mkdir(path.dirname(scriptPath), { recursive: true });
-  const body = [
+  const body: string[] = [];
+  body.push(
     "#!/bin/bash",
     `# ${GUARD_MARKER}`,
-    "# PreToolUse guard. Blocks Edit/Write/MultiEdit/NotebookEdit when an",
-    "# op-launched agent is operating inside the main working tree of a git repo",
-    "# whose HEAD is the default branch. Exits 2 with stderr to signal refusal.",
-    "# No-op in any of: session not op-launched, escape-hatch set, not inside a",
-    "# repo, in a linked worktree, on a non-default branch, detached HEAD.",
+    "# PreToolUse guard for op-launched agents. Up to two layers, gated by",
+    "# the plugin's settings (the install path emits only the layers that are",
+    "# enabled — flip a setting → re-run installAgentHooks → script body is",
+    "# rewritten):",
+    "#",
+    "#   1. Worktree refusal — blocks Edit/Write on the main checkout of a git",
+    "#      repo whose HEAD is the default branch. Override per-call via",
+    "#      OP_ALLOW_MAIN_EDIT=1.",
+    "#",
+    "#   2. Managed-note refusal (OP-259) — refuses Edit/Write of any vault",
+    "#      `*.md` whose frontmatter contains `op_managed: true`. Override",
+    "#      per-call via OP_ALLOW_MANAGED_EDIT=1.",
+    "#",
+    "# Both layers exit 2 with stderr on refusal; otherwise exit 0. The whole",
+    "# script is a no-op when the session isn't op-launched ($OP_ISSUE_ID",
+    "# unset).",
+    "",
     'if [ -z "${OP_ISSUE_ID:-}" ]; then',
     "  exit 0",
     "fi",
-    'if [ "${OP_ALLOW_MAIN_EDIT:-}" = "1" ]; then',
+    "",
+  );
+
+  if (layers.enforceWorktree) {
+    body.push(
+    "# === Layer 1: worktree refusal ===",
+    'if [ "${OP_ALLOW_MAIN_EDIT:-}" != "1" ] \\',
+    "    && command -v git >/dev/null 2>&1 \\",
+    "    && git rev-parse --is-inside-work-tree >/dev/null 2>&1; then",
+    "  gitdir=$(git rev-parse --git-dir 2>/dev/null)",
+    '  case "$gitdir" in',
+    '    *".git/worktrees/"*) ;;  # linked worktree — fall through',
+    "    *)",
+    '      branch=$(git symbolic-ref --short HEAD 2>/dev/null || echo "")',
+    '      if [ -n "$branch" ]; then',
+    "        default=$(git symbolic-ref --short refs/remotes/origin/HEAD 2>/dev/null | sed 's|^origin/||')",
+    "        default=${default:-main}",
+    '        if [ "$branch" = "$default" ] || [ "$branch" = "main" ] || [ "$branch" = "master" ]; then',
+    '          echo "op-obsidian: refusing edit on main checkout for $OP_ISSUE_ID." >&2',
+    '          echo "Run: git worktree add ../$(basename \\"$PWD\\")-$OP_ISSUE_ID -b worktree-$OP_ISSUE_ID" >&2',
+    '          echo "Or export OP_ALLOW_MAIN_EDIT=1 for a one-line edit." >&2',
+    "          exit 2",
+    "        fi",
+    "      fi",
+    "      ;;",
+    "  esac",
+    "fi",
+    "",
+    );
+  }
+
+  if (layers.managedNoteGuard) {
+    body.push(
+    "# === Layer 2: managed-note refusal ===",
+    'if [ "${OP_ALLOW_MANAGED_EDIT:-}" = "1" ]; then',
     "  exit 0",
     "fi",
-    "command -v git >/dev/null 2>&1 || exit 0",
-    "git rev-parse --is-inside-work-tree >/dev/null 2>&1 || exit 0",
-    "gitdir=$(git rev-parse --git-dir 2>/dev/null)",
-    'case "$gitdir" in',
-    '  *".git/worktrees/"*) exit 0 ;;',
+    "# PreToolUse hook receives the tool invocation as JSON on stdin",
+    '# (`{"tool_input": {"file_path": "/abs/path", ...}, ...}`). Extract the',
+    "# first file_path with a tolerant sed — we restrict to a JSON-string form,",
+    "# matching the trivial single-line shape Claude Code emits. If stdin is",
+    "# empty or unparseable, fall through (no refusal).",
+    "input=$(cat 2>/dev/null || true)",
+    '[ -z "$input" ] && exit 0',
+    'file=$(printf %s "$input" | sed -n \'s/.*"file_path"[[:space:]]*:[[:space:]]*"\\([^"]*\\)".*/\\1/p\' | head -n1)',
+    '[ -z "$file" ] && exit 0',
+    'case "$file" in',
+    "  *.md) ;;",
+    "  *) exit 0 ;;",
     "esac",
-    'branch=$(git symbolic-ref --short HEAD 2>/dev/null || echo "")',
-    '[ -z "$branch" ] && exit 0',
-    "default=$(git symbolic-ref --short refs/remotes/origin/HEAD 2>/dev/null | sed 's|^origin/||')",
-    "default=${default:-main}",
-    'if [ "$branch" = "$default" ] || [ "$branch" = "main" ] || [ "$branch" = "master" ]; then',
-    '  echo "op-obsidian: refusing edit on main checkout for $OP_ISSUE_ID." >&2',
-    '  echo "Run: git worktree add ../$(basename \\"$PWD\\")-$OP_ISSUE_ID -b worktree-$OP_ISSUE_ID" >&2',
-    '  echo "Or export OP_ALLOW_MAIN_EDIT=1 for a one-line edit." >&2',
-    "  exit 2",
+    '[ -f "$file" ] || exit 0',
+    "# Frontmatter parse stays in pure shell (awk). We only recognize the",
+    "# trivial single-line `op_managed: true` form the migration writes —",
+    "# nested/quoted/multi-line variants fall through without refusal.",
+    "managed=$(awk '",
+    '  BEGIN { infm = 0 }',
+    '  NR == 1 && $0 == "---" { infm = 1; next }',
+    '  infm == 1 && $0 == "---" { exit }',
+    '  infm == 1 && /^op_managed:[[:space:]]*true[[:space:]]*$/ { print "yes"; exit }',
+    "' \"$file\")",
+    'if [ "$managed" != "yes" ]; then',
+    "  exit 0",
     "fi",
-    "exit 0",
+    "# Path-based hint at the right op-* endpoint.",
+    'case "$file" in',
+    '  */TASKS/*.md)             hint="Use op-task-set-status (status flips) or op-task-append-note (progress notes); op-task-create for new TASK notes." ;;',
+    '  */ISSUES/*.md|*/RESOLVED\\ ISSUES/*.md)',
+    '                            hint="Use op-set-tasks (## Tasks checklist), op-set-section (Plan/Notes/Summary), op-set-scope (Scope), op-append-commit, op-set-pr, op-resolve. Frontmatter status/agent flips have dedicated verbs." ;;',
+    '  */STATUS.md)              hint="STATUS.md is plugin-managed; use op-scaffold or the dedicated STATUS endpoint instead of editing in place." ;;',
+    '  */DOCS/*.md)              hint="Use op-doc-create (new vault DOC) or op-doc-edit (existing). Repo-tracked DOCS under DOCS/superpowers/ follow the repo workflow." ;;',
+    '  *)                        hint="Use the appropriate op-* endpoint instead of editing the managed note directly." ;;',
+    "esac",
+    'echo "op-obsidian: refusing edit on managed note: $file" >&2',
+    'echo "$hint" >&2',
+    'echo "Override with OP_ALLOW_MANAGED_EDIT=1 for a one-line edit." >&2',
+    "exit 2",
     "",
-  ].join("\n");
-  await fs.writeFile(scriptPath, body, { mode: 0o755 });
+    );
+  }
+
+  body.push("exit 0", "");
+  await fs.writeFile(scriptPath, body.join("\n"), { mode: 0o755 });
   await fs.chmod(scriptPath, 0o755);
 }
 
