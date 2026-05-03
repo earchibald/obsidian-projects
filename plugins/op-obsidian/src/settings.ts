@@ -76,6 +76,7 @@ import {
   mergeSettings,
   matchSettingRow,
   sanitizeSessionDecorationPalette,
+  validateDashboardPortInput,
 } from "./settingsPure";
 
 export {
@@ -1860,27 +1861,52 @@ export class OpSettingsTab extends PluginSettingTab {
     this.dashboardAbort = abort;
 
     // ── Port ───────────────────────────────────────────────────────────────
-    new Setting(containerEl)
+    // OP-241: surface inline feedback when the typed value can't be saved.
+    // Previously we silently kept the prior `s.dashboard.port`; users had no
+    // signal that their input was rejected.
+    const portSetting = new Setting(containerEl)
       .setName("Port")
       .setDesc(
         `Localhost port the OP-230 daemon binds to. Default 49217. Allowed range ${DASHBOARD_PORT_MIN}–${DASHBOARD_PORT_MAX}. Restart iTerm2 after changing — the daemon reads this on startup.`,
-      )
-      .addText((t) => {
-        t.inputEl.type = "number";
-        t.inputEl.min = String(DASHBOARD_PORT_MIN);
-        t.inputEl.max = String(DASHBOARD_PORT_MAX);
-        t.setValue(String(s.dashboard.port)).onChange(async (raw) => {
-          const n = parseInt(raw, 10);
-          if (
-            Number.isFinite(n) &&
-            n >= DASHBOARD_PORT_MIN &&
-            n <= DASHBOARD_PORT_MAX
-          ) {
-            s.dashboard.port = n;
-            await this.plugin.saveSettings();
-          }
-        });
+      );
+    const portError = portSetting.settingEl.createDiv({
+      cls: "op-port-error",
+      attr: { role: "alert", "aria-live": "polite" },
+    });
+    portError.style.display = "none";
+    portSetting.addText((t) => {
+      t.inputEl.type = "number";
+      t.inputEl.min = String(DASHBOARD_PORT_MIN);
+      t.inputEl.max = String(DASHBOARD_PORT_MAX);
+      t.inputEl.classList.add("op-port-input");
+      const clearError = (): void => {
+        portError.style.display = "none";
+        portError.setText("");
+        t.inputEl.removeAttribute("aria-invalid");
+        t.inputEl.classList.remove("op-port-input--invalid");
+      };
+      const showError = (msg: string): void => {
+        portError.setText(msg);
+        portError.style.display = "";
+        t.inputEl.setAttribute("aria-invalid", "true");
+        t.inputEl.classList.add("op-port-input--invalid");
+      };
+      t.setValue(String(s.dashboard.port)).onChange(async (raw) => {
+        const result = validateDashboardPortInput(raw);
+        if (result.kind === "empty") {
+          // User mid-edit (cleared the field); don't badge an error yet.
+          clearError();
+          return;
+        }
+        if (result.kind === "invalid") {
+          showError(result.message);
+          return;
+        }
+        clearError();
+        s.dashboard.port = result.value;
+        await this.plugin.saveSettings();
       });
+    });
 
     // ── Open in (radio: system / iTerm browser tab) ───────────────────────
     const targetSetting = new Setting(containerEl)

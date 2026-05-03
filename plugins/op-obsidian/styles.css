@@ -626,6 +626,19 @@ a.op-sidebar__agent:hover {
   font-size: var(--font-ui-smaller, 0.75rem);
 }
 
+/* OP-241 — inline error feedback for the dashboard port input. */
+.op-port-input--invalid {
+  border-color: var(--text-error) !important;
+  outline-color: var(--text-error);
+}
+
+.op-port-error {
+  color: var(--text-error);
+  font-size: var(--font-ui-smaller, 0.75rem);
+  margin-top: 0.25rem;
+  padding-left: 0.1rem;
+}
+
 /* --- OP-164 — Settings tab: two-tier layout, search, collapsibles ------- */
 
 .op-settings__search-wrap {
