@@ -76,6 +76,14 @@ export interface DeveloperSettings {
   // diagnostics. Reload the plugin after toggling — Obsidian's `addCommand`
   // is a one-shot at plugin-load and has no `removeCommand` companion.
   showDevCommands: boolean;
+  /**
+   * OP-255: plugin version for which the `op_managed: true` frontmatter
+   * backfill last ran successfully. The startup migration in `main.ts`
+   * compares this against `manifest.version`; mismatch (including unset →
+   * fresh install) re-runs the idempotent sweep. Reading this value never
+   * fails — we treat undefined as "not yet run" and re-run.
+   */
+  lastManagedMigrationVersion?: string;
 }
 
 export type DashboardTarget = "iterm-browser-tab" | "system-browser";

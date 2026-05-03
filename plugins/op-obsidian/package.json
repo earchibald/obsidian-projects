@@ -1,6 +1,6 @@
 {
   "name": "op-obsidian",
-  "version": "0.87.2",
+  "version": "0.88.0",
   "description": "Obsidian plugin that owns the deterministic half of the op workflow.",
   "main": "main.js",
   "scripts": {

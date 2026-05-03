@@ -177,6 +177,7 @@ async function createDefaultTask(app: App, entry: IssueEntry): Promise<string> {
     `project: ${entry.project}`,
     "type: task",
     "status: pending",
+    "op_managed: true",
     "tags:",
     `  - project/${entry.project}`,
     "  - task",
