@@ -304,6 +304,20 @@ class ResolveConfirmModal extends Modal {
           .onClick(() => this.confirm()),
       );
 
+    const hint = contentEl.createDiv({
+      cls: "prompt-instructions op-resolve-modal__hint",
+    });
+    const hintItems: Array<[string, string]> = [
+      ["Esc", "cancel"],
+      ["↵", `resolve as ${this.targetStatus}`],
+      ["⌘↵", `resolve as ${this.targetStatus}`],
+    ];
+    for (const [keys, label] of hintItems) {
+      const item = hint.createDiv({ cls: "prompt-instruction" });
+      item.createSpan({ cls: "prompt-instruction-command", text: keys });
+      item.createSpan({ text: ` ${label}` });
+    }
+
     const onEnter = (evt: KeyboardEvent) => handleResolveModalEnter(evt, () => this.confirm());
     this.scope.register([], "Enter", onEnter);
     this.scope.register(["Mod"], "Enter", onEnter);

@@ -422,6 +422,12 @@ a.op-sidebar__agent:hover {
   border-top: 1px solid var(--background-modifier-border);
 }
 
+.op-resolve-modal__hint {
+  margin-top: 0.6rem;
+  border-top: 1px solid var(--background-modifier-border);
+  padding-top: 0.5rem;
+}
+
 .op-pick-and-act__hint-note {
   color: var(--text-faint);
   font-style: italic;
