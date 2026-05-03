@@ -5549,6 +5549,7 @@ export default class OpPlugin extends Plugin {
       const res: HookInstallResult = await installAgentHooks({
         enforceWorktree: this.settings.agents.enforceWorktree,
         managedNoteGuard: this.settings.agentDiscipline.managedNoteGuard,
+        newFileGuard: this.settings.agentDiscipline.newFileGuard,
       });
       if (announce) {
         const summary = res.installed.length
