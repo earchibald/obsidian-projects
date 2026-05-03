@@ -155,7 +155,7 @@ async function writeGuardScript(scriptPath: string): Promise<void> {
     "default=${default:-main}",
     'if [ "$branch" = "$default" ] || [ "$branch" = "main" ] || [ "$branch" = "master" ]; then',
     '  echo "op-obsidian: refusing edit on main checkout for $OP_ISSUE_ID." >&2',
-    '  echo "Run: git worktree add ../$(basename \\"$PWD\\")-$OP_ISSUE_ID -b $OP_ISSUE_ID" >&2',
+    '  echo "Run: git worktree add ../$(basename \\"$PWD\\")-$OP_ISSUE_ID -b worktree-$OP_ISSUE_ID" >&2',
     '  echo "Or export OP_ALLOW_MAIN_EDIT=1 for a one-line edit." >&2',
     "  exit 2",
     "fi",

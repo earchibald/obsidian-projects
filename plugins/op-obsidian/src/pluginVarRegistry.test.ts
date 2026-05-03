@@ -8,10 +8,15 @@ import {
 } from "./pluginVarRegistry";
 import { BASE_PROFILES } from "./agentProfiles";
 import type { IssueEntry } from "./types";
+import { worktreeBranchName } from "./worktreeBranch";
+
+const FIXTURE_ID = "OP-194";
+const FIXTURE_TITLE = "Generic {{var}} renderer + context builder";
+const FIXTURE_BRANCH = worktreeBranchName(FIXTURE_ID, FIXTURE_TITLE);
 
 const FIXTURE_CTX: RenderContext = {
-  id: "OP-194",
-  title: "Generic {{var}} renderer + context builder",
+  id: FIXTURE_ID,
+  title: FIXTURE_TITLE,
   project: "obsidian-projects",
   status: "in-progress",
   priority: "high",
@@ -21,7 +26,7 @@ const FIXTURE_CTX: RenderContext = {
   repo_path: "/Users/me/Projects/obsidian-projects",
   vault_path: "/Users/me/work/Agent-Vault",
   vault_name: "Agent-Vault",
-  branch: "worktree-OP-194",
+  branch: FIXTURE_BRANCH,
   today: "2026-04-26",
   agent: "claude",
   model: "claude-opus-4-7",
@@ -31,7 +36,7 @@ const FIXTURE_CTX: RenderContext = {
 const FIXTURE_ENTRY: IssueEntry = {
   path: "Projects/obsidian-projects/ISSUES/OP-194.md",
   type: "issue",
-  id: "OP-194",
+  id: FIXTURE_ID,
   project: "obsidian-projects",
   status: "in-progress",
   priority: "high",
@@ -40,7 +45,7 @@ const FIXTURE_ENTRY: IssueEntry = {
   pr: "https://github.com/earchibald/obsidian-projects/pull/232",
   githubIssue: "https://github.com/earchibald/obsidian-projects/issues/232",
   agent: "claude",
-  title: "Generic {{var}} renderer + context builder",
+  title: FIXTURE_TITLE,
   resolvedFolder: false,
 };
 
@@ -81,6 +86,12 @@ describe("PLUGIN_VAR_REGISTRY", () => {
       expect(entry.description.length, `${name}.description`).toBeGreaterThan(0);
       expect(entry.example.length, `${name}.example`).toBeGreaterThan(0);
     }
+  });
+
+  it("keeps the branch example aligned with worktreeBranchName()", () => {
+    expect(PLUGIN_VAR_REGISTRY.branch.example).toBe(
+      worktreeBranchName("OP-220", "Add slug plugin var and extract shared slugify util"),
+    );
   });
 
   describe("compute() against a fully populated fixture", () => {
@@ -252,7 +263,7 @@ describe("buildRenderContext", () => {
   const launch: LaunchContext = {
     mode: "implement",
     model: "claude-opus-4-7",
-    branch: "worktree-OP-194",
+    branch: FIXTURE_BRANCH,
     repo_path: "/Users/me/Projects/obsidian-projects",
     vault_path: "/Users/me/work/Agent-Vault",
     vault_name: "Agent-Vault",
