@@ -102,6 +102,19 @@ notification.
   whatever iTerm reports (likely zero rows) until tmux is brought up.
 - **Pre-OP-217 `data.json`.** Reader uses defensive `.get` chains and
   yields empty AgentMetadata rather than raising.
+- **iTerm restart while tmux survives (OP-237).** When iTerm restarts
+  but the tmux server is still running, the reattached pane has no
+  `user.op_issue` user-var — the OP-233 OSC 1337 emit lives inside the
+  inner agent script, and tmux's `select-window` reattach does not
+  re-run that script. The tmux side of the correlation union still
+  matches the window by name, so the live row continues to appear in
+  the dashboard. iTerm-targeted ops (`close_pane`, future "focus this
+  session" commands) degrade for that row until a *fresh* launch creates
+  a new tmux window and reruns the inner script to retag the iTerm
+  session; plain reattach flows that hit `select-window` do not retag.
+  Workaround is to let the surviving tmux-backed agent exit (or quit it)
+  and then relaunch the issue from op-obsidian. Tracked as a deferred
+  follow-up under OP-217; not fixed in v1.
 
 ## Testing
 
