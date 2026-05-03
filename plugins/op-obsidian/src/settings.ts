@@ -42,6 +42,8 @@ import {
 } from "./dashboardOpen";
 import {
   installDaemon as installDashboardDaemon,
+  pluginDataJsonPath as dashboardPluginDataJsonPath,
+  vaultBasePathFromApp as dashboardVaultBasePathFromApp,
   installDashboardDependencies,
 } from "./dashboardSetupModal";
 import {
@@ -1976,11 +1978,7 @@ export class OpSettingsTab extends PluginSettingTab {
                 method: "POST",
                 headers: token ? { "X-Op-Token": token } : {},
               });
-              if (res.status === 404) {
-                notify(
-                  "Restart endpoint not yet implemented in the daemon. Restart iTerm2 to restart the daemon.",
-                );
-              } else if (!res.ok) {
+              if (!res.ok) {
                 notify(`Restart failed (HTTP ${res.status}).`);
               } else {
                 notify("Daemon restart requested.");
@@ -2079,11 +2077,7 @@ export class OpSettingsTab extends PluginSettingTab {
                 method: "POST",
                 headers: token ? { "X-Op-Token": token } : {},
               });
-              if (res.status === 404) {
-                notify(
-                  "Regenerate endpoint not yet implemented in the daemon.",
-                );
-              } else if (!res.ok) {
+              if (!res.ok) {
                 notify(`Regenerate failed (HTTP ${res.status}).`);
               } else {
                 notify(
@@ -2137,9 +2131,17 @@ export class OpSettingsTab extends PluginSettingTab {
           .setButtonText("Install / upgrade")
           .setCta()
           .onClick(async () => {
+            // OP-242: pass vault data.json so the daemon's surface
+            // enrichment (model / workdir / started_at) wakes up on
+            // first install instead of staying empty until the env var
+            // is set by hand.
+            const vaultBasePath = dashboardVaultBasePathFromApp(this.app);
             const result = installDashboardDaemon(
               BUNDLED_DASHBOARD_ASSETS,
               paths.daemonPath,
+              vaultBasePath
+                ? { vaultDataPaths: [dashboardPluginDataJsonPath(vaultBasePath)] }
+                : undefined,
             );
             if (!result.ok) {
               notify(
