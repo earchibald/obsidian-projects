@@ -1871,7 +1871,7 @@ export class OpSettingsTab extends PluginSettingTab {
       );
     const portError = portSetting.settingEl.createDiv({
       cls: "op-port-error",
-      attr: { role: "alert", "aria-live": "polite" },
+      attr: { role: "alert" },
     });
     portError.style.display = "none";
     portSetting.addText((t) => {
