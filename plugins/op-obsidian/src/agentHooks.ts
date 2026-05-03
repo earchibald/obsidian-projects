@@ -24,6 +24,11 @@ export interface HookInstallOptions {
    *  triggers the hook install — the script body only contains the layers
    *  that are enabled. Default off; Phase 6 of OP-218 owns the flip. */
   managedNoteGuard?: boolean;
+  /** OP-260: when true, the PreToolUse guard script refuses agent creation of
+   *  new files under `Projects/<slug>/{ISSUES,RESOLVED ISSUES,TASKS}/`. Same
+   *  install/uninstall plumbing as the managed-note layer. Default off;
+   *  Phase 6 of OP-218 owns the flip. */
+  newFileGuard?: boolean;
 }
 
 export interface HookInstallResult {
@@ -51,7 +56,12 @@ export async function installAgentHooks(
   await writeScript(scriptPath);
   const enforceWorktree = !!options.enforceWorktree;
   const managedNoteGuard = !!options.managedNoteGuard;
-  await writeGuardScript(guardScriptPath, { enforceWorktree, managedNoteGuard });
+  const newFileGuard = !!options.newFileGuard;
+  await writeGuardScript(guardScriptPath, {
+    enforceWorktree,
+    managedNoteGuard,
+    newFileGuard,
+  });
 
   const installed: string[] = [];
   const skipped: string[] = [];
@@ -73,11 +83,12 @@ export async function installAgentHooks(
   const guardInstalled: string[] = [];
   const guardUninstalled: string[] = [];
   const guardSkipped: string[] = [];
-  // The guard hook is installed when *either* layer is enabled. Within the
+  // The guard hook is installed when *any* layer is enabled. Within the
   // installed script, only the enabled layers actually run (writeGuardScript
   // emits them conditionally), so an enabled flag matrix of {worktree:true,
-  // managed:false} still installs the hook but the managed layer is absent.
-  const wantInstall = enforceWorktree || managedNoteGuard;
+  // managed:false, newFile:false} still installs the hook but the optional
+  // layers are absent.
+  const wantInstall = enforceWorktree || managedNoteGuard || newFileGuard;
 
   const guardStep = async (label: string, fn: () => Promise<"installed" | "removed" | "noop">) => {
     try {
@@ -142,6 +153,7 @@ async function writeScript(scriptPath: string): Promise<void> {
 interface GuardScriptLayers {
   enforceWorktree: boolean;
   managedNoteGuard: boolean;
+  newFileGuard: boolean;
 }
 
 async function writeGuardScript(
@@ -153,7 +165,7 @@ async function writeGuardScript(
   body.push(
     "#!/bin/bash",
     `# ${GUARD_MARKER}`,
-    "# PreToolUse guard for op-launched agents. Up to two layers, gated by",
+    "# PreToolUse guard for op-launched agents. Up to three layers, gated by",
     "# the plugin's settings (the install path emits only the layers that are",
     "# enabled — flip a setting → re-run installAgentHooks → script body is",
     "# rewritten):",
@@ -166,9 +178,13 @@ async function writeGuardScript(
     "#      `*.md` whose frontmatter contains `op_managed: true`. Override",
     "#      per-call via OP_ALLOW_MANAGED_EDIT=1.",
     "#",
-    "# Both layers exit 2 with stderr on refusal; otherwise exit 0. The whole",
-    "# script is a no-op when the session isn't op-launched ($OP_ISSUE_ID",
-    "# unset).",
+    "#   3. New-file refusal (OP-260) — refuses Write of new files under",
+    "#      `Projects/<slug>/{ISSUES,RESOLVED ISSUES,TASKS}/`. Override",
+    "#      per-call via OP_ALLOW_NEW_FILE=1.",
+    "#",
+    "# Each layer exits 2 with stderr on refusal; otherwise control falls",
+    "# through to the next layer (or `exit 0`). The whole script is a no-op",
+    "# when the session isn't op-launched ($OP_ISSUE_ID unset).",
     "",
     'if [ -z "${OP_ISSUE_ID:-}" ]; then',
     "  exit 0",
@@ -204,51 +220,87 @@ async function writeGuardScript(
     );
   }
 
+  // Layers 2 and 3 both consume the PreToolUse JSON payload from stdin to
+  // discover `tool_input.file_path`. Stdin is one-shot, so when both layers
+  // are enabled we parse it once up front and let each layer use control flow
+  // (no early `exit 0`s) to fall through to the next layer.
+  if (layers.managedNoteGuard || layers.newFileGuard) {
+    body.push(
+      "# === Shared stdin parse (Layers 2 & 3) ===",
+      "# PreToolUse hook receives the tool invocation as JSON on stdin",
+      '# (`{"tool_input": {"file_path": "/abs/path", ...}, ...}`). Extract the',
+      "# first file_path with a tolerant sed — we restrict to a JSON-string",
+      "# form, matching the trivial single-line shape Claude Code emits. If",
+      "# stdin is empty or unparseable, both layers no-op.",
+      'input=$(cat 2>/dev/null || true)',
+      'file=""',
+      'if [ -n "$input" ]; then',
+      '  file=$(printf %s "$input" | sed -n \'s/.*"file_path"[[:space:]]*:[[:space:]]*"\\([^"]*\\)".*/\\1/p\' | head -n1)',
+      "fi",
+      "",
+    );
+  }
+
   if (layers.managedNoteGuard) {
     body.push(
     "# === Layer 2: managed-note refusal ===",
-    'if [ "${OP_ALLOW_MANAGED_EDIT:-}" = "1" ]; then',
-    "  exit 0",
+    'if [ "${OP_ALLOW_MANAGED_EDIT:-}" != "1" ] && [ -n "$file" ]; then',
+    '  case "$file" in',
+    "    *.md)",
+    '      if [ -f "$file" ]; then',
+    "        # Frontmatter parse stays in pure shell (awk). We only recognize",
+    "        # the trivial single-line `op_managed: true` form the migration",
+    "        # writes — nested/quoted/multi-line variants fall through.",
+    "        managed=$(awk '",
+    '          BEGIN { infm = 0 }',
+    '          NR == 1 && $0 == "---" { infm = 1; next }',
+    '          infm == 1 && $0 == "---" { exit }',
+    '          infm == 1 && /^op_managed:[[:space:]]*true[[:space:]]*$/ { print "yes"; exit }',
+    '        \' "$file")',
+    '        if [ "$managed" = "yes" ]; then',
+    "          # Path-based hint at the right op-* endpoint.",
+    '          case "$file" in',
+    '            */TASKS/*.md)             hint="Use op-task-set-status (status flips) or op-task-append-note (progress notes); op-task-create for new TASK notes." ;;',
+    '            */ISSUES/*.md|*/RESOLVED\\ ISSUES/*.md)',
+    '                                      hint="Use op-set-tasks (## Tasks checklist), op-set-section (Plan/Notes/Summary), op-set-scope (Scope), op-append-commit, op-set-pr, op-resolve. Frontmatter status/agent flips have dedicated verbs." ;;',
+    '            */STATUS.md)              hint="STATUS.md is plugin-managed; use op-scaffold or the dedicated STATUS endpoint instead of editing in place." ;;',
+    '            */DOCS/*.md)              hint="Use op-doc-create (new vault DOC) or op-doc-edit (existing). Repo-tracked DOCS under DOCS/superpowers/ follow the repo workflow." ;;',
+    '            *)                        hint="Use the appropriate op-* endpoint instead of editing the managed note directly." ;;',
+    "          esac",
+    '          echo "op-obsidian: refusing edit on managed note: $file" >&2',
+    '          echo "$hint" >&2',
+    '          echo "Override with OP_ALLOW_MANAGED_EDIT=1 for a one-line edit." >&2',
+    "          exit 2",
+    "        fi",
+    "      fi",
+    "      ;;",
+    "  esac",
     "fi",
-    "# PreToolUse hook receives the tool invocation as JSON on stdin",
-    '# (`{"tool_input": {"file_path": "/abs/path", ...}, ...}`). Extract the',
-    "# first file_path with a tolerant sed — we restrict to a JSON-string form,",
-    "# matching the trivial single-line shape Claude Code emits. If stdin is",
-    "# empty or unparseable, fall through (no refusal).",
-    "input=$(cat 2>/dev/null || true)",
-    '[ -z "$input" ] && exit 0',
-    'file=$(printf %s "$input" | sed -n \'s/.*"file_path"[[:space:]]*:[[:space:]]*"\\([^"]*\\)".*/\\1/p\' | head -n1)',
-    '[ -z "$file" ] && exit 0',
-    'case "$file" in',
-    "  *.md) ;;",
-    "  *) exit 0 ;;",
-    "esac",
-    '[ -f "$file" ] || exit 0',
-    "# Frontmatter parse stays in pure shell (awk). We only recognize the",
-    "# trivial single-line `op_managed: true` form the migration writes —",
-    "# nested/quoted/multi-line variants fall through without refusal.",
-    "managed=$(awk '",
-    '  BEGIN { infm = 0 }',
-    '  NR == 1 && $0 == "---" { infm = 1; next }',
-    '  infm == 1 && $0 == "---" { exit }',
-    '  infm == 1 && /^op_managed:[[:space:]]*true[[:space:]]*$/ { print "yes"; exit }',
-    "' \"$file\")",
-    'if [ "$managed" != "yes" ]; then',
-    "  exit 0",
+    "",
+    );
+  }
+
+  if (layers.newFileGuard) {
+    body.push(
+    "# === Layer 3: new-file refusal ===",
+    'if [ "${OP_ALLOW_NEW_FILE:-}" != "1" ] && [ -n "$file" ]; then',
+    '  case "$file" in',
+    '    */Projects/*/ISSUES/*|*/Projects/*/RESOLVED\\ ISSUES/*|*/Projects/*/TASKS/*)',
+    '      if [ ! -e "$file" ]; then',
+    '        case "$file" in',
+    '          */Projects/*/ISSUES/*)             new_hint="Use op-new project=<slug> title=\\"...\\" to create new issues — the plugin owns ID numbering, filename sanitization, and the schema-conformant frontmatter." ;;',
+    '          */Projects/*/TASKS/*)              new_hint="Use op-task-create issue=<id> title=\\"...\\" to create new TASK notes — the plugin links them to the parent issue and sets the schema." ;;',
+    '          */Projects/*/RESOLVED\\ ISSUES/*)  new_hint="" ;;',
+    '          *)                                 new_hint="" ;;',
+    "        esac",
+    '        echo "op-obsidian: refusing creation of new file under managed folder: $file" >&2',
+    '        if [ -n "$new_hint" ]; then echo "$new_hint" >&2; fi',
+    '        echo "Override with OP_ALLOW_NEW_FILE=1 for a one-line edit." >&2',
+    "        exit 2",
+    "      fi",
+    "      ;;",
+    "  esac",
     "fi",
-    "# Path-based hint at the right op-* endpoint.",
-    'case "$file" in',
-    '  */TASKS/*.md)             hint="Use op-task-set-status (status flips) or op-task-append-note (progress notes); op-task-create for new TASK notes." ;;',
-    '  */ISSUES/*.md|*/RESOLVED\\ ISSUES/*.md)',
-    '                            hint="Use op-set-tasks (## Tasks checklist), op-set-section (Plan/Notes/Summary), op-set-scope (Scope), op-append-commit, op-set-pr, op-resolve. Frontmatter status/agent flips have dedicated verbs." ;;',
-    '  */STATUS.md)              hint="STATUS.md is plugin-managed; use op-scaffold or the dedicated STATUS endpoint instead of editing in place." ;;',
-    '  */DOCS/*.md)              hint="Use op-doc-create (new vault DOC) or op-doc-edit (existing). Repo-tracked DOCS under DOCS/superpowers/ follow the repo workflow." ;;',
-    '  *)                        hint="Use the appropriate op-* endpoint instead of editing the managed note directly." ;;',
-    "esac",
-    'echo "op-obsidian: refusing edit on managed note: $file" >&2',
-    'echo "$hint" >&2',
-    'echo "Override with OP_ALLOW_MANAGED_EDIT=1 for a one-line edit." >&2',
-    "exit 2",
     "",
     );
   }

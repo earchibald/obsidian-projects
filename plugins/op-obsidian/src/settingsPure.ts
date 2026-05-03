@@ -76,9 +76,17 @@ export interface AgentsSettings {
  * on any vault `*.md` whose frontmatter carries `op_managed: true`. Default
  * **off** — Phase 6 (OP-218) will flip the default once the additive endpoints
  * have soaked. Override per-call via the `OP_ALLOW_MANAGED_EDIT=1` env var.
+ *
+ * OP-260: new-file pretool guard layer. When `newFileGuard` is true, the same
+ * PreToolUse script also refuses creation of new files under
+ * `Projects/<slug>/{ISSUES,RESOLVED ISSUES,TASKS}/` — agents are pushed toward
+ * `op-new` / `op-task-create`. Existing-file edits fall through to the
+ * managed-note layer (or pass, if not managed). Default **off**; Phase 6 of
+ * OP-218 owns the flip. Override per-call via `OP_ALLOW_NEW_FILE=1`.
  */
 export interface AgentDisciplineSettings {
   managedNoteGuard: boolean;
+  newFileGuard: boolean;
 }
 
 /**
@@ -329,6 +337,8 @@ export const DEFAULT_SETTINGS: OpSettings = {
     // OP-259: managed-note pretool guard layer. Default off — Phase 6 of
     // OP-218 owns the flip after a release of soak.
     managedNoteGuard: false,
+    // OP-260: new-file pretool guard layer. Default off — Phase 6 flips.
+    newFileGuard: false,
   },
   developer: {
     showDevCommands: false,
@@ -496,6 +506,9 @@ export function mergeSettings(loaded: unknown): OpSettings {
     const ad = l.agentDiscipline as Partial<AgentDisciplineSettings>;
     if (typeof ad.managedNoteGuard === "boolean") {
       base.agentDiscipline.managedNoteGuard = ad.managedNoteGuard;
+    }
+    if (typeof ad.newFileGuard === "boolean") {
+      base.agentDiscipline.newFileGuard = ad.newFileGuard;
     }
   }
   if (l.developer && typeof l.developer === "object") {

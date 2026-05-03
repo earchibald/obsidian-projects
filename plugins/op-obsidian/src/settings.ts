@@ -1778,6 +1778,18 @@ export class OpSettingsTab extends PluginSettingTab {
           await this.plugin.reinstallAgentHooks();
         }),
       );
+    new Setting(containerEl)
+      .setName("Refuse new files under ISSUES / RESOLVED ISSUES / TASKS")
+      .setDesc(
+        "OP-260 / Phase 3 of OP-218. PreToolUse layer that refuses agent creation of new files anywhere under `Projects/<slug>/{ISSUES,RESOLVED ISSUES,TASKS}/` — agents are pushed toward `op-new` (new issues) and `op-task-create` (new TASK notes). RESOLVED ISSUES is plugin-managed at resolve time; direct creation there is always wrong. Existing-file edits still flow through the managed-note layer above. Default off until soak. Override per-session with OP_ALLOW_NEW_FILE=1.",
+      )
+      .addToggle((t) =>
+        t.setValue(s.agentDiscipline.newFileGuard).onChange(async (v) => {
+          s.agentDiscipline.newFileGuard = v;
+          await this.plugin.saveSettings();
+          await this.plugin.reinstallAgentHooks();
+        }),
+      );
   }
 
   private renderFlowChaining(containerEl: HTMLElement): void {

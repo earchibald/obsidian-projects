@@ -335,3 +335,214 @@ describe("installAgentHooks — managed layer is opt-in", () => {
     expect(off.guardUninstalled.sort()).toEqual(["claude", "gemini"]);
   });
 });
+
+// OP-260: new-file refusal layer. Mirrors the managed-note describe block —
+// installs in a linked worktree so Layer 1 is a no-op, then drives the script
+// with a Claude-Code-style PreToolUse JSON payload on stdin.
+describe("pretool-worktree-guard.sh — new-file layer", () => {
+  let scriptPath: string;
+  let repo: string;
+  let wt: string;
+
+  async function runGuard(
+    env: NodeJS.ProcessEnv,
+    cwd: string,
+    stdin: string,
+  ): Promise<{ code: number; stderr: string }> {
+    try {
+      execFileSync("bash", [scriptPath], {
+        cwd,
+        env: { ...process.env, ...env },
+        input: stdin,
+        stdio: ["pipe", "pipe", "pipe"],
+      });
+      return { code: 0, stderr: "" };
+    } catch (err: any) {
+      return { code: err.status ?? -1, stderr: String(err.stderr ?? "") };
+    }
+  }
+
+  function payload(filePath: string, toolName = "Write"): string {
+    return JSON.stringify({
+      session_id: "s",
+      tool_name: toolName,
+      tool_input:
+        toolName === "Write"
+          ? { file_path: filePath, content: "x" }
+          : { file_path: filePath, old_string: "a", new_string: "b" },
+    });
+  }
+
+  beforeEach(async () => {
+    const res = await installAgentHooks({
+      enforceWorktree: true,
+      managedNoteGuard: true,
+      newFileGuard: true,
+    });
+    scriptPath = res.guardScriptPath;
+    repo = await mkTmp("op-newfile-repo-");
+    execFileSync("git", ["init", "-q", "-b", "main", repo]);
+    execFileSync("git", ["-C", repo, "config", "user.email", "t@t"]);
+    execFileSync("git", ["-C", repo, "config", "user.name", "t"]);
+    await fs.writeFile(path.join(repo, "f.txt"), "hi\n");
+    execFileSync("git", ["-C", repo, "add", "."]);
+    execFileSync("git", ["-C", repo, "commit", "-q", "-m", "init"]);
+    wt = await mkTmp("op-newfile-wt-");
+    await fs.rm(wt, { recursive: true, force: true });
+    execFileSync("git", ["-C", repo, "worktree", "add", "-q", "-b", "wt-y", wt]);
+  });
+
+  afterEach(async () => {
+    await fs.rm(repo, { recursive: true, force: true });
+    await fs.rm(wt, { recursive: true, force: true });
+  });
+
+  it("(a) refuses Write of a new file under ISSUES/", async () => {
+    const note = path.join(wt, "Projects", "demo", "ISSUES", "DEMO-3 new.md");
+    await fs.mkdir(path.dirname(note), { recursive: true });
+    const r = await runGuard({ OP_ISSUE_ID: "DEMO-3" }, wt, payload(note));
+    expect(r.code).toBe(2);
+    expect(r.stderr).toMatch(/refusing creation of new file under managed folder/);
+    expect(r.stderr).toMatch(/op-new project=/);
+    expect(r.stderr).toMatch(/OP_ALLOW_NEW_FILE=1/);
+  });
+
+  it("(b) refuses Write of a new file under TASKS/", async () => {
+    const note = path.join(wt, "Projects", "demo", "TASKS", "DEMO-3.2 new.md");
+    await fs.mkdir(path.dirname(note), { recursive: true });
+    const r = await runGuard({ OP_ISSUE_ID: "DEMO-3" }, wt, payload(note));
+    expect(r.code).toBe(2);
+    expect(r.stderr).toMatch(/refusing creation of new file under managed folder/);
+    expect(r.stderr).toMatch(/op-task-create issue=/);
+  });
+
+  it("refuses Write of a new file under RESOLVED ISSUES/ but emits no command hint", async () => {
+    const note = path.join(
+      wt,
+      "Projects",
+      "demo",
+      "RESOLVED ISSUES",
+      "DEMO-1 done.md",
+    );
+    await fs.mkdir(path.dirname(note), { recursive: true });
+    const r = await runGuard({ OP_ISSUE_ID: "DEMO-1" }, wt, payload(note));
+    expect(r.code).toBe(2);
+    expect(r.stderr).toMatch(/refusing creation of new file under managed folder/);
+    // No `op-*` command hint — the user may only get the override line.
+    expect(r.stderr).not.toMatch(/op-new project=/);
+    expect(r.stderr).not.toMatch(/op-task-create/);
+    expect(r.stderr).toMatch(/OP_ALLOW_NEW_FILE=1/);
+  });
+
+  it("(c) OP_ALLOW_NEW_FILE=1 permits the create", async () => {
+    const note = path.join(wt, "Projects", "demo", "ISSUES", "DEMO-3 new.md");
+    await fs.mkdir(path.dirname(note), { recursive: true });
+    const r = await runGuard(
+      { OP_ISSUE_ID: "DEMO-3", OP_ALLOW_NEW_FILE: "1" },
+      wt,
+      payload(note),
+    );
+    expect(r.code).toBe(0);
+  });
+
+  it("(d) existing managed file edit still routes through Layer 2 (refused as managed-note)", async () => {
+    const note = path.join(wt, "Projects", "demo", "ISSUES", "DEMO-3 ex.md");
+    await fs.mkdir(path.dirname(note), { recursive: true });
+    await fs.writeFile(
+      note,
+      "---\nid: DEMO-3\nop_managed: true\n---\n\n# DEMO-3\n",
+    );
+    const r = await runGuard({ OP_ISSUE_ID: "DEMO-3" }, wt, payload(note, "Edit"));
+    expect(r.code).toBe(2);
+    // Layer 2 fires first (managed-note refusal), not Layer 3 (file exists).
+    expect(r.stderr).toMatch(/refusing edit on managed note/);
+    expect(r.stderr).not.toMatch(/refusing creation of new file/);
+  });
+
+  it("existing unmanaged file under ISSUES/ is allowed (Layer 2 falls through, Layer 3 sees existing file)", async () => {
+    const note = path.join(wt, "Projects", "demo", "ISSUES", "DEMO-3 unmgd.md");
+    await fs.mkdir(path.dirname(note), { recursive: true });
+    await fs.writeFile(note, "no frontmatter\n");
+    const r = await runGuard({ OP_ISSUE_ID: "DEMO-3" }, wt, payload(note, "Edit"));
+    expect(r.code).toBe(0);
+  });
+
+  it("(e) other paths under Projects/ are still allowed (e.g. STATUS.md, DOCS/)", async () => {
+    const status = path.join(wt, "Projects", "demo", "STATUS.md");
+    await fs.mkdir(path.dirname(status), { recursive: true });
+    const r1 = await runGuard({ OP_ISSUE_ID: "DEMO-3" }, wt, payload(status));
+    expect(r1.code).toBe(0);
+
+    const doc = path.join(wt, "Projects", "demo", "DOCS", "notes.md");
+    await fs.mkdir(path.dirname(doc), { recursive: true });
+    const r2 = await runGuard({ OP_ISSUE_ID: "DEMO-3" }, wt, payload(doc));
+    expect(r2.code).toBe(0);
+  });
+
+  it("OP_ALLOW_MANAGED_EDIT=1 does NOT bypass Layer 3 on new files", async () => {
+    // The two override env vars are independent — a session that wants to
+    // hand-edit a managed note (Layer 2 bypass) must still go through op-new
+    // for new issue creation. Proves Layer 3 fires when Layer 2 is disabled
+    // by env at the call site.
+    const note = path.join(wt, "Projects", "demo", "ISSUES", "DEMO-5 new.md");
+    await fs.mkdir(path.dirname(note), { recursive: true });
+    const r = await runGuard(
+      { OP_ISSUE_ID: "DEMO-5", OP_ALLOW_MANAGED_EDIT: "1" },
+      wt,
+      payload(note),
+    );
+    expect(r.code).toBe(2);
+    expect(r.stderr).toMatch(/refusing creation of new file/);
+  });
+
+  it("paths outside Projects/ are unaffected", async () => {
+    const out = path.join(wt, "src", "newfile.ts");
+    await fs.mkdir(path.dirname(out), { recursive: true });
+    const r = await runGuard({ OP_ISSUE_ID: "DEMO-3" }, wt, payload(out));
+    expect(r.code).toBe(0);
+  });
+});
+
+// OP-260: opt-in/opt-out script-body and install assertions, mirroring the
+// OP-259 "managed layer is opt-in" describe block.
+describe("installAgentHooks — new-file layer is opt-in", () => {
+  it("omits the new-file layer when newFileGuard is false", async () => {
+    const res = await installAgentHooks({
+      enforceWorktree: true,
+      managedNoteGuard: true,
+      newFileGuard: false,
+    });
+    const body = await fs.readFile(res.guardScriptPath, "utf8");
+    expect(body).toMatch(/Layer 1: worktree refusal/);
+    expect(body).toMatch(/Layer 2: managed-note refusal/);
+    expect(body).not.toMatch(/Layer 3: new-file refusal/);
+    expect(body).not.toMatch(/refusing creation of new file under managed folder/);
+  });
+
+  it("installs the guard hook when only newFileGuard is true", async () => {
+    const res = await installAgentHooks({
+      enforceWorktree: false,
+      managedNoteGuard: false,
+      newFileGuard: true,
+    });
+    expect(res.guardInstalled.sort()).toEqual(["claude", "gemini"]);
+    const body = await fs.readFile(res.guardScriptPath, "utf8");
+    expect(body).not.toMatch(/Layer 1: worktree refusal/);
+    expect(body).not.toMatch(/Layer 2: managed-note refusal/);
+    expect(body).toMatch(/Layer 3: new-file refusal/);
+  });
+
+  it("uninstalls the guard when all three layers are off", async () => {
+    await installAgentHooks({
+      enforceWorktree: true,
+      managedNoteGuard: true,
+      newFileGuard: true,
+    });
+    const off = await installAgentHooks({
+      enforceWorktree: false,
+      managedNoteGuard: false,
+      newFileGuard: false,
+    });
+    expect(off.guardUninstalled.sort()).toEqual(["claude", "gemini"]);
+  });
+});
