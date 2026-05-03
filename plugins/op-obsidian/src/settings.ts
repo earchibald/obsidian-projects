@@ -1756,6 +1756,18 @@ export class OpSettingsTab extends PluginSettingTab {
           await this.plugin.reinstallAgentHooks();
         }),
       );
+    new Setting(containerEl)
+      .setName("Refuse direct edits on managed notes")
+      .setDesc(
+        "OP-259 / Phase 2 of OP-218. PreToolUse layer that blocks Edit/Write on any vault `*.md` whose frontmatter has `op_managed: true` — agents are pushed toward the `op-*` endpoints (op-set-tasks, op-task-set-status, op-task-append-note, op-doc-create/edit, op-set-section, etc.). Default off until the additive endpoints have soaked in a release. Same hook channel as the worktree guard — same agent-coverage caveats. Override per-session with OP_ALLOW_MANAGED_EDIT=1.",
+      )
+      .addToggle((t) =>
+        t.setValue(s.agentDiscipline.managedNoteGuard).onChange(async (v) => {
+          s.agentDiscipline.managedNoteGuard = v;
+          await this.plugin.saveSettings();
+          await this.plugin.reinstallAgentHooks();
+        }),
+      );
   }
 
   private renderFlowChaining(containerEl: HTMLElement): void {

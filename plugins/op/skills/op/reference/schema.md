@@ -273,6 +273,8 @@ Notes that do **not** get the flag:
 
 The startup migration (`op-migrate-add-managed-flag`) is idempotent and runs once per plugin upgrade. Existing notes from before this release pick up the flag silently the first time the upgraded plugin loads; rerunning it on a fully migrated vault is a fast scan with zero writes.
 
+**Phase 2 guard layer (OP-259, default off).** Setting `agentDiscipline.managedNoteGuard` (Settings → op-obsidian → Worktree enforcement → "Refuse direct edits on managed notes") gates a second layer in `~/.op-obsidian/hooks/pretool-worktree-guard.sh`. When on, the script extracts the `tool_input.file_path` from the PreToolUse JSON on stdin, checks the file's frontmatter for the trivial single-line `op_managed: true` form the migration writes, and exits 2 with a path-aware hint at the right `op-*` endpoint (TASK → `op-task-set-status` / `op-task-append-note`; ISSUE → `op-set-tasks` / `op-set-section` / `op-set-scope` / `op-append-commit` / `op-set-pr` / `op-resolve`; STATUS → `op-scaffold`; DOCS → `op-doc-create` / `op-doc-edit`). Per-call escape hatch: `OP_ALLOW_MANAGED_EDIT=1`, mirroring `OP_ALLOW_MAIN_EDIT=1`. Coverage and gaps mirror the worktree guard exactly — Claude Code verified, Gemini install is best-effort/untested, Copilot CLI has no PreToolUse hook so the guard does not apply there. The settings flip rewrites the on-disk script (each layer is emitted only when its setting is on); changes take effect for the next agent session. Phase 6 of OP-218 will flip the default to on after a release of soak.
+
 ## Audit log
 
 Every successful mutating `op-*` call appends one JSONL line to `Projects/_scratch/op-audit.jsonl`:
