@@ -1966,7 +1966,11 @@ export class OpSettingsTab extends PluginSettingTab {
                 method: "POST",
                 headers: token ? { "X-Op-Token": token } : {},
               });
-              if (!res.ok) {
+              if (res.status === 404) {
+                notify(
+                  "Restart endpoint not yet implemented in the daemon. Restart iTerm2 to restart the daemon.",
+                );
+              } else if (!res.ok) {
                 notify(`Restart failed (HTTP ${res.status}).`);
               } else {
                 notify("Daemon restart requested.");
@@ -2065,7 +2069,11 @@ export class OpSettingsTab extends PluginSettingTab {
                 method: "POST",
                 headers: token ? { "X-Op-Token": token } : {},
               });
-              if (!res.ok) {
+              if (res.status === 404) {
+                notify(
+                  "Regenerate endpoint not yet implemented in the daemon.",
+                );
+              } else if (!res.ok) {
                 notify(`Regenerate failed (HTTP ${res.status}).`);
               } else {
                 notify(

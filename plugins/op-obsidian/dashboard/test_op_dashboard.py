@@ -228,6 +228,25 @@ class DataJsonReaderTests(unittest.TestCase):
         path = self._write({"orchestratorState": "wrong-type"})
         self.assertEqual(opd.read_orchestrator_state(path), {})
 
+    def test_find_data_json_paths_ignores_malformed_config(self):
+        with tempfile.TemporaryDirectory() as td:
+            data_path = Path(td) / "data.json"
+            data_path.write_text("{}")
+            config_path = Path(td) / "op-dashboard.config.json"
+            config_path.write_text("{not json")
+            orig_config_path = opd.CONFIG_PATH
+            orig_env = os.environ.get("OP_DASHBOARD_DATA_JSON")
+            os.environ["OP_DASHBOARD_DATA_JSON"] = str(data_path)
+            opd.CONFIG_PATH = config_path
+            try:
+                self.assertEqual(opd.find_data_json_paths(), [data_path])
+            finally:
+                opd.CONFIG_PATH = orig_config_path
+                if orig_env is None:
+                    os.environ.pop("OP_DASHBOARD_DATA_JSON", None)
+                else:
+                    os.environ["OP_DASHBOARD_DATA_JSON"] = orig_env
+
     def test_extract_agent_meta_defensive(self):
         # Pre-OP-217 surface ref with no agentMeta → all defaults.
         agent_id, model, workdir, started = opd.extract_agent_meta({})
@@ -270,6 +289,33 @@ class SessionRegistryTests(unittest.TestCase):
         reg.upsert(opd.AgentSession(issue_id="OP-1"))
         self.assertIsNotNone(reg.remove("OP-1"))
         self.assertIsNone(reg.get("OP-1"))
+
+
+class HubTests(unittest.TestCase):
+    def test_close_all_prunes_snapshot_clients_even_when_close_raises(self):
+        class FakeWs:
+            def __init__(self, fail: bool = False):
+                self.fail = fail
+                self.calls = []
+
+            async def close(self, code=None, message=b""):
+                self.calls.append((code, message))
+                if self.fail:
+                    raise RuntimeError("boom")
+
+        async def _run():
+            hub = opd.Hub()
+            ok = FakeWs()
+            broken = FakeWs(fail=True)
+            await hub.add(ok)
+            await hub.add(broken)
+            self.assertEqual(hub.count, 2)
+            await hub.close_all(opd.WS_CLOSE_TOKEN_INVALID, b"token rotated")
+            self.assertEqual(ok.calls, [(opd.WS_CLOSE_TOKEN_INVALID, b"token rotated")])
+            self.assertEqual(broken.calls, [(opd.WS_CLOSE_TOKEN_INVALID, b"token rotated")])
+            self.assertEqual(hub.count, 0)
+
+        asyncio.run(_run())
 
 
 class AgentSessionToJsonTests(unittest.TestCase):

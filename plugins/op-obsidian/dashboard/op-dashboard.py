@@ -553,16 +553,23 @@ class Hub:
                 await ws.close()
 
     async def close_all(self, code: int, message: bytes = b"") -> None:
-        """Close every client with the given WS close `code`, but keep the
-        client set intact — the registered handler removes the entry on its
-        own when its `async for msg in ws` loop falls through. Used by
-        /regenerate-token to invalidate live sessions without racing the
-        per-handler cleanup."""
+        """Close every currently registered client with the given WS close
+        `code`, then prune just that snapshot from the registry. The handler's
+        `finally: hub.remove(ws)` path still runs, so double-discard is
+        harmless; pruning here avoids stale entries when ws.close() fails or
+        the handler hasn't unwound yet."""
         async with self._lock:
             clients = list(self._clients)
         for ws in clients:
             with contextlib.suppress(Exception):
                 await ws.close(code=code, message=message)
+        # Prune only the snapshot we closed. New clients may have connected
+        # with the rotated token while we were awaiting ws.close(); don't drop
+        # those. The handler's finally still discards these same ws objects, so
+        # double-discard is harmless.
+        async with self._lock:
+            for ws in clients:
+                self._clients.discard(ws)
 
 
 # ---- Auth ------------------------------------------------------------------
