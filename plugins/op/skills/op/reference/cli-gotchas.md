@@ -37,6 +37,8 @@ To read a frontmatter field, use `obsidian property:read name=<key> path=<vault-
 
 ## There is no `property:add` / `property:append`
 
+> **Emergency fallback only.** Use `obsidian op-append-commit issue=<PREFIX>-<N> sha=<sha> subject=<subj>` in normal operation — it is idempotent, atomic, audit-logged, and recorded in the JSON response trail. The raw recipe below exists for the rare case where `op-obsidian` is missing/disabled and you can't enable it; it skips the audit trail and races with concurrent writes. Don't reach for it just because `op-append-commit` feels heavier.
+
 The CLI exposes only `property:read`, `property:set`, and `property:remove`. To append to a list-valued property (e.g. `commits:`) without the plugin, you have to read → append-in-memory → rewrite:
 
 ```bash
@@ -54,8 +56,6 @@ obsidian property:set name=commits type=list \
   path="$ISSUE"
 ```
 
-This is the **fallback** for when `op-obsidian` is missing or disabled. In normal operation, `obsidian op-append-commit issue=<PREFIX>-<N> sha=<sha> subject=<subj>` is the right tool — it's idempotent, handles the read/rewrite internally, and keeps the JSON response trail.
-
 ## Managed-note discipline — prefer `op-*` endpoints over raw `Edit`/`Write` (OP-255)
 
 Plugin-owned notes — issues, TASKS, scaffold-time DOCs — carry `op_managed: true` in frontmatter. They have dedicated endpoints for every mutation the workflow needs; reach for those first and treat raw `Edit`/`Write` as the fallback. Lookup table for the writes that used to require raw edits:
@@ -69,7 +69,30 @@ Plugin-owned notes — issues, TASKS, scaffold-time DOCs — carry `op_managed: 
 | Vault-only DOC create | `obsidian op-doc-create project=<slug> doc_type=<plan\|spec\|adr\|runbook> title="…"` | Refuses `DOCS/superpowers/` (repo-symlinked). |
 | Vault-only DOC edit | `obsidian op-doc-edit path=<…> [section=<H2>] body="…"` | Section-scoped or full-body append. |
 
-Why this matters beyond ergonomics: every successful op-* call appends a JSONL line to `Projects/_scratch/op-audit.jsonl`. Raw `Edit`/`Write` skips that trail and shows up there as `bypass: true` lines (detection-after-the-fact). The Phase 2 pretool guard, scheduled to ship default-off in a future release, will refuse `Edit`/`Write` on `op_managed: true` notes outright. If you find yourself needing a write that doesn't have an endpoint, file an issue rather than reaching for `obsidian eval code='app.vault.modify(...)'` — that's the bypass hole the discipline is closing.
+Why this matters beyond ergonomics: every successful op-* call appends a JSONL line to `Projects/_scratch/op-audit.jsonl`. Raw `Edit`/`Write` skips that trail and shows up there as `bypass: true` lines (detection-after-the-fact). The Phase 2 pretool guard (OP-259) ships default-off and refuses `Edit`/`Write` on `op_managed: true` notes outright when enabled; Phase 3 (OP-260) does the same for new files under `ISSUES`/`RESOLVED ISSUES`/`TASKS`. Phase 6 will flip both to default-on.
+
+### Eval mutation is the surviving bypass hole — do not use it
+
+`obsidian eval` is fine for read-only introspection (probing plugin state, listing properties, dumping settings). It is **not** an escape hatch for writes. Calling `app.vault.modify(...)`, `app.vault.create(...)`, `app.vault.delete(...)`, `app.vault.rename(...)`, `vault.adapter.write(...)`, or `processFrontMatter(...)` from inside `obsidian eval code='…'` bypasses every layer of the discipline: the `op-*` dispatch (no atomic move-and-trash, no inverse-link maintenance), the JSON response payload, **and** the Phase 2/3 pretool guards (they hook the `Edit`/`Write` tool channel, not the `obsidian eval` channel). The audit log catches it after the fact via the `app.vault.on("modify")` listener — but only as a `bypass: true` line.
+
+Worked example. An agent reaches for the shortcut:
+
+```bash
+# DO NOT DO THIS. This is the bypass hole.
+obsidian vault=Agent-Vault eval code='(async()=>{
+  const p="Projects/op/ISSUES/OP-99 ….md";
+  const f=app.vault.getAbstractFileByPath(p);
+  await app.vault.modify(f, "rewritten body");
+})()'
+```
+
+Tail of `Projects/_scratch/op-audit.jsonl` afterwards:
+
+```json
+{"bypass":true,"cmd":null,"paths":["Projects/op/ISSUES/OP-99 ….md"],"ts":"2026-05-03T17:42:01.234Z"}
+```
+
+That `bypass: true` line is detection-only — the write already landed. The right answer when no `op-*` endpoint covers what you need is to **file an issue and add the endpoint**, not to ship the eval one-off. Quiet eval-mutations hide the signal we use to find missing endpoints. See `schema.md` → "Audit log" for the full event schema.
 
 ## Body sections without a verb — use `op-set-section`
 

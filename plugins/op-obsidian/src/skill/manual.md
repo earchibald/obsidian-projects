@@ -21,6 +21,19 @@ obsidian eval code='({enabled: app.plugins.enabledPlugins.has("op-obsidian"), ve
 
 If the plugin is missing or disabled, **stop and ask the user to install/enable it** rather than improvising with raw `obsidian` CLI primitives — the plugin owns filename sanitization, ID numbering, frontmatter shape, atomic move-and-trash on resolve, and the JSON response payload. For emergencies where the user can't enable it, the op skill's `reference/cli-gotchas.md` documents the raw-CLI fallbacks (including the read-append-rewrite recipe for appending to `commits:` without `op-append-commit`).
 
+### Eval is read-only
+
+`obsidian eval` is fine — and recommended — for **read-only introspection**: probing plugin state, listing properties, sampling vault structure, dumping settings, computing path → URI strings. Use it freely for any expression that doesn't write.
+
+It is **not** an escape hatch for writes. `obsidian eval code='app.vault.modify(...)'`, `app.vault.create(...)`, `app.vault.delete(...)`, `app.vault.rename(...)`, `vault.adapter.write(...)`, `processFrontMatter(...)`, or any other API that mutates a `Projects/**/*.md` note bypasses every layer the discipline relies on:
+
+- The plugin's `op-*` dispatch (no JSON response, no atomic move-and-trash semantics, no inverse-link maintenance).
+- The op-audit JSONL trail (the write surfaces only as a post-hoc `bypass: true` line — see schema.md → "Audit log").
+- The Phase 2/3 pretool guards (they hook tools like `Edit`/`Write`, not the `obsidian eval` channel).
+- The opt-in vault-git auto-commit hook (per-call commits are wired to the op-* response path).
+
+If you find yourself reaching for `obsidian eval code='app.vault.modify(...)'` because no `op-*` endpoint covers your write, **stop and file an issue**. The right answer is a new endpoint, not a one-off bypass — `bypass: true` lines in the audit log are the signal we use to find missing endpoints, and a quiet eval-mutation hides that signal.
+
 **Delegating vault/CLI work.** This plugin ships an `obsidian-ops-specialist` subagent. When you're a coding agent working an issue and the next step is a raw Obsidian CLI call, a vault introspection, or a mutation the plugin owns, prefer delegating it via the Agent tool (`subagent_type: obsidian-ops-specialist`) over running the CLI yourself. The specialist knows the CLI gotchas, the op-obsidian dispatch surface, and keeps vault-side behavior consistent with this skill's lifecycle rules. You still own the skill's invariants — the specialist executes, you orchestrate.
 
 Run `obsidian vault` once to learn the active vault name and path; cache both.
