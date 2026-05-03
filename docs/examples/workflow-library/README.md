@@ -39,7 +39,7 @@ docs/examples/workflow-library/   ← vault root
 | `tmux-safety.md` | `kickoff` | `protected_session_prefixes=op-agents-,view-`, `experiment_session_pattern=op-experiment-$$` | Don't kill shared tmux sessions; experiment in a disposable one. |
 | `commit-mapping.md` | `implement` | `commit_command=op-append-commit`, `commit_field=commits` | Append every commit to the issue note's commits list, per-commit not batched. |
 | `pr-required.md` | `review` | `default_branch=main`, `pr_title_pattern="<ID>: <subject>"`, `merge_command=gh pr merge --squash --delete-branch` | PRs gate merges; PR title carries the issue id. |
-| `adversarial-review.md` | `review` | `reviewer_handle=@copilot`, `bypass_criteria=all` | Request adversarial review with concrete pressure-test prompts; bypass only when *all* criteria apply. |
+| `adversarial-review.md` | `review` | `copilot_cmd=copilot --autopilot --allow-all -p`, `bypass_criteria=all` | Invoke the local `copilot` CLI synchronously with concrete pressure-test prompts; expect pushed fix commits plus a `## Adversarial review (local copilot)` summary comment on the PR; bypass only when *all* criteria apply. |
 | `version-cadence.md` | `finalize` | `package_name=op-obsidian`, `bump_command=node scripts/bump-version.mjs` | Bump version files in lockstep at resolve time. |
 | `gh-issue-close.md` | `finalize` | `auto_close_setting_path=closeGithubIssueOnResolve` | Don't close the linked GH issue manually — let `op-resolve` handle it; read the JSON response. |
 
