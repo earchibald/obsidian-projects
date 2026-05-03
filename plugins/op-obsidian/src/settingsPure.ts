@@ -84,6 +84,36 @@ export const DASHBOARD_PORT_MIN = 1024;
 export const DASHBOARD_PORT_MAX = 65535;
 export const DASHBOARD_PORT_DEFAULT = 49217;
 
+// OP-241: classify a raw port-input string. The Settings UI uses `kind`
+// to decide whether to show inline error feedback (`invalid`), keep the
+// prior value silent (`empty` — user mid-edit), or persist (`valid`).
+export type DashboardPortValidation =
+  | { kind: "empty" }
+  | { kind: "invalid"; message: string }
+  | { kind: "valid"; value: number };
+
+export function validateDashboardPortInput(
+  raw: string,
+): DashboardPortValidation {
+  const trimmed = raw.trim();
+  if (trimmed === "") return { kind: "empty" };
+  // Reject decimals, signs, hex etc. — port numbers are positive integers.
+  if (!/^\d+$/.test(trimmed)) {
+    return {
+      kind: "invalid",
+      message: `Must be an integer between ${DASHBOARD_PORT_MIN} and ${DASHBOARD_PORT_MAX}.`,
+    };
+  }
+  const n = parseInt(trimmed, 10);
+  if (!Number.isFinite(n) || n < DASHBOARD_PORT_MIN || n > DASHBOARD_PORT_MAX) {
+    return {
+      kind: "invalid",
+      message: `Must be between ${DASHBOARD_PORT_MIN} and ${DASHBOARD_PORT_MAX}.`,
+    };
+  }
+  return { kind: "valid", value: n };
+}
+
 export interface DashboardSettings {
   // Port the OP-230 daemon binds on `127.0.0.1`. Default 49217 (per the
   // OP-217 product spec). OP-235 surfaces the numeric input that writes

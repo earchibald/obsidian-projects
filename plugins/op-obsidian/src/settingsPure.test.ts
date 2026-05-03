@@ -5,6 +5,7 @@ import {
   DASHBOARD_PORT_MIN,
   DEFAULT_SETTINGS,
   mergeSettings,
+  validateDashboardPortInput,
 } from "./settingsPure";
 
 // OP-232 added the `dashboard` namespace + merge guards; OP-235 lands the
@@ -81,5 +82,64 @@ describe("mergeSettings — dashboard namespace (OP-232 + OP-235)", () => {
     expect(
       mergeSettings({ dashboard: { port: DASHBOARD_PORT_MAX } }).dashboard.port,
     ).toBe(DASHBOARD_PORT_MAX);
+  });
+});
+
+// OP-241: predicate that drives the inline error feedback in the Dashboard
+// settings row. Treat empty distinctly from invalid so a user mid-edit
+// (cleared the field) doesn't get a red error badge — only typed values
+// that can't possibly become a port should trip the badge.
+describe("validateDashboardPortInput (OP-241)", () => {
+  it("returns kind='empty' for an empty / whitespace-only input", () => {
+    expect(validateDashboardPortInput("").kind).toBe("empty");
+    expect(validateDashboardPortInput("   ").kind).toBe("empty");
+  });
+
+  it("accepts valid in-range integers", () => {
+    expect(validateDashboardPortInput("49217")).toEqual({
+      kind: "valid",
+      value: 49217,
+    });
+    expect(validateDashboardPortInput(" 1024 ")).toEqual({
+      kind: "valid",
+      value: 1024,
+    });
+    expect(validateDashboardPortInput("01024")).toEqual({
+      kind: "valid",
+      value: 1024,
+    });
+    expect(validateDashboardPortInput(String(DASHBOARD_PORT_MIN))).toEqual({
+      kind: "valid",
+      value: DASHBOARD_PORT_MIN,
+    });
+    expect(validateDashboardPortInput(String(DASHBOARD_PORT_MAX))).toEqual({
+      kind: "valid",
+      value: DASHBOARD_PORT_MAX,
+    });
+  });
+
+  it("flags out-of-range integers as invalid with a range hint", () => {
+    const lo = validateDashboardPortInput(String(DASHBOARD_PORT_MIN - 1));
+    const hi = validateDashboardPortInput(String(DASHBOARD_PORT_MAX + 1));
+    const huge = validateDashboardPortInput("9".repeat(80));
+    expect(lo.kind).toBe("invalid");
+    expect(hi.kind).toBe("invalid");
+    expect(huge.kind).toBe("invalid");
+    if (lo.kind === "invalid") {
+      expect(lo.message).toContain(String(DASHBOARD_PORT_MIN));
+      expect(lo.message).toContain(String(DASHBOARD_PORT_MAX));
+    }
+  });
+
+  it("flags non-integer / signed / decimal inputs as invalid", () => {
+    expect(validateDashboardPortInput("abc").kind).toBe("invalid");
+    expect(validateDashboardPortInput("-1").kind).toBe("invalid");
+    expect(validateDashboardPortInput("-0").kind).toBe("invalid");
+    expect(validateDashboardPortInput("+1024").kind).toBe("invalid");
+    expect(validateDashboardPortInput("49217.5").kind).toBe("invalid");
+    expect(validateDashboardPortInput("1e3").kind).toBe("invalid");
+    expect(validateDashboardPortInput("0x1234").kind).toBe("invalid");
+    expect(validateDashboardPortInput("١٠٢٤").kind).toBe("invalid");
+    expect(validateDashboardPortInput("49217abc").kind).toBe("invalid");
   });
 });
