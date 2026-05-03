@@ -345,13 +345,17 @@ export function buildPrepScript({ tmuxBinary, session, windowName, innerPath }: 
   const sess = shSingleQuote(session);
   const wname = shSingleQuote(windowName);
   const inner = shSingleQuote(innerPath);
+  // OP-266: pass `-c "$HOME"` so the tmux session/window default-path is the
+  // user's homedir rather than Obsidian's process cwd ("/" for GUI launches on
+  // macOS). The agent's inner script still cd's into the repo path, but any
+  // subsequent split or manually opened tmux window now inherits $HOME.
   return [
     `if ! ${tmux} has-session -t ${sess} 2>/dev/null; then`,
-    `  ${tmux} new-session -d -s ${sess} -n ${wname} bash ${inner}`,
+    `  ${tmux} new-session -d -s ${sess} -c "$HOME" -n ${wname} bash ${inner}`,
     `elif ${tmux} list-windows -t ${sess} -F '#W' | grep -Fxq ${wname}; then`,
     `  ${tmux} select-window -t ${sess}:${wname}`,
     `else`,
-    `  ${tmux} new-window -t ${sess} -n ${wname} bash ${inner}`,
+    `  ${tmux} new-window -t ${sess} -c "$HOME" -n ${wname} bash ${inner}`,
     `fi`,
   ].join("\n");
 }

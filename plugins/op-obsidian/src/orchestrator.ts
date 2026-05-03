@@ -375,7 +375,9 @@ export function buildViewScript({
     "#!/bin/bash",
     "set -e",
     `export PATH="/opt/homebrew/bin:/usr/local/bin:$HOME/.local/bin:$HOME/bin:$PATH"`,
-    `${tmux} new-session -d -s ${groupSess} -t ${sess} 2>/dev/null || true`,
+    // OP-266: `-c "$HOME"` so the grouped session's default-path is the
+    // user's homedir, not Obsidian's process cwd ("/" for GUI launches).
+    `${tmux} new-session -d -s ${groupSess} -c "$HOME" -t ${sess} 2>/dev/null || true`,
     // OP-178: make set-hook non-fatal so a session-already-gone race (agent
     // crashed before this script reached set-hook) doesn't show an error
     // before the subsequent exec-attach also fails and the pane closes.
