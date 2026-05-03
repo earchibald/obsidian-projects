@@ -69,7 +69,17 @@ Plugin-owned notes — issues, TASKS, scaffold-time DOCs — carry `op_managed: 
 | Vault-only DOC create | `obsidian op-doc-create project=<slug> doc_type=<plan\|spec\|adr\|runbook> title="…"` | Refuses `DOCS/superpowers/` (repo-symlinked). |
 | Vault-only DOC edit | `obsidian op-doc-edit path=<…> [section=<H2>] body="…"` | Section-scoped or full-body append. |
 
-Why this matters beyond ergonomics: every successful op-* call appends a JSONL line to `Projects/_scratch/op-audit.jsonl`. Raw `Edit`/`Write` skips that trail and shows up there as `bypass: true` lines (detection-after-the-fact). The Phase 2 pretool guard (OP-259) ships default-off and refuses `Edit`/`Write` on `op_managed: true` notes outright when enabled; Phase 3 (OP-260) does the same for new files under `ISSUES`/`RESOLVED ISSUES`/`TASKS`. Phase 6 will flip both to default-on.
+Why this matters beyond ergonomics: every successful op-* call appends a JSONL line to `Projects/_scratch/op-audit.jsonl`. Raw `Edit`/`Write` skips that trail and shows up there as `bypass: true` lines (detection-after-the-fact). The Phase 2 pretool guard (OP-259) refuses `Edit`/`Write` on `op_managed: true` notes outright; Phase 3 (OP-260) does the same for new files under `ISSUES`/`RESOLVED ISSUES`/`TASKS`. **Both default to on** as of OP-263 (Phase 6 of OP-218) — fresh installs get the discipline without any settings flip.
+
+**Per-call overrides** (one-shot): `OP_ALLOW_MANAGED_EDIT=1` for the managed-note layer, `OP_ALLOW_NEW_FILE=1` for the new-file layer. Use sparingly — every override defeats the audit signal we use to find missing endpoints.
+
+**Persistent rollback** (when an unforeseen regression demands it): edit `<vault>/.obsidian/plugins/op-obsidian/data.json` and set
+
+```json
+{ "agentDiscipline": { "managedNoteGuard": false, "newFileGuard": false } }
+```
+
+then reload op-obsidian (Settings → Community plugins → toggle off + on, or `obsidian plugin:reload id=op-obsidian`). `mergeSettings` honors any boolean explicitly persisted in `data.json`, so the opt-out survives plugin updates. Flip individual flags rather than both if the regression is layer-specific. File an issue against `obsidian-projects` so the regression can be fixed and the guard re-enabled.
 
 ### Eval mutation is the surviving bypass hole — do not use it
 
