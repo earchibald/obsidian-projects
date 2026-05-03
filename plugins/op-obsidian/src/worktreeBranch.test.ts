@@ -31,14 +31,14 @@ describe("worktreeBranchName", () => {
   });
 
   it("caps the slug tail at 40 chars on a `-` boundary (inherits from {{slug}} preset)", () => {
-    const branch = worktreeBranchName(
-      "OP-9",
-      "Add slug plugin var and extract shared slugify util and other goodies",
+    expect(
+      worktreeBranchName("OP-9", "Add slug plugin var and extract shared slugify util and other goodies"),
+    ).toBe("worktree-OP-9-add-slug-plugin-var-and-extract-shared");
+  });
+
+  it("flat-truncates when the first `-` boundary would land beyond the 40-char cap", () => {
+    expect(worktreeBranchName("OP-9", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")).toBe(
+      "worktree-OP-9-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
     );
-    // The "worktree-OP-9-" prefix is 14 chars; the slug tail itself is capped at 40.
-    const tail = branch.slice("worktree-OP-9-".length);
-    expect(tail.length).toBeLessThanOrEqual(40);
-    expect(tail.endsWith("-")).toBe(false);
-    expect(branch.startsWith("worktree-OP-9-add-slug-plugin-var")).toBe(true);
   });
 });

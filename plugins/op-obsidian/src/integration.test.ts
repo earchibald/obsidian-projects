@@ -18,6 +18,7 @@ import { TFile } from "obsidian";
 import { loadModuleSources } from "./composeWorkflow";
 import { composeWorkflow } from "./composeWorkflowPure";
 import type { RenderContext } from "./pluginVarRegistry";
+import { worktreeBranchName } from "./worktreeBranch";
 
 // End-to-end integration test for OP-197. Drives the FM-parser → loader →
 // composer → renderer chain against a realistic 3-step workflow fixture and
@@ -172,7 +173,7 @@ const RENDER_CTX: RenderContext = {
   repo_path: "/repo",
   vault_path: "/vault",
   vault_name: "Agent-Vault",
-  branch: "worktree-OP-FIX-1-integration-fixture-issue",
+  branch: worktreeBranchName("OP-FIX-1", "Integration fixture issue"),
   today: "2026-04-26",
   agent: "claude",
   model: "claude-opus-4-7",
