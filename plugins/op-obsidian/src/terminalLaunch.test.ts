@@ -57,7 +57,7 @@ describe("buildPrepScript", () => {
       "'/opt/homebrew/bin/tmux' has-session -t 'op-agents'",
     );
     expect(s).toContain(
-      "'/opt/homebrew/bin/tmux' new-session -d -s 'op-agents' -n 'OP-39' bash '/tmp/op-agent-xyz/agent.command'",
+      "'/opt/homebrew/bin/tmux' new-session -d -s 'op-agents' -c \"$HOME\" -n 'OP-39' bash '/tmp/op-agent-xyz/agent.command'",
     );
   });
 
@@ -70,7 +70,7 @@ describe("buildPrepScript", () => {
   it("creates a new window when the session exists but the window does not", () => {
     const s = buildPrepScript(base);
     expect(s).toContain(
-      "'/opt/homebrew/bin/tmux' new-window -t 'op-agents' -n 'OP-39' bash '/tmp/op-agent-xyz/agent.command'",
+      "'/opt/homebrew/bin/tmux' new-window -t 'op-agents' -c \"$HOME\" -n 'OP-39' bash '/tmp/op-agent-xyz/agent.command'",
     );
   });
 });

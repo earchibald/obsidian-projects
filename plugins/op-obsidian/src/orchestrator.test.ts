@@ -258,7 +258,7 @@ describe("buildViewScript", () => {
   it("creates the per-pane grouped session and attaches with select-window", () => {
     const out = buildViewScript(baseArgs);
     expect(out).toContain(
-      `'/opt/homebrew/bin/tmux' new-session -d -s 'view-OP-172' -t 'op-agents-1' 2>/dev/null || true`,
+      `'/opt/homebrew/bin/tmux' new-session -d -s 'view-OP-172' -c "$HOME" -t 'op-agents-1' 2>/dev/null || true`,
     );
     expect(out).toContain(
       `exec '/opt/homebrew/bin/tmux' attach -t 'view-OP-172' \\; select-window -t 'view-OP-172':'OP-172'`,
