@@ -109,11 +109,12 @@ notification.
   re-run that script. The tmux side of the correlation union still
   matches the window by name, so the live row continues to appear in
   the dashboard. iTerm-targeted ops (`close_pane`, future "focus this
-  session" commands) degrade for that row until the next *new* launch
-  into the issue's window retags the iTerm session — workaround is to
-  relaunch the agent shell or close + relaunch the issue from
-  op-obsidian. Tracked as a deferred follow-up under OP-217; not fixed
-  in v1.
+  session" commands) degrade for that row until a *fresh* launch creates
+  a new tmux window and reruns the inner script to retag the iTerm
+  session; plain reattach flows that hit `select-window` do not retag.
+  Workaround is to let the surviving tmux-backed agent exit (or quit it)
+  and then relaunch the issue from op-obsidian. Tracked as a deferred
+  follow-up under OP-217; not fixed in v1.
 
 ## Testing
 
