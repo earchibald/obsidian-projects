@@ -4,6 +4,10 @@
 
 Create an isolated worktree (`EnterWorktree`, or the `superpowers:using-git-worktrees` skill) before making any changes for an issue. No exceptions — including one-line tweaks, schema comments, and typo fixes. Editing the main checkout risks branch, build, and vault-sync conflicts with parallel work, PR review, and any other agent that still holds the main checkout open.
 
+## Eval is read-only
+
+`obsidian eval` is for introspection — probing plugin state, listing properties, dumping settings. Never use it to write to a vault note: `app.vault.modify(...)`, `app.vault.create(...)`, `vault.adapter.write(...)`, `processFrontMatter(...)`, etc. from inside `obsidian eval code='…'` bypass `op-*` dispatch, the audit-log trail, and the Phase 2/3 pretool guards in one shot. If no `op-*` endpoint covers your write, file an issue and add the endpoint — don't ship the eval one-off. See [`reference/cli-gotchas.md`](plugins/op/skills/op/reference/cli-gotchas.md) → "Eval mutation is the surviving bypass hole" for the worked `bypass: true` audit-log example.
+
 ## After any change to `plugins/op-obsidian/`
 
 Always, in order:
