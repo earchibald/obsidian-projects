@@ -100,6 +100,14 @@ describe("validateDashboardPortInput (OP-241)", () => {
       kind: "valid",
       value: 49217,
     });
+    expect(validateDashboardPortInput(" 1024 ")).toEqual({
+      kind: "valid",
+      value: 1024,
+    });
+    expect(validateDashboardPortInput("01024")).toEqual({
+      kind: "valid",
+      value: 1024,
+    });
     expect(validateDashboardPortInput(String(DASHBOARD_PORT_MIN))).toEqual({
       kind: "valid",
       value: DASHBOARD_PORT_MIN,
@@ -113,8 +121,10 @@ describe("validateDashboardPortInput (OP-241)", () => {
   it("flags out-of-range integers as invalid with a range hint", () => {
     const lo = validateDashboardPortInput(String(DASHBOARD_PORT_MIN - 1));
     const hi = validateDashboardPortInput(String(DASHBOARD_PORT_MAX + 1));
+    const huge = validateDashboardPortInput("9".repeat(80));
     expect(lo.kind).toBe("invalid");
     expect(hi.kind).toBe("invalid");
+    expect(huge.kind).toBe("invalid");
     if (lo.kind === "invalid") {
       expect(lo.message).toContain(String(DASHBOARD_PORT_MIN));
       expect(lo.message).toContain(String(DASHBOARD_PORT_MAX));
@@ -124,8 +134,12 @@ describe("validateDashboardPortInput (OP-241)", () => {
   it("flags non-integer / signed / decimal inputs as invalid", () => {
     expect(validateDashboardPortInput("abc").kind).toBe("invalid");
     expect(validateDashboardPortInput("-1").kind).toBe("invalid");
+    expect(validateDashboardPortInput("-0").kind).toBe("invalid");
+    expect(validateDashboardPortInput("+1024").kind).toBe("invalid");
     expect(validateDashboardPortInput("49217.5").kind).toBe("invalid");
+    expect(validateDashboardPortInput("1e3").kind).toBe("invalid");
     expect(validateDashboardPortInput("0x1234").kind).toBe("invalid");
+    expect(validateDashboardPortInput("١٠٢٤").kind).toBe("invalid");
     expect(validateDashboardPortInput("49217abc").kind).toBe("invalid");
   });
 });
