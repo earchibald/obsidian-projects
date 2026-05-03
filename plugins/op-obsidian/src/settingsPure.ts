@@ -74,15 +74,19 @@ export interface AgentsSettings {
  * OP-259: managed-note pretool guard layer. When `managedNoteGuard` is true,
  * the PreToolUse hook script refuses agent Edit/Write/MultiEdit/NotebookEdit
  * on any vault `*.md` whose frontmatter carries `op_managed: true`. Default
- * **off** — Phase 6 (OP-218) will flip the default once the additive endpoints
- * have soaked. Override per-call via the `OP_ALLOW_MANAGED_EDIT=1` env var.
+ * **on** as of OP-263 (Phase 6 of OP-218). Override per-call via the
+ * `OP_ALLOW_MANAGED_EDIT=1` env var; users who hit a regression can opt out
+ * persistently by setting `agentDiscipline.managedNoteGuard: false` in
+ * `<vault>/.obsidian/plugins/op-obsidian/data.json` — `mergeSettings` honors
+ * any boolean explicitly persisted there.
  *
  * OP-260: new-file pretool guard layer. When `newFileGuard` is true, the same
  * PreToolUse script also refuses creation of new files under
  * `Projects/<slug>/{ISSUES,RESOLVED ISSUES,TASKS}/` — agents are pushed toward
  * `op-new` / `op-task-create`. Existing-file edits fall through to the
- * managed-note layer (or pass, if not managed). Default **off**; Phase 6 of
- * OP-218 owns the flip. Override per-call via `OP_ALLOW_NEW_FILE=1`.
+ * managed-note layer (or pass, if not managed). Default **on** as of OP-263
+ * (Phase 6 of OP-218). Override per-call via `OP_ALLOW_NEW_FILE=1`; same
+ * `data.json` opt-out path as `managedNoteGuard`.
  */
 export interface AgentDisciplineSettings {
   managedNoteGuard: boolean;
@@ -334,11 +338,12 @@ export const DEFAULT_SETTINGS: OpSettings = {
     enforceWorktree: false,
   },
   agentDiscipline: {
-    // OP-259: managed-note pretool guard layer. Default off — Phase 6 of
-    // OP-218 owns the flip after a release of soak.
-    managedNoteGuard: false,
-    // OP-260: new-file pretool guard layer. Default off — Phase 6 flips.
-    newFileGuard: false,
+    // OP-259 + OP-260: managed-note and new-file pretool guard layers.
+    // Default ON as of OP-263 (Phase 6 of OP-218). Existing installs that
+    // persisted `false` from the prior default keep their opt-out via
+    // `mergeSettings`; fresh installs get the discipline by default.
+    managedNoteGuard: true,
+    newFileGuard: true,
   },
   developer: {
     showDevCommands: false,

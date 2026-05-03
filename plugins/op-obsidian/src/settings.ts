@@ -1769,7 +1769,7 @@ export class OpSettingsTab extends PluginSettingTab {
     new Setting(containerEl)
       .setName("Refuse direct edits on managed notes")
       .setDesc(
-        "OP-259 / Phase 2 of OP-218. PreToolUse layer that blocks Edit/Write on any vault `*.md` whose frontmatter has `op_managed: true` — agents are pushed toward the `op-*` endpoints (op-set-tasks, op-task-set-status, op-task-append-note, op-doc-create/edit, op-set-section, etc.). Default off until the additive endpoints have soaked in a release. Same hook channel as the worktree guard — same agent-coverage caveats. Override per-session with OP_ALLOW_MANAGED_EDIT=1.",
+        "OP-259 / Phase 2 of OP-218. PreToolUse layer that blocks Edit/Write on any vault `*.md` whose frontmatter has `op_managed: true` — agents are pushed toward the `op-*` endpoints (op-set-tasks, op-task-set-status, op-task-append-note, op-doc-create/edit, op-set-section, etc.). Default **on** as of OP-263 (Phase 6 of OP-218). Same hook channel as the worktree guard — same agent-coverage caveats. Override per-session with OP_ALLOW_MANAGED_EDIT=1.",
       )
       .addToggle((t) =>
         t.setValue(s.agentDiscipline.managedNoteGuard).onChange(async (v) => {
@@ -1781,7 +1781,7 @@ export class OpSettingsTab extends PluginSettingTab {
     new Setting(containerEl)
       .setName("Refuse new files under ISSUES / RESOLVED ISSUES / TASKS")
       .setDesc(
-        "OP-260 / Phase 3 of OP-218. PreToolUse layer that refuses agent creation of new files anywhere under `Projects/<slug>/{ISSUES,RESOLVED ISSUES,TASKS}/` — agents are pushed toward `op-new` (new issues) and `op-task-create` (new TASK notes). RESOLVED ISSUES is plugin-managed at resolve time; direct creation there is always wrong. Existing-file edits still flow through the managed-note layer above. Default off until soak. Override per-session with OP_ALLOW_NEW_FILE=1.",
+        "OP-260 / Phase 3 of OP-218. PreToolUse layer that refuses agent creation of new files anywhere under `Projects/<slug>/{ISSUES,RESOLVED ISSUES,TASKS}/` — agents are pushed toward `op-new` (new issues) and `op-task-create` (new TASK notes). RESOLVED ISSUES is plugin-managed at resolve time; direct creation there is always wrong. Existing-file edits still flow through the managed-note layer above. Default **on** as of OP-263 (Phase 6 of OP-218). Override per-session with OP_ALLOW_NEW_FILE=1.",
       )
       .addToggle((t) =>
         t.setValue(s.agentDiscipline.newFileGuard).onChange(async (v) => {
