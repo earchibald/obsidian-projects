@@ -64,6 +64,12 @@ Older flows used `Edit` on the markdown file or `obsidian op-set-scope mode=body
 
 **Fallback (plugin missing/disabled).** If `op-obsidian` is not enabled and you can't enable it, fall back to `obsidian read` (full file) → splice the new section in memory → `obsidian append` or `Write` the full file back. There is no raw-CLI shortcut that mirrors `op-set-section`'s scoping. The verb's payload constraints — `name` ∈ `Plan|Notes|Summary` (use `op-set-evaluation` for `## Initial Evaluation`), no `## ` H2 outside a fenced code block in `content` — apply to the in-memory splice too.
 
+## Polling waits — prefer `/loop` when the agent is claude
+
+Cross-reference: the manual's "Monitoring and polling waits" section says that when the agent is `claude`, `/loop` is preferred over `ScheduleWakeup` chains and `gh … && sleep N` bash loops for any freely chosen polling cadence (CI settling, Copilot review, long build). The reason is the 300 s prompt-cache TTL — `/loop` ticks under that window stay warm, raw `sleep`/`ScheduleWakeup` patterns do not.
+
+Non-claude agents (`gemini`, `copilot`, others) do not have `/loop` and continue to use their harness's native polling. The user explicitly directing a cadence, and sub-60 s one-shot probes, are exempt for every agent. The manual has the worked example.
+
 ## `op-append-commit` failure modes
 
 When a project's policy is to call `op-append-commit` after each commit (or batch at resolve), three failure shapes show up. The skill is workflow-agnostic about *when* you call it; this section covers what to do when the call itself fails.

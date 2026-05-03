@@ -313,6 +313,28 @@ If the issue has a `github_issue:` frontmatter field, it mirrors a GitHub issue.
 
 ---
 
+## Monitoring and polling waits
+
+When you're polling a slow async condition — CI checks settling, an adversarial Copilot review landing, a long build finishing, remote state flipping — you generally have three mechanisms: `/loop` (claude only), `ScheduleWakeup` chains, and a `gh … && sleep N` bash loop. **When the agent is `claude`, prefer `/loop`** for any wait whose cadence you are freely choosing. It handles dynamic self-pacing (pick `delaySeconds` each wake based on what you just observed), keeps the prompt cache warm if each tick stays under the 300 s TTL, and has clean exit semantics — omit `ScheduleWakeup` to stop. Standalone `ScheduleWakeup` chains lose surrounding context unless constructed carefully, and `sleep`-loops re-enter bash repeatedly without any cache benefit.
+
+The 300 s figure is concrete: under that, successive `/loop` wakes hit the warm prompt cache. Over that, every tick pays a cache miss, so longer waits are cheaper as a smaller number of larger wake-ups than as a tight loop. Defer to your own judgment for waits longer than ~5 min — `/loop` is still fine, but the cache argument no longer applies, and a single `ScheduleWakeup` further out can be a reasonable equivalent.
+
+**Other agents (`gemini`, `copilot`, anything not `claude`) do not have `/loop` available** and must continue to use whatever native polling their harness exposes — `ScheduleWakeup` if your runtime has it, otherwise a bash sleep-loop. The `/loop` preference above does not apply to non-claude agents and nothing in this section weakens the existing fallbacks for them.
+
+Carve-outs that apply to every agent (claude included):
+
+- **The user picked the cadence.** If the user asked for "every 5 minutes" or specified a particular mechanism, do what they said. The preference is about freely chosen polling strategy, not about overriding direction.
+- **Sub-60 s inline checks.** A single `gh pr view <#> --json …` probe to confirm something you expect to already be done is fine as a one-shot bash call — don't wrap it in `/loop`.
+
+**Typical claude pattern** (polling a Copilot review or CI check):
+
+```bash
+# inside the /loop body — evaluate, then either ScheduleWakeup (delaySeconds: 270) to keep waiting, or omit it to exit
+gh pr view <#> --json reviewDecision,statusCheckRollup
+```
+
+---
+
 ## Cross-project surfaces
 
 `Projects/all-projects.base` and `Projects/All Projects.md` aggregate every project — leave them alone when scaffolding/cleaning. New projects land in them automatically via the `project` frontmatter key.
