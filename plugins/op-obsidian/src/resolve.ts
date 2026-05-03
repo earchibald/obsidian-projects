@@ -286,12 +286,24 @@ class ResolveConfirmModal extends Modal {
         b
           .setButtonText(`Resolve as ${this.targetStatus}`)
           .setCta()
-          .onClick(() => {
-            this.decided = true;
-            this.done(true);
-            this.close();
-          }),
+          .onClick(() => this.confirm()),
       );
+
+    const onEnter = (evt: KeyboardEvent) => {
+      const t = evt.target as HTMLElement | null;
+      if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA")) return;
+      evt.preventDefault();
+      this.confirm();
+    };
+    this.scope.register([], "Enter", onEnter);
+    this.scope.register(["Mod"], "Enter", onEnter);
+  }
+
+  private confirm(): void {
+    if (this.decided) return;
+    this.decided = true;
+    this.done(true);
+    this.close();
   }
 
   onClose(): void {
