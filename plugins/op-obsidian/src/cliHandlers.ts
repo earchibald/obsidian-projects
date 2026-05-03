@@ -397,6 +397,133 @@ export function parseImportModuleParams(
   return { ok: true, value: out };
 }
 
+export function parseSetTasksParams(
+  params: Record<string, string>,
+): ParamsResult<{ id: string; body: string; append: boolean }> {
+  const id = params.issue ?? params.id;
+  const body = params.body ?? params.content;
+  if (!id || typeof body !== "string") {
+    return { ok: false, error: "op-set-tasks failed: --issue and --body required" };
+  }
+  const append = params.append === "1" || params.append === "true";
+  return { ok: true, value: { id, body, append } };
+}
+
+export function parseTaskCreateParams(
+  params: Record<string, string>,
+): ParamsResult<{
+  issueId: string;
+  taskId?: string;
+  title: string;
+  body?: string;
+  status?: "pending" | "in-progress" | "completed" | "blocked";
+}> {
+  const issueId = params.issue ?? params.id;
+  const title = params.title;
+  if (!issueId || !title) {
+    return { ok: false, error: "op-task-create failed: --issue and --title required" };
+  }
+  const out: {
+    issueId: string;
+    taskId?: string;
+    title: string;
+    body?: string;
+    status?: "pending" | "in-progress" | "completed" | "blocked";
+  } = { issueId, title };
+  const taskId = nonEmptyTrim(params.taskId ?? params.task);
+  if (taskId !== undefined) out.taskId = taskId;
+  const body = params.body;
+  if (typeof body === "string" && body.length > 0) out.body = body;
+  const status = nonEmptyTrim(params.status);
+  if (status !== undefined) {
+    if (
+      status !== "pending" &&
+      status !== "in-progress" &&
+      status !== "completed" &&
+      status !== "blocked"
+    ) {
+      return {
+        ok: false,
+        error: `op-task-create failed: --status must be one of pending|in-progress|completed|blocked (got ${JSON.stringify(status)})`,
+      };
+    }
+    out.status = status;
+  }
+  return { ok: true, value: out };
+}
+
+export function parseTaskSetStatusParams(
+  params: Record<string, string>,
+): ParamsResult<{ taskId: string; status: "pending" | "in-progress" | "completed" | "blocked" }> {
+  const taskId = nonEmptyTrim(params.taskId ?? params.task ?? params.id);
+  const status = nonEmptyTrim(params.status);
+  if (!taskId) return { ok: false, error: "op-task-set-status failed: --taskId is required" };
+  if (!status) return { ok: false, error: "op-task-set-status failed: --status is required" };
+  if (
+    status !== "pending" &&
+    status !== "in-progress" &&
+    status !== "completed" &&
+    status !== "blocked"
+  ) {
+    return {
+      ok: false,
+      error: `op-task-set-status failed: --status must be one of pending|in-progress|completed|blocked (got ${JSON.stringify(status)})`,
+    };
+  }
+  return { ok: true, value: { taskId, status } };
+}
+
+export function parseTaskAppendNoteParams(
+  params: Record<string, string>,
+): ParamsResult<{ taskId: string; body: string }> {
+  const taskId = nonEmptyTrim(params.taskId ?? params.task ?? params.id);
+  const body = params.body ?? params.content;
+  if (!taskId || typeof body !== "string") {
+    return { ok: false, error: "op-task-append-note failed: --taskId and --body required" };
+  }
+  return { ok: true, value: { taskId, body } };
+}
+
+export function parseDocCreateParams(
+  params: Record<string, string>,
+): ParamsResult<{ slug: string; docType: string; title: string; body?: string }> {
+  const slug = nonEmptyTrim(params.project ?? params.slug);
+  const docType = nonEmptyTrim(params.doc_type ?? params.docType ?? params.type);
+  const title = params.title;
+  if (!slug || !docType || !title) {
+    return {
+      ok: false,
+      error: "op-doc-create failed: --project, --doc_type, --title all required",
+    };
+  }
+  const out: { slug: string; docType: string; title: string; body?: string } = {
+    slug,
+    docType,
+    title,
+  };
+  const body = params.body;
+  if (typeof body === "string" && body.length > 0) out.body = body;
+  return { ok: true, value: out };
+}
+
+export function parseDocEditParams(
+  params: Record<string, string>,
+): ParamsResult<{ path: string; section?: string; body: string; append: boolean }> {
+  const path = nonEmptyTrim(params.path);
+  const body = params.body ?? params.content;
+  if (!path || typeof body !== "string") {
+    return { ok: false, error: "op-doc-edit failed: --path and --body required" };
+  }
+  const out: { path: string; section?: string; body: string; append: boolean } = {
+    path,
+    body,
+    append: params.append === "1" || params.append === "true",
+  };
+  const section = nonEmptyTrim(params.section);
+  if (section !== undefined) out.section = section;
+  return { ok: true, value: out };
+}
+
 export function parseListVarsParams(
   params: Record<string, string>,
 ): ParamsResult<{ project?: string; issue?: string }> {

@@ -56,6 +56,21 @@ obsidian property:set name=commits type=list \
 
 This is the **fallback** for when `op-obsidian` is missing or disabled. In normal operation, `obsidian op-append-commit issue=<PREFIX>-<N> sha=<sha> subject=<subj>` is the right tool — it's idempotent, handles the read/rewrite internally, and keeps the JSON response trail.
 
+## Managed-note discipline — prefer `op-*` endpoints over raw `Edit`/`Write` (OP-255)
+
+Plugin-owned notes — issues, TASKS, scaffold-time DOCs — carry `op_managed: true` in frontmatter. They have dedicated endpoints for every mutation the workflow needs; reach for those first and treat raw `Edit`/`Write` as the fallback. Lookup table for the writes that used to require raw edits:
+
+| Want to write… | Endpoint | Notes |
+| :--- | :--- | :--- |
+| Issue body `## Tasks` checklist | `obsidian op-set-tasks issue=<ID> body="…"` | `append=true` extends the existing list; same fence-aware splitter as `op-set-section`. |
+| New TASK note (post-seed) | `obsidian op-task-create issue=<ID> title="…"` | Auto-allocates `<ID>.<N>`. Pass `taskId=` to pin a specific number. |
+| TASK status flip | `obsidian op-task-set-status taskId=<ID>.<N> status=in-progress\|completed` | Atomic via `processFrontMatter`. |
+| TASK progress note | `obsidian op-task-append-note taskId=<ID>.<N> body="…"` | Glues onto the body with a blank-line separator. |
+| Vault-only DOC create | `obsidian op-doc-create project=<slug> doc_type=<plan\|spec\|adr\|runbook> title="…"` | Refuses `DOCS/superpowers/` (repo-symlinked). |
+| Vault-only DOC edit | `obsidian op-doc-edit path=<…> [section=<H2>] body="…"` | Section-scoped or full-body append. |
+
+Why this matters beyond ergonomics: every successful op-* call appends a JSONL line to `Projects/_scratch/op-audit.jsonl`. Raw `Edit`/`Write` skips that trail and shows up there as `bypass: true` lines (detection-after-the-fact). The Phase 2 pretool guard, scheduled to ship default-off in a future release, will refuse `Edit`/`Write` on `op_managed: true` notes outright. If you find yourself needing a write that doesn't have an endpoint, file an issue rather than reaching for `obsidian eval code='app.vault.modify(...)'` — that's the bypass hole the discipline is closing.
+
 ## Body sections without a verb — use `op-set-section`
 
 The op workflow writes three body sections on every issue: `## Plan` at start, `### <ID>.<N>` blocks under `## Notes` as tasks complete, and `## Summary` at resolve. **Use `obsidian op-set-section issue=<ID> name=Plan|Notes|Summary content="…" [append=true]` for these.** It's the only path that's section-scoped — frontmatter, `# Title`, `## Scope`, `## Tasks`, and any other H2s are preserved — and `append=true` is the safe alternative to the racy read-modify-rewrite pattern (the verb does the read/append/write atomically inside the plugin).

@@ -36,7 +36,7 @@ export function renderIssueNote(i: RenderInput): string {
     `assignee: ${i.assignee}`,
   ];
   if (i.githubIssue) fmLines.push(`github_issue: ${i.githubIssue}`);
-  fmLines.push("tags:", `  - project/${i.project}`, "  - issue", "---", "");
+  fmLines.push("op_managed: true", "tags:", `  - project/${i.project}`, "  - issue", "---", "");
   const fm = fmLines.join("\n");
 
   const body: string[] = [`# ${i.title}`, ""];

@@ -78,7 +78,7 @@ The OP-Test vault is a git repo with named seed tags capturing known states. Bef
 
 ```bash
 node scripts/reset-test-vault.mjs <seed>
-# valid seeds: empty | scaffolded | mid-flow | github-linked | multi-project | workflow-modules
+# valid seeds: empty | scaffolded | mid-flow | github-linked | multi-project | workflow-modules | managed-discipline
 ```
 
 The script asserts the OP-Test vault is open in Obsidian (focus not required since OP-175), runs `git reset --hard seed/<name> && git clean -fd` inside OP-Test, then reloads op-obsidian so Obsidian re-reads the vault state. The seed ladder itself is built (and rebuilt) by `node scripts/build-seeds.mjs` — re-runnable so seeds stay in sync as the plugin's scaffolding behavior evolves.
