@@ -82,6 +82,8 @@ function probePortInput() {
     if (!input) return { found: false };
     return {
       found: true,
+      inputCount: document.querySelectorAll('.op-port-input').length,
+      errorCount: document.querySelectorAll('.op-port-error').length,
       type: input.type,
       min: input.min,
       max: input.max,
@@ -97,15 +99,16 @@ function probePortInput() {
   })()`);
 }
 
-// Drive the input via a real `input` event so the Setting's onChange fires.
-// We can't use `.value =` alone — Obsidian's `addText` listens for the
-// `input` event explicitly. Returns the post-handler probe state.
+// Drive the input via real DOM events so the Setting's onChange fires in the
+// current Obsidian build and still trips if the implementation shifts from
+// `input` to `change` later. Returns the post-handler probe state.
 function setPortValue(raw) {
   return evalJson(`(()=>{
     const input = document.querySelector('.op-port-input');
     if (!input) return { found: false };
     input.value = ${JSON.stringify(String(raw))};
     input.dispatchEvent(new Event('input', { bubbles: true }));
+    input.dispatchEvent(new Event('change', { bubbles: true }));
     return { found: true };
   })()`);
 }
@@ -125,6 +128,9 @@ if (!initial.found) {
 if (initial.type !== "number") fail(`§1: port input type=${initial.type}, expected 'number'`);
 if (initial.min !== "1024" || initial.max !== "65535") {
   fail(`§1: port input min/max=${initial.min}/${initial.max}, expected 1024/65535`);
+}
+if (initial.inputCount !== 1 || initial.errorCount !== 1) {
+  fail(`§1: expected exactly one port input + one error node, got inputCount=${initial.inputCount}, errorCount=${initial.errorCount}`);
 }
 if (initial.ariaInvalid != null || initial.hasInvalidClass) {
   fail(`§1: port input started in error state — ariaInvalid=${initial.ariaInvalid}, hasInvalidClass=${initial.hasInvalidClass}`);
@@ -179,26 +185,43 @@ function tabRowCount() {
   const r = evalJson(`(()=>{
     app.setting.open();
     app.setting.openTabById('op-obsidian');
-    return { rows: document.querySelectorAll('.setting-item').length };
+    return {
+      rows: document.querySelectorAll('.setting-item').length,
+      portInputCount: document.querySelectorAll('.op-port-input').length,
+      portErrorCount: document.querySelectorAll('.op-port-error').length,
+    };
   })()`);
-  return r.rows;
+  return r;
 }
 
 const baseline = tabRowCount();
 let stableCount = 0;
-for (let i = 0; i < 3; i++) {
+const lifecycleCycles = 10;
+for (let i = 0; i < lifecycleCycles - 1; i++) {
   closeSettings();
-  const n = tabRowCount();
-  if (n === baseline) stableCount++;
-  else {
-    fail(`§3: lifecycle render #${i + 1} produced ${n} rows; baseline was ${baseline}`);
+  const next = tabRowCount();
+  if (
+    next.rows === baseline.rows &&
+    next.portInputCount === 1 &&
+    next.portErrorCount === 1
+  ) {
+    stableCount++;
+  } else {
+    fail(
+      `§3: lifecycle render #${i + 1} drifted from baseline.\n` +
+        `    rows=${next.rows} (baseline ${baseline.rows})\n` +
+        `    portInputCount=${next.portInputCount}\n` +
+        `    portErrorCount=${next.portErrorCount}`,
+    );
   }
 }
-if (stableCount !== 3) fail(`§3: only ${stableCount}/3 lifecycle re-renders matched baseline`);
+if (stableCount !== lifecycleCycles - 1) {
+  fail(`§3: only ${stableCount}/${lifecycleCycles - 1} lifecycle re-renders matched baseline`);
+}
 
 // Final cleanup — leave the modal closed.
 closeSettings();
 
 console.log(
-  `PASS — settings-lifecycle smoke (${baseline} rows × 4 renders, port-input badge round-trip OK)`,
+  `PASS — settings-lifecycle smoke (${baseline.rows} rows × ${lifecycleCycles} renders, port-input badge round-trip OK)`,
 );
