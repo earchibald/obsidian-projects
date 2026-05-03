@@ -73,13 +73,17 @@ Why this matters beyond ergonomics: every successful op-* call appends a JSONL l
 
 **Per-call overrides** (one-shot): `OP_ALLOW_MANAGED_EDIT=1` for the managed-note layer, `OP_ALLOW_NEW_FILE=1` for the new-file layer. Use sparingly — every override defeats the audit signal we use to find missing endpoints.
 
-**Persistent rollback** (when an unforeseen regression demands it): edit `<vault>/.obsidian/plugins/op-obsidian/data.json` and set
+**Persistent rollback** (when an unforeseen regression demands it): open `<vault>/.obsidian/plugins/op-obsidian/data.json` — it already contains the user's full settings tree — and set or insert just the `agentDiscipline.managedNoteGuard` / `agentDiscipline.newFileGuard` keys. **Preserve every other key in the file**; the snippet below is a partial excerpt of the relevant subtree, not a replacement for the whole file:
 
 ```json
-{ "agentDiscipline": { "managedNoteGuard": false, "newFileGuard": false } }
+// excerpt — merge into the existing data.json, do not overwrite the file
+"agentDiscipline": {
+  "managedNoteGuard": false,
+  "newFileGuard": false
+}
 ```
 
-then reload op-obsidian (Settings → Community plugins → toggle off + on, or `obsidian plugin:reload id=op-obsidian`). `mergeSettings` honors any boolean explicitly persisted in `data.json`, so the opt-out survives plugin updates. Flip individual flags rather than both if the regression is layer-specific. File an issue against `obsidian-projects` so the regression can be fixed and the guard re-enabled.
+then reload op-obsidian (Settings → Community plugins → toggle off + on, or `obsidian plugin:reload id=op-obsidian`). `mergeSettings` honors any boolean explicitly persisted in `data.json`, so the opt-out survives plugin updates. Flip individual flags rather than both if the regression is layer-specific. The same opt-out is also reachable from Settings → op → Advanced → Agent discipline (toggle "Refuse direct edits on managed notes" / "Refuse new files under ISSUES…") for users who'd rather not hand-edit JSON. File an issue against `obsidian-projects` so the regression can be fixed and the guard re-enabled.
 
 ### Eval mutation is the surviving bypass hole — do not use it
 

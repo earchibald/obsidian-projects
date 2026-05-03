@@ -22,12 +22,12 @@ export interface HookInstallOptions {
   /** OP-259: when true, the PreToolUse guard script includes the managed-note
    *  refusal layer. Independent of `enforceWorktree`: either flag (or both)
    *  triggers the hook install — the script body only contains the layers
-   *  that are enabled. Default off; Phase 6 of OP-218 owns the flip. */
+   *  that are enabled. Default **on** as of OP-263 (Phase 6 of OP-218). */
   managedNoteGuard?: boolean;
   /** OP-260: when true, the PreToolUse guard script refuses agent creation of
    *  new files under `Projects/<slug>/{ISSUES,RESOLVED ISSUES,TASKS}/`. Same
-   *  install/uninstall plumbing as the managed-note layer. Default off;
-   *  Phase 6 of OP-218 owns the flip. */
+   *  install/uninstall plumbing as the managed-note layer. Default **on**
+   *  as of OP-263 (Phase 6 of OP-218). */
   newFileGuard?: boolean;
 }
 
