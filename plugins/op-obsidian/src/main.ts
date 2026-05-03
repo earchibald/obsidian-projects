@@ -38,6 +38,17 @@ import { setScope } from "./setScope";
 import { parseNewScopePayload, type NewScopeMode } from "./setScopePure";
 import { setEvaluation } from "./setEvaluation";
 import { setSection } from "./setSection";
+import { setTasks } from "./setTasks";
+import { taskCreate } from "./taskCreate";
+import { taskSetStatus } from "./taskSetStatus";
+import { taskAppendNote } from "./taskAppendNote";
+import { docCreate } from "./docCreate";
+import { docEdit } from "./docEdit";
+import { appendAuditLine } from "./auditLog";
+import {
+  migrateAddManagedFlag,
+  shouldRunMigration,
+} from "./migrateAddManagedFlag";
 import { setFlow, type Complexity, type Flow } from "./setFlow";
 import {
   applyLink,
@@ -111,6 +122,12 @@ import {
   parseListVarsParams,
   parseExportModuleParams,
   parseImportModuleParams,
+  parseSetTasksParams,
+  parseTaskCreateParams,
+  parseTaskSetStatusParams,
+  parseTaskAppendNoteParams,
+  parseDocCreateParams,
+  parseDocEditParams,
 } from "./cliHandlers";
 import { explainWorkflow, listVars } from "./explainWorkflow";
 import {
@@ -245,6 +262,13 @@ export default class OpPlugin extends Plugin {
    * resolve on the frontmatter write that `runResolve` itself performs.
    */
   private inFlightResolvePaths = new Set<string>();
+  /**
+   * OP-255: Vault paths currently being written by an op-* handler. The
+   * `app.vault.on("modify")` listener consults this set to skip
+   * bypass-detection audit lines for legitimate plugin-owned writes. Entries
+   * are added in handleOp*Cli/Uri handlers and cleared after a short tick.
+   */
+  private inFlightOpWritePaths = new Set<string>();
   /** Last-known set of live tmux window names (`op:<ISSUE-ID>`). Populated
    * by the stale-agent probe on layout-ready and refreshed every
    * {@link CHIP_LIVENESS_INTERVAL_MS} so the OP-151 note chip can answer
@@ -425,6 +449,11 @@ export default class OpPlugin extends Plugin {
     this.app.workspace.onLayoutReady(() => {
       void this.reconcileAgentStateOnStartup();
       void this.surfaceStaleAgentBadgesOnStartup();
+      // OP-255: idempotent op_managed: true backfill. Runs once per upgrade —
+      // tracked via settings.developer.lastManagedMigrationVersion. The
+      // migration itself short-circuits on already-flagged notes, so a bug
+      // that re-runs it is harmless beyond the scan time.
+      void this.runManagedFlagMigrationOnStartup();
       // OP-161 / §10: drop the first-run README into the vault on the
       // very first plugin load. The flag flip is idempotent across reloads.
       void scaffoldFirstRunReadme(
@@ -534,6 +563,28 @@ export default class OpPlugin extends Plugin {
     // refresh dispatcher is idempotent so multiple fires collapse.
     this.registerEvent(
       this.app.metadataCache.on("changed", () => dispatchChipRefresh(this.app)),
+    );
+
+    // OP-255: bypass-detection listener. Any `Projects/**/*.md` modify event
+    // that didn't originate from an op-* handler is logged to the audit
+    // trail with `bypass:true`. Detection only — does not block the write
+    // (preventing it would require monkey-patching `app.vault.modify`,
+    // which is out of scope for Phase 1). The Phase 2 pretool guard layer
+    // is the prevention story.
+    this.registerEvent(
+      this.app.vault.on("modify", (file) => {
+        if (!file || !(file instanceof TFile)) return;
+        const path = file.path;
+        if (!path.startsWith("Projects/")) return;
+        if (!path.endsWith(".md")) return;
+        if (path.startsWith("Projects/_scratch/")) return;
+        if (this.inFlightOpWritePaths.has(path)) return;
+        void appendAuditLine(this.app, {
+          cmd: "bypass",
+          paths: [path],
+          bypass: true,
+        });
+      }),
     );
     // Issue lifecycle changes (status flip, agent set/cleared) also
     // re-render — the bus already debounces internally.
@@ -1144,6 +1195,39 @@ export default class OpPlugin extends Plugin {
       this.runUri("op-set-flow", normalizeUriParams(params), (p) => this.handleOpSetFlowUri(p));
     });
 
+    // OP-255: Phase 1 managed-note discipline endpoints. Each is additive and
+    // emits a JSONL line to Projects/_scratch/op-audit.jsonl on success.
+    this.registerObsidianProtocolHandler("op-set-tasks", (params) => {
+      this.runUri("op-set-tasks", normalizeUriParams(params), (p) =>
+        this.handleOpSetTasksUri(p),
+      );
+    });
+    this.registerObsidianProtocolHandler("op-task-create", (params) => {
+      this.runUri("op-task-create", normalizeUriParams(params), (p) =>
+        this.handleOpTaskCreateUri(p),
+      );
+    });
+    this.registerObsidianProtocolHandler("op-task-set-status", (params) => {
+      this.runUri("op-task-set-status", normalizeUriParams(params), (p) =>
+        this.handleOpTaskSetStatusUri(p),
+      );
+    });
+    this.registerObsidianProtocolHandler("op-task-append-note", (params) => {
+      this.runUri("op-task-append-note", normalizeUriParams(params), (p) =>
+        this.handleOpTaskAppendNoteUri(p),
+      );
+    });
+    this.registerObsidianProtocolHandler("op-doc-create", (params) => {
+      this.runUri("op-doc-create", normalizeUriParams(params), (p) =>
+        this.handleOpDocCreateUri(p),
+      );
+    });
+    this.registerObsidianProtocolHandler("op-doc-edit", (params) => {
+      this.runUri("op-doc-edit", normalizeUriParams(params), (p) =>
+        this.handleOpDocEditUri(p),
+      );
+    });
+
     this.registerObsidianProtocolHandler("op-set-link", (params) => {
       this.runUri("op-set-link", normalizeUriParams(params), (p) =>
         handleOpSetLinkUriPure(this.uriDeps(), p),
@@ -1488,6 +1572,97 @@ export default class OpPlugin extends Plugin {
         },
       },
       (params) => this.handleOpSetEvaluationCli(params),
+    );
+
+    // OP-255 — Phase 1 managed-note discipline endpoints.
+    this.registerCliHandler(
+      "op-set-tasks",
+      "Replace (or append to) the issue body's `## Tasks` checklist.",
+      {
+        issue: { value: "<id>", description: "Issue id (e.g. OP-34)" },
+        body: {
+          value: "<markdown>",
+          description: "New Tasks body (markdown checklist). Must not contain H2 headings.",
+        },
+        append: {
+          description: "Pass append=true to append to the existing Tasks list.",
+        },
+      },
+      (params) => this.handleOpSetTasksCli(params),
+    );
+
+    this.registerCliHandler(
+      "op-task-create",
+      "Create a new TASK note under Projects/<slug>/TASKS/. Auto-allocates <ID>.<N> when taskId is omitted.",
+      {
+        issue: { value: "<id>", description: "Issue id (e.g. OP-34)" },
+        title: { value: "<title>", description: "Task title (used in filename + heading)" },
+        taskId: {
+          value: "<id>",
+          description: "Optional explicit task id (must look like <ISSUE-ID>.<N>).",
+        },
+        body: { value: "<markdown>", description: "Optional initial body content." },
+        status: {
+          value: "<pending|in-progress|completed|blocked>",
+          description: "Initial status (default: pending).",
+        },
+      },
+      (params) => this.handleOpTaskCreateCli(params),
+    );
+
+    this.registerCliHandler(
+      "op-task-set-status",
+      "Flip the status: frontmatter on a TASK note.",
+      {
+        taskId: { value: "<id>", description: "Task id (e.g. OP-255.2)" },
+        status: {
+          value: "<pending|in-progress|completed|blocked>",
+          description: "Target status.",
+        },
+      },
+      (params) => this.handleOpTaskSetStatusCli(params),
+    );
+
+    this.registerCliHandler(
+      "op-task-append-note",
+      "Append a note to a TASK note's body.",
+      {
+        taskId: { value: "<id>", description: "Task id (e.g. OP-255.2)" },
+        body: { value: "<markdown>", description: "Body content to append." },
+      },
+      (params) => this.handleOpTaskAppendNoteCli(params),
+    );
+
+    this.registerCliHandler(
+      "op-doc-create",
+      "Create a vault-only DOC note under Projects/<slug>/DOCS/.",
+      {
+        project: { value: "<slug>", description: "Project slug." },
+        doc_type: {
+          value: "<plan|spec|adr|runbook>",
+          description: "Doc type (drives the Docs Index view + tags).",
+        },
+        title: { value: "<title>", description: "Doc title." },
+        body: { value: "<markdown>", description: "Optional initial body content." },
+      },
+      (params) => this.handleOpDocCreateCli(params),
+    );
+
+    this.registerCliHandler(
+      "op-doc-edit",
+      "Edit a vault-only DOC note (full body or section). Refuses paths under DOCS/superpowers/.",
+      {
+        path: { value: "<vault-path>", description: "Vault-relative path to the DOC note." },
+        section: {
+          value: "<H2>",
+          description: "Optional H2 section to target. Omit to append to the file body.",
+        },
+        body: { value: "<markdown>", description: "New section body (or appended body)." },
+        append: {
+          description: "When section is set, pass append=true to append to the section body.",
+        },
+      },
+      (params) => this.handleOpDocEditCli(params),
     );
 
     this.registerCliHandler(
@@ -2437,6 +2612,409 @@ export default class OpPlugin extends Plugin {
     return handleOpSetSectionUriPure(this.uriDeps(), params);
   }
 
+  // OP-255: Phase 1 managed-note discipline handlers. All emit one audit-log
+  // line per successful mutation. CLI and URI surfaces share the same action
+  // calls — the CLI methods bracket them in writeUriResponse + recordRecency
+  // glue, the URI methods return the payload object directly.
+
+  private async handleOpSetTasksCli(params: Record<string, string>): Promise<string> {
+    const command = "op-set-tasks";
+    try {
+      const parsed = parseSetTasksParams(params);
+      if (!parsed.ok) return parsed.error;
+      const entry = this.resolveByIdOrThrow(parsed.value.id);
+      this.markInFlightOpWrite(entry.path);
+      const res = await setTasks(this.app, entry, parsed.value.body, {
+        append: parsed.value.append,
+      });
+      void appendAuditLine(this.app, {
+        cmd: command,
+        issue: res.issueId,
+        paths: [res.path],
+        section: "Tasks",
+        before_size: res.beforeSize,
+        after_size: res.afterSize,
+      });
+      await writeUriResponse(this.app, {
+        ok: true,
+        command,
+        issueId: res.issueId,
+        path: res.path,
+        replaced: res.replaced,
+        appended: res.appended,
+      });
+      return `${command}: ${res.issueId} Tasks ${res.replaced ? "replaced" : "added"}${res.appended ? " (appended)" : ""}`;
+    } catch (err: any) {
+      const msg = err?.message ?? String(err);
+      console.error("[op-obsidian]", command, err);
+      await writeUriResponse(this.app, { ok: false, command, error: msg });
+      return `${command} failed: ${msg}`;
+    }
+  }
+
+  private async handleOpSetTasksUri(
+    params: Record<string, string>,
+  ): Promise<UriResponsePayload> {
+    const command = "op-set-tasks";
+    const parsed = parseSetTasksParams(params);
+    if (!parsed.ok) throw new Error(parsed.error);
+    const entry = this.resolveByIdOrThrow(parsed.value.id);
+    this.markInFlightOpWrite(entry.path);
+    const res = await setTasks(this.app, entry, parsed.value.body, {
+      append: parsed.value.append,
+    });
+    void appendAuditLine(this.app, {
+      cmd: command,
+      issue: res.issueId,
+      paths: [res.path],
+      section: "Tasks",
+      before_size: res.beforeSize,
+      after_size: res.afterSize,
+    });
+    return {
+      ok: true,
+      command,
+      issueId: res.issueId,
+      path: res.path,
+      replaced: res.replaced,
+      appended: res.appended,
+    };
+  }
+
+  private async handleOpTaskCreateCli(params: Record<string, string>): Promise<string> {
+    const command = "op-task-create";
+    try {
+      const parsed = parseTaskCreateParams(params);
+      if (!parsed.ok) return parsed.error;
+      const res = await taskCreate(this.app, this.store, parsed.value);
+      this.markInFlightOpWrite(res.path);
+      void appendAuditLine(this.app, {
+        cmd: command,
+        issue: res.issueId,
+        paths: [res.path],
+      });
+      await writeUriResponse(this.app, {
+        ok: true,
+        command,
+        taskId: res.taskId,
+        issueId: res.issueId,
+        path: res.path,
+      });
+      return `${command}: created ${res.taskId} at ${res.path}`;
+    } catch (err: any) {
+      const msg = err?.message ?? String(err);
+      console.error("[op-obsidian]", command, err);
+      await writeUriResponse(this.app, { ok: false, command, error: msg });
+      return `${command} failed: ${msg}`;
+    }
+  }
+
+  private async handleOpTaskCreateUri(
+    params: Record<string, string>,
+  ): Promise<UriResponsePayload> {
+    const command = "op-task-create";
+    const parsed = parseTaskCreateParams(params);
+    if (!parsed.ok) throw new Error(parsed.error);
+    const res = await taskCreate(this.app, this.store, parsed.value);
+    this.markInFlightOpWrite(res.path);
+    void appendAuditLine(this.app, {
+      cmd: command,
+      issue: res.issueId,
+      paths: [res.path],
+    });
+    return {
+      ok: true,
+      command,
+      taskId: res.taskId,
+      issueId: res.issueId,
+      path: res.path,
+    };
+  }
+
+  private async handleOpTaskSetStatusCli(params: Record<string, string>): Promise<string> {
+    const command = "op-task-set-status";
+    try {
+      const parsed = parseTaskSetStatusParams(params);
+      if (!parsed.ok) return parsed.error;
+      const res = await taskSetStatus(
+        this.app,
+        this.store,
+        parsed.value.taskId,
+        parsed.value.status,
+      );
+      this.markInFlightOpWrite(res.path);
+      void appendAuditLine(this.app, {
+        cmd: command,
+        paths: [res.path],
+        note: `${res.previousStatus ?? "?"} -> ${res.status}`,
+      });
+      await writeUriResponse(this.app, {
+        ok: true,
+        command,
+        taskId: res.taskId,
+        path: res.path,
+        previousStatus: res.previousStatus,
+        status: res.status,
+      });
+      return `${command}: ${res.taskId} ${res.previousStatus ?? "?"} → ${res.status}`;
+    } catch (err: any) {
+      const msg = err?.message ?? String(err);
+      console.error("[op-obsidian]", command, err);
+      await writeUriResponse(this.app, { ok: false, command, error: msg });
+      return `${command} failed: ${msg}`;
+    }
+  }
+
+  private async handleOpTaskSetStatusUri(
+    params: Record<string, string>,
+  ): Promise<UriResponsePayload> {
+    const command = "op-task-set-status";
+    const parsed = parseTaskSetStatusParams(params);
+    if (!parsed.ok) throw new Error(parsed.error);
+    const res = await taskSetStatus(
+      this.app,
+      this.store,
+      parsed.value.taskId,
+      parsed.value.status,
+    );
+    this.markInFlightOpWrite(res.path);
+    void appendAuditLine(this.app, {
+      cmd: command,
+      paths: [res.path],
+      note: `${res.previousStatus ?? "?"} -> ${res.status}`,
+    });
+    return {
+      ok: true,
+      command,
+      taskId: res.taskId,
+      path: res.path,
+      previousStatus: res.previousStatus,
+      status: res.status,
+    };
+  }
+
+  private async handleOpTaskAppendNoteCli(params: Record<string, string>): Promise<string> {
+    const command = "op-task-append-note";
+    try {
+      const parsed = parseTaskAppendNoteParams(params);
+      if (!parsed.ok) return parsed.error;
+      const res = await taskAppendNote(
+        this.app,
+        this.store,
+        parsed.value.taskId,
+        parsed.value.body,
+      );
+      this.markInFlightOpWrite(res.path);
+      void appendAuditLine(this.app, {
+        cmd: command,
+        paths: [res.path],
+        before_size: res.beforeSize,
+        after_size: res.afterSize,
+      });
+      await writeUriResponse(this.app, {
+        ok: true,
+        command,
+        taskId: res.taskId,
+        path: res.path,
+        appended: res.appended,
+      });
+      return `${command}: ${res.taskId} ${res.appended ? "appended" : "seeded"}`;
+    } catch (err: any) {
+      const msg = err?.message ?? String(err);
+      console.error("[op-obsidian]", command, err);
+      await writeUriResponse(this.app, { ok: false, command, error: msg });
+      return `${command} failed: ${msg}`;
+    }
+  }
+
+  private async handleOpTaskAppendNoteUri(
+    params: Record<string, string>,
+  ): Promise<UriResponsePayload> {
+    const command = "op-task-append-note";
+    const parsed = parseTaskAppendNoteParams(params);
+    if (!parsed.ok) throw new Error(parsed.error);
+    const res = await taskAppendNote(
+      this.app,
+      this.store,
+      parsed.value.taskId,
+      parsed.value.body,
+    );
+    this.markInFlightOpWrite(res.path);
+    void appendAuditLine(this.app, {
+      cmd: command,
+      paths: [res.path],
+      before_size: res.beforeSize,
+      after_size: res.afterSize,
+    });
+    return {
+      ok: true,
+      command,
+      taskId: res.taskId,
+      path: res.path,
+      appended: res.appended,
+    };
+  }
+
+  private async handleOpDocCreateCli(params: Record<string, string>): Promise<string> {
+    const command = "op-doc-create";
+    try {
+      const parsed = parseDocCreateParams(params);
+      if (!parsed.ok) return parsed.error;
+      const res = await docCreate(this.app, parsed.value);
+      this.markInFlightOpWrite(res.path);
+      void appendAuditLine(this.app, {
+        cmd: command,
+        project: res.project,
+        paths: [res.path],
+        note: `doc_type=${res.docType}`,
+      });
+      await writeUriResponse(this.app, {
+        ok: true,
+        command,
+        project: res.project,
+        docType: res.docType,
+        path: res.path,
+      });
+      return `${command}: created ${res.path}`;
+    } catch (err: any) {
+      const msg = err?.message ?? String(err);
+      console.error("[op-obsidian]", command, err);
+      await writeUriResponse(this.app, { ok: false, command, error: msg });
+      return `${command} failed: ${msg}`;
+    }
+  }
+
+  private async handleOpDocCreateUri(
+    params: Record<string, string>,
+  ): Promise<UriResponsePayload> {
+    const command = "op-doc-create";
+    const parsed = parseDocCreateParams(params);
+    if (!parsed.ok) throw new Error(parsed.error);
+    const res = await docCreate(this.app, parsed.value);
+    this.markInFlightOpWrite(res.path);
+    void appendAuditLine(this.app, {
+      cmd: command,
+      project: res.project,
+      paths: [res.path],
+      note: `doc_type=${res.docType}`,
+    });
+    return {
+      ok: true,
+      command,
+      project: res.project,
+      docType: res.docType,
+      path: res.path,
+    };
+  }
+
+  private async handleOpDocEditCli(params: Record<string, string>): Promise<string> {
+    const command = "op-doc-edit";
+    try {
+      const parsed = parseDocEditParams(params);
+      if (!parsed.ok) return parsed.error;
+      const input: Parameters<typeof docEdit>[1] = {
+        path: parsed.value.path,
+        body: parsed.value.body,
+        append: parsed.value.append,
+      };
+      if (parsed.value.section) input.section = parsed.value.section;
+      const res = await docEdit(this.app, input);
+      this.markInFlightOpWrite(res.path);
+      void appendAuditLine(this.app, {
+        cmd: command,
+        paths: [res.path],
+        section: res.section,
+        before_size: res.beforeSize,
+        after_size: res.afterSize,
+      });
+      await writeUriResponse(this.app, {
+        ok: true,
+        command,
+        path: res.path,
+        section: res.section,
+        replaced: res.replaced,
+        appended: res.appended,
+      });
+      return `${command}: ${res.path}${res.section ? ` ${res.section}` : ""} ${res.replaced ? "replaced" : "appended"}`;
+    } catch (err: any) {
+      const msg = err?.message ?? String(err);
+      console.error("[op-obsidian]", command, err);
+      await writeUriResponse(this.app, { ok: false, command, error: msg });
+      return `${command} failed: ${msg}`;
+    }
+  }
+
+  private async handleOpDocEditUri(
+    params: Record<string, string>,
+  ): Promise<UriResponsePayload> {
+    const command = "op-doc-edit";
+    const parsed = parseDocEditParams(params);
+    if (!parsed.ok) throw new Error(parsed.error);
+    const input: Parameters<typeof docEdit>[1] = {
+      path: parsed.value.path,
+      body: parsed.value.body,
+      append: parsed.value.append,
+    };
+    if (parsed.value.section) input.section = parsed.value.section;
+    const res = await docEdit(this.app, input);
+    this.markInFlightOpWrite(res.path);
+    void appendAuditLine(this.app, {
+      cmd: command,
+      paths: [res.path],
+      section: res.section,
+      before_size: res.beforeSize,
+      after_size: res.afterSize,
+    });
+    return {
+      ok: true,
+      command,
+      path: res.path,
+      section: res.section,
+      replaced: res.replaced,
+      appended: res.appended,
+    };
+  }
+
+  /**
+   * OP-255: idempotent op_managed: true backfill. Runs once per upgrade. The
+   * migration itself short-circuits per-file on already-flagged notes so a
+   * re-run on a fully migrated vault is a fast scan with zero writes.
+   */
+  private async runManagedFlagMigrationOnStartup(): Promise<void> {
+    try {
+      const currentVersion = (this.manifest as { version?: string } | undefined)?.version ?? "";
+      const last = this.settings.developer.lastManagedMigrationVersion;
+      if (!shouldRunMigration(currentVersion, last)) return;
+      const result = await migrateAddManagedFlag(this.app);
+      this.settings.developer.lastManagedMigrationVersion = currentVersion;
+      await this.saveSettings();
+      void appendAuditLine(this.app, {
+        cmd: "op-migrate-add-managed-flag",
+        paths: result.patchedPaths.slice(0, 50),
+        note: `scanned=${result.scanned} patched=${result.patched} alreadyFlagged=${result.alreadyFlagged} skipped=${result.skipped}`,
+      });
+      if (result.patched > 0) {
+        console.log(
+          `[op-obsidian] op_managed migration: patched ${result.patched}/${result.scanned} notes`,
+        );
+      }
+    } catch (err) {
+      console.error("[op-obsidian] op_managed migration failed", err);
+    }
+  }
+
+  /**
+   * Mark a vault path as "currently being written by an op-* handler". The
+   * `app.vault.on("modify")` listener installed in onload checks this set and
+   * skips the bypass-detection audit line for in-flight paths. Entries are
+   * cleared after a short tick so the modify event has a chance to fire.
+   */
+  private markInFlightOpWrite(path: string): void {
+    if (!path) return;
+    this.inFlightOpWritePaths.add(path);
+    setTimeout(() => this.inFlightOpWritePaths.delete(path), 1500);
+  }
+
   private handleOpSetFlowUri(
     params: Record<string, string>,
   ): Promise<UriResponsePayload> {
@@ -2830,6 +3408,15 @@ export default class OpPlugin extends Plugin {
     const command = "op-scaffold";
     try {
       const res = await this.doScaffold(params);
+      const auditPaths = [res.basePath, res.statusPath, res.workflowPath];
+      if (res.seed?.path) auditPaths.push(res.seed.path);
+      auditPaths.forEach((p) => this.markInFlightOpWrite(p));
+      void appendAuditLine(this.app, {
+        cmd: command,
+        project: res.slug,
+        paths: auditPaths,
+        note: res.seed?.id ? `seed=${res.seed.id}` : undefined,
+      });
       await writeUriResponse(this.app, {
         ok: true,
         command,
@@ -2888,6 +3475,13 @@ export default class OpPlugin extends Plugin {
         scope,
         scopeBody,
       });
+      this.markInFlightOpWrite(res.path);
+      void appendAuditLine(this.app, {
+        cmd: command,
+        issue: res.id,
+        project: slug,
+        paths: [res.path],
+      });
       // Persist the scratch payload + return the stdout one-liner BEFORE
       // kicking off `gh issue create`. The gh call takes ~5s, which blew past
       // the obsidian-cli stdout-bridge wait window (OP-137, same shape as
@@ -2932,6 +3526,15 @@ export default class OpPlugin extends Plugin {
         agentSession: parsed.value.agentSession,
         force: parsed.value.force,
       });
+      const workPaths = [res.path];
+      if (res.createdTaskPath) workPaths.push(res.createdTaskPath);
+      workPaths.forEach((p) => this.markInFlightOpWrite(p));
+      void appendAuditLine(this.app, {
+        cmd: command,
+        issue: res.issueId,
+        paths: workPaths,
+        note: `prev=${res.previousStatus}`,
+      });
       await writeUriResponse(this.app, {
         ok: true,
         command,
@@ -2964,6 +3567,15 @@ export default class OpPlugin extends Plugin {
       const { id, sha, subject } = parsed.value;
       const entry = this.resolveByIdOrThrow(id);
       const res = await appendCommit(this.app, entry, { sha, subject });
+      if (res.added) {
+        this.markInFlightOpWrite(res.path);
+        void appendAuditLine(this.app, {
+          cmd: command,
+          issue: res.issueId,
+          paths: [res.path],
+          note: res.entry,
+        });
+      }
       await writeUriResponse(this.app, {
         ok: true,
         command,
@@ -2992,6 +3604,13 @@ export default class OpPlugin extends Plugin {
       const { id, url } = parsed.value;
       const entry = this.resolveByIdOrThrow(id);
       const res = await setPr(this.app, entry, url);
+      this.markInFlightOpWrite(res.path);
+      void appendAuditLine(this.app, {
+        cmd: command,
+        issue: res.issueId,
+        paths: [res.path],
+        note: `pr=${res.pr}`,
+      });
       await writeUriResponse(this.app, {
         ok: true,
         command,
@@ -3190,6 +3809,14 @@ export default class OpPlugin extends Plugin {
       const { id, scope, mode } = parsed.value;
       const entry = this.resolveByIdOrThrow(id);
       const res = await setScope(this.app, entry, scope, { mode });
+      this.markInFlightOpWrite(res.path);
+      void appendAuditLine(this.app, {
+        cmd: command,
+        issue: res.issueId,
+        paths: [res.path],
+        section: res.mode === "body" ? undefined : "Scope",
+        note: `mode=${res.mode}`,
+      });
       await writeUriResponse(this.app, {
         ok: true,
         command,
@@ -3216,6 +3843,13 @@ export default class OpPlugin extends Plugin {
       const { id, name, content, append } = parsed.value;
       const entry = this.resolveByIdOrThrow(id);
       const res = await setSection(this.app, entry, name, content, { append });
+      this.markInFlightOpWrite(res.path);
+      void appendAuditLine(this.app, {
+        cmd: command,
+        issue: res.issueId,
+        paths: [res.path],
+        section: res.section,
+      });
       await writeUriResponse(this.app, {
         ok: true,
         command,
@@ -3247,6 +3881,13 @@ export default class OpPlugin extends Plugin {
       const { id, evaluation } = parsed.value;
       const entry = this.resolveByIdOrThrow(id);
       const res = await setEvaluation(this.app, entry, evaluation);
+      this.markInFlightOpWrite(res.path);
+      void appendAuditLine(this.app, {
+        cmd: command,
+        issue: res.issueId,
+        paths: [res.path],
+        section: "Initial Evaluation",
+      });
       await writeUriResponse(this.app, {
         ok: true,
         command,
@@ -3415,6 +4056,19 @@ export default class OpPlugin extends Plugin {
         if (p) args.path = p;
       }
       const result = await this.runResolveTracked(args);
+      if (result.ok) {
+        const auditPaths = [result.movedTo, ...(result.trashed ?? [])].filter(
+          (p): p is string => typeof p === "string",
+        );
+        auditPaths.forEach((p) => this.markInFlightOpWrite(p));
+        if (result.sourcePath) this.markInFlightOpWrite(result.sourcePath);
+        void appendAuditLine(this.app, {
+          cmd: command,
+          issue: result.issueId,
+          paths: auditPaths,
+          note: `status=${result.status ?? "?"} trashed=${result.trashed?.length ?? 0}`,
+        });
+      }
       await writeUriResponse(this.app, {
         ok: result.ok,
         command,

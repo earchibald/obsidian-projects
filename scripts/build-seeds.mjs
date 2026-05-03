@@ -252,6 +252,36 @@ build("seed/workflow-modules", () => {
   );
 });
 
+// OP-255: managed-discipline seed. Cumulative on top of seed/workflow-modules —
+// scaffolds a fresh `discipline` project, opens a single issue, calls op-work
+// to seed the initial TASK, and adds a second TASK via op-task-create. The
+// post-state is the cleanest possible illustration of every plugin-owned note
+// carrying `op_managed: true` and the audit log being non-empty. The Phase 1
+// smoke harness (separate file) targets this seed.
+build("seed/managed-discipline", () => {
+  dispatch("op-scaffold", {
+    slug: "discipline",
+    prefix: "DSC",
+    title: "Managed-discipline smoke target",
+    priority: "med",
+    scope: "Verify op_managed: true is written everywhere.",
+  });
+  // Plugin auto-numbered the seed issue as DSC-1.
+  dispatch("op-work", { issue: "DSC-1" });
+  dispatch("op-task-create", {
+    issue: "DSC-1",
+    title: "Phase 1 endpoints exercised",
+    body: "Created via op-task-create at seed-build time.",
+  });
+  dispatch("op-set-tasks", {
+    issue: "DSC-1",
+    body: [
+      "- [ ] DSC-1.1 — work",
+      "- [ ] DSC-1.2 — Phase 1 endpoints exercised",
+    ].join("\n"),
+  });
+});
+
 console.log("\nseed ladder built and tagged. Verify with `git -C <op-test> tag -l seed/*`.");
 
 // ---------------------------------------------------------------------------

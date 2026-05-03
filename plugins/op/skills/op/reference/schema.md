@@ -57,6 +57,7 @@ depended_on_by:          # optional; inverse of depends_on, plugin-managed
   - <ISSUE-ID>
 related_to:              # optional; symmetric soft link, plugin-managed
   - <ISSUE-ID>
+op_managed: true         # OP-255: written by every plugin-owned creation path; identifies notes the Phase 2 pretool guard will refuse direct edits to
 tags:
   - project/<slug>
   - issue
@@ -105,10 +106,11 @@ Field values are **bare ids** (e.g. `OP-92`), not wikilinks — ids are stable a
 ```yaml
 ---
 id: <ISSUE-ID>.<N>       # e.g. JB-2.1
-issue: "[[<issue-filename-no-ext>]]"   # wikilink back to parent issue
+issue: "[[<issue-filename-no-ext>]]"   # wikilink back to parent issue; op-resolve walks this field via task.issueLink to trash linked tasks atomically
 project: <slug>
 type: task
 status: pending | in-progress | completed | blocked
+op_managed: true         # OP-255: written by op-task-create / op-work; same Phase 2 guard semantics as the issue note
 tags:
   - project/<slug>
   - task
@@ -249,6 +251,47 @@ updated: YYYY-MM-DD       # optional
 **Optional, opinion-driven:** absent ⇒ no opinion. The skill defaults to asking the user when policy ambiguity comes up. Projects without code repos (or without a workflow-driven feel) leave the file unset.
 
 ---
+
+## Managed-note discipline (OP-255 / OP-218)
+
+Plugin-owned notes carry `op_managed: true` in their frontmatter. The flag identifies notes that the Phase 2 `pretool-worktree-guard.sh` (an extension of today's worktree guard, default-off until a release of soak) will refuse direct `Edit`/`Write` on — agents are expected to reach the same content through the dedicated `op-*` endpoints.
+
+Phase 1 (this release) is strictly additive: the flag is written and the audit trail is collected, but no behavior change is enforced. The new endpoints — `op-set-tasks`, `op-task-create`, `op-task-set-status`, `op-task-append-note`, `op-doc-create`, `op-doc-edit` — fill the gaps that previously forced agents into raw `Edit`/`Write` (the issue body's `## Tasks` checklist, TASK note creation past the seed, TASK status flips, TASK body progress notes, vault-only DOC creation/edits).
+
+Notes that get the flag:
+
+- Issue notes (`Projects/<slug>/{ISSUES,RESOLVED ISSUES}/<ID> …md`) — written by `op-new` / migrated by the startup sweep.
+- TASK notes (`Projects/<slug>/TASKS/<ID>.<N> …md`) — written by `op-work` (initial seed) / `op-task-create` (subsequent) / migrated.
+- STATUS.md, scaffold-time DOC notes (`op-doc-create`).
+
+Notes that do **not** get the flag:
+
+- `_scratch/` (response payloads, audit log itself).
+- `.base` files (the embedded views; never agent-edited).
+- Aggregate cross-project views (`Projects/All Projects.md`, `Projects/all-projects.base`) — read-only by convention.
+- DOCS that live under repo-symlinked `DOCS/superpowers/` — those follow the project repo's git workflow, not vault discipline.
+
+The startup migration (`op-migrate-add-managed-flag`) is idempotent and runs once per plugin upgrade. Existing notes from before this release pick up the flag silently the first time the upgraded plugin loads; rerunning it on a fully migrated vault is a fast scan with zero writes.
+
+## Audit log
+
+Every successful mutating `op-*` call appends one JSONL line to `Projects/_scratch/op-audit.jsonl`:
+
+```json
+{"after_size":3471,"before_size":823,"cmd":"op-set-section","issue":"OP-255","paths":["Projects/obsidian-projects/ISSUES/OP-255 ….md"],"section":"Plan","ts":"2026-05-03T17:42:01.234Z"}
+```
+
+Keys are emitted alphabetically for greppable diffs. Common fields:
+
+- `ts`, `cmd` (always present).
+- `issue` / `project` — when the call targeted one.
+- `paths` — vault-relative paths the call wrote to (multi-path on `op-scaffold` / `op-resolve`).
+- `section` — section name on body-section writes.
+- `before_size` / `after_size` — byte deltas where cheap to compute.
+- `note` — free-form one-liner (e.g. `pending -> completed`, `pr=…`, `mode=body`).
+- `bypass: true` — emitted by the `app.vault.on("modify")` listener for any `Projects/**/*.md` write that wasn't attributable to an in-flight op-* handler. Detection only — Phase 1 doesn't block these (the Phase 2 pretool guard is the prevention story).
+
+The log rotates at 10 MB → `op-audit-1.jsonl` (cap of 5 backups). Audit writes are best-effort: failures log to console but never block the underlying op-* call.
 
 ## Cross-project surfaces
 

@@ -140,6 +140,7 @@ function renderStatus(slug: string, prefix: string, repoPath?: string): string {
     lines.push(`repo_path: ${repoPath.trim()}`);
   }
   lines.push(
+    "op_managed: true",
     "tags:",
     `  - project/${slug}`,
     "---",
