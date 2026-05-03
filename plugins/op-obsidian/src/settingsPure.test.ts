@@ -143,3 +143,40 @@ describe("validateDashboardPortInput (OP-241)", () => {
     expect(validateDashboardPortInput("49217abc").kind).toBe("invalid");
   });
 });
+
+describe("mergeSettings — vaultGit namespace (OP-261)", () => {
+  it("seeds vaultGit defaults (both off) on empty load", () => {
+    const merged = mergeSettings({});
+    expect(merged.vaultGit.autoCommit).toBe(false);
+    expect(merged.vaultGit.initOnEnable).toBe(false);
+    expect(merged.vaultGitInitOffered).toBe(false);
+  });
+
+  it("respects DEFAULT_SETTINGS for vaultGit", () => {
+    expect(DEFAULT_SETTINGS.vaultGit.autoCommit).toBe(false);
+    expect(DEFAULT_SETTINGS.vaultGit.initOnEnable).toBe(false);
+  });
+
+  it("accepts boolean toggles for both keys", () => {
+    const merged = mergeSettings({
+      vaultGit: { autoCommit: true, initOnEnable: true },
+      vaultGitInitOffered: true,
+    });
+    expect(merged.vaultGit.autoCommit).toBe(true);
+    expect(merged.vaultGit.initOnEnable).toBe(true);
+    expect(merged.vaultGitInitOffered).toBe(true);
+  });
+
+  it("rejects non-boolean values silently (defaults survive)", () => {
+    const merged = mergeSettings({
+      vaultGit: { autoCommit: "yes" as unknown as boolean, initOnEnable: 1 as unknown as boolean },
+    });
+    expect(merged.vaultGit.autoCommit).toBe(false);
+    expect(merged.vaultGit.initOnEnable).toBe(false);
+  });
+
+  it("rejects array-shaped vaultGit blob", () => {
+    const merged = mergeSettings({ vaultGit: [] as unknown as Record<string, unknown> });
+    expect(merged.vaultGit.autoCommit).toBe(false);
+  });
+});

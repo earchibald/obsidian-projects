@@ -295,6 +295,21 @@ Keys are emitted alphabetically for greppable diffs. Common fields:
 
 The log rotates at 10 MB → `op-audit-1.jsonl` (cap of 5 backups). Audit writes are best-effort: failures log to console but never block the underlying op-* call.
 
+### Vault git (opt-in)
+
+The audit log is the **always-on** trail. Some users also want a **rollback** surface — the ability to `git revert` a single op-* call. OP-261 (Phase 4 of OP-218) ships an opt-in vault-git auto-commit for that.
+
+Two settings, both default off, in **Settings → op → Advanced → Vault git (opt-in)**:
+
+- **`vaultGit.autoCommit`** — when on AND the vault is a git repo, every successful mutating op-* call runs `git -C <vault> add <changed-paths> && git -C <vault> commit -m "<cmd>: <id> · <subject>"` after the audit line is appended. Best-effort: failures log to console, never block the op-* response. Skipped silently when the vault is not a git repo.
+- **`vaultGit.initOnEnable`** — when both flags are on AND the vault is not yet a git repo, the plugin surfaces a one-shot startup Notice offering to `git init` it with a sensible `.gitignore` (`.obsidian/workspace*`, `Projects/_scratch/`, `*.tmp`). One-shot per install — dismiss to silence.
+
+When on, the per-call commit subject is `<cmd>: <id> · <subject>` (omitting segments cleanly when missing — `op-resolve: OP-99`, `op-set-section: OP-99 · Plan`, `op-migrate-add-managed-flag`). Commits are unsigned (`-c commit.gpgsign=false`) and `--no-verify` so a hooked vault doesn't block the auto-commit hot path.
+
+Per-call commits multiply rapidly. The companion endpoint **`op-flush-vault-history issue=<ID>`** squashes the consecutive run of commits at HEAD that reference the issue id into a single commit (`op-flush-vault-history: <ID> · squashed N commits`). Useful after `op-resolve` to compact a ladder of WIP commits into one canonical "issue done" commit. Refuses cleanly when the vault is not a git repo, when HEAD doesn't reference the issue id, or when the run has fewer than two commits to squash.
+
+**Why opt-in.** Vault git lives entirely in the user's own vault directory. Independent of the OP-Test seed-reset workflow (which manipulates a separate test vault). Independent of the per-project `repo_path/` git workflows (those track code, not the vault). Defaults stay off so users who don't want native rollback never see a `.git/` appear in their vault.
+
 ## Cross-project surfaces
 
 The `Projects/` root contains aggregate views that span every project. These are **not** owned by any single project — leave them in place when scaffolding or cleaning up.

@@ -44,7 +44,15 @@ import { taskSetStatus } from "./taskSetStatus";
 import { taskAppendNote } from "./taskAppendNote";
 import { docCreate } from "./docCreate";
 import { docEdit } from "./docEdit";
-import { appendAuditLine } from "./auditLog";
+import { appendAuditLine, type AuditEntryInput } from "./auditLog";
+import {
+  flushVaultHistory,
+  gitInitVault,
+  isVaultGitRepoSync,
+  resolveVaultBasePath,
+  runAutoCommit,
+} from "./vaultGit";
+import { formatCommitMessage } from "./vaultGitPure";
 import {
   migrateAddManagedFlag,
   shouldRunMigration,
@@ -128,6 +136,7 @@ import {
   parseTaskAppendNoteParams,
   parseDocCreateParams,
   parseDocEditParams,
+  parseFlushVaultHistoryParams,
 } from "./cliHandlers";
 import { explainWorkflow, listVars } from "./explainWorkflow";
 import {
@@ -454,6 +463,11 @@ export default class OpPlugin extends Plugin {
       // migration itself short-circuits on already-flagged notes, so a bug
       // that re-runs it is harmless beyond the scan time.
       void this.runManagedFlagMigrationOnStartup();
+      // OP-261 (Phase 4 of OP-218): if vault-git auto-commit is enabled
+      // AND `initOnEnable` is set AND the vault is NOT yet a git repo,
+      // surface a one-shot Notice offering to `git init` it. The
+      // `vaultGitInitOffered` bit suppresses re-prompting.
+      void this.maybeOfferVaultGitInit();
       // OP-161 / §10: drop the first-run README into the vault on the
       // very first plugin load. The flag flip is idempotent across reloads.
       void scaffoldFirstRunReadme(
@@ -1227,6 +1241,11 @@ export default class OpPlugin extends Plugin {
         this.handleOpDocEditUri(p),
       );
     });
+    this.registerObsidianProtocolHandler("op-flush-vault-history", (params) => {
+      this.runUri("op-flush-vault-history", normalizeUriParams(params), (p) =>
+        this.handleOpFlushVaultHistoryUri(p),
+      );
+    });
 
     this.registerObsidianProtocolHandler("op-set-link", (params) => {
       this.runUri("op-set-link", normalizeUriParams(params), (p) =>
@@ -1663,6 +1682,20 @@ export default class OpPlugin extends Plugin {
         },
       },
       (params) => this.handleOpDocEditCli(params),
+    );
+
+    this.registerCliHandler(
+      "op-flush-vault-history",
+      "Squash consecutive vault-git commits at HEAD that reference the given issue id into a single commit. Opt-in companion to vaultGit.autoCommit. Destructive: rewrites HEAD via `git reset --soft`.",
+      {
+        issue: { value: "<id>", description: "Issue id (e.g. OP-34)" },
+        subject: {
+          value: "<one-liner>",
+          description:
+            "Optional subject line for the squashed commit (default: \"squashed N commits\").",
+        },
+      },
+      (params) => this.handleOpFlushVaultHistoryCli(params),
     );
 
     this.registerCliHandler(
@@ -2627,7 +2660,7 @@ export default class OpPlugin extends Plugin {
       const res = await setTasks(this.app, entry, parsed.value.body, {
         append: parsed.value.append,
       });
-      void appendAuditLine(this.app, {
+      this.recordOpMutation({
         cmd: command,
         issue: res.issueId,
         paths: [res.path],
@@ -2663,7 +2696,7 @@ export default class OpPlugin extends Plugin {
     const res = await setTasks(this.app, entry, parsed.value.body, {
       append: parsed.value.append,
     });
-    void appendAuditLine(this.app, {
+    this.recordOpMutation({
       cmd: command,
       issue: res.issueId,
       paths: [res.path],
@@ -2688,7 +2721,7 @@ export default class OpPlugin extends Plugin {
       if (!parsed.ok) return parsed.error;
       const res = await taskCreate(this.app, this.store, parsed.value);
       this.markInFlightOpWrite(res.path);
-      void appendAuditLine(this.app, {
+      this.recordOpMutation({
         cmd: command,
         issue: res.issueId,
         paths: [res.path],
@@ -2717,7 +2750,7 @@ export default class OpPlugin extends Plugin {
     if (!parsed.ok) throw new Error(parsed.error);
     const res = await taskCreate(this.app, this.store, parsed.value);
     this.markInFlightOpWrite(res.path);
-    void appendAuditLine(this.app, {
+    this.recordOpMutation({
       cmd: command,
       issue: res.issueId,
       paths: [res.path],
@@ -2743,7 +2776,7 @@ export default class OpPlugin extends Plugin {
         parsed.value.status,
       );
       this.markInFlightOpWrite(res.path);
-      void appendAuditLine(this.app, {
+      this.recordOpMutation({
         cmd: command,
         paths: [res.path],
         note: `${res.previousStatus ?? "?"} -> ${res.status}`,
@@ -2778,7 +2811,7 @@ export default class OpPlugin extends Plugin {
       parsed.value.status,
     );
     this.markInFlightOpWrite(res.path);
-    void appendAuditLine(this.app, {
+    this.recordOpMutation({
       cmd: command,
       paths: [res.path],
       note: `${res.previousStatus ?? "?"} -> ${res.status}`,
@@ -2805,7 +2838,7 @@ export default class OpPlugin extends Plugin {
         parsed.value.body,
       );
       this.markInFlightOpWrite(res.path);
-      void appendAuditLine(this.app, {
+      this.recordOpMutation({
         cmd: command,
         paths: [res.path],
         before_size: res.beforeSize,
@@ -2840,7 +2873,7 @@ export default class OpPlugin extends Plugin {
       parsed.value.body,
     );
     this.markInFlightOpWrite(res.path);
-    void appendAuditLine(this.app, {
+    this.recordOpMutation({
       cmd: command,
       paths: [res.path],
       before_size: res.beforeSize,
@@ -2862,7 +2895,7 @@ export default class OpPlugin extends Plugin {
       if (!parsed.ok) return parsed.error;
       const res = await docCreate(this.app, parsed.value);
       this.markInFlightOpWrite(res.path);
-      void appendAuditLine(this.app, {
+      this.recordOpMutation({
         cmd: command,
         project: res.project,
         paths: [res.path],
@@ -2892,7 +2925,7 @@ export default class OpPlugin extends Plugin {
     if (!parsed.ok) throw new Error(parsed.error);
     const res = await docCreate(this.app, parsed.value);
     this.markInFlightOpWrite(res.path);
-    void appendAuditLine(this.app, {
+    this.recordOpMutation({
       cmd: command,
       project: res.project,
       paths: [res.path],
@@ -2920,7 +2953,7 @@ export default class OpPlugin extends Plugin {
       if (parsed.value.section) input.section = parsed.value.section;
       const res = await docEdit(this.app, input);
       this.markInFlightOpWrite(res.path);
-      void appendAuditLine(this.app, {
+      this.recordOpMutation({
         cmd: command,
         paths: [res.path],
         section: res.section,
@@ -2958,7 +2991,7 @@ export default class OpPlugin extends Plugin {
     if (parsed.value.section) input.section = parsed.value.section;
     const res = await docEdit(this.app, input);
     this.markInFlightOpWrite(res.path);
-    void appendAuditLine(this.app, {
+    this.recordOpMutation({
       cmd: command,
       paths: [res.path],
       section: res.section,
@@ -2976,6 +3009,145 @@ export default class OpPlugin extends Plugin {
   }
 
   /**
+   * OP-261 (Phase 4 of OP-218): squash the consecutive run of issue-tagged
+   * commits at HEAD. Opt-in companion to vaultGit.autoCommit; refuses when
+   * the vault is not a git repo or when there's no flushable run.
+   *
+   * The audit line records `cmd=op-flush-vault-history` regardless of
+   * `vaultGit.autoCommit` — flushing IS the intentional act of mutating
+   * vault git, so it's logged even when auto-commit is off (in which case
+   * the user is presumably running this manually after committing through
+   * other means).
+   */
+  private async handleOpFlushVaultHistoryCli(
+    params: Record<string, string>,
+  ): Promise<string> {
+    const command = "op-flush-vault-history";
+    try {
+      const parsed = parseFlushVaultHistoryParams(params);
+      if (!parsed.ok) return parsed.error;
+      const base = resolveVaultBasePath(this.app);
+      if (!base) {
+        const msg = "vault path unavailable";
+        await writeUriResponse(this.app, { ok: false, command, error: msg });
+        return `${command} failed: ${msg}`;
+      }
+      const res = await flushVaultHistory({
+        vaultBase: base,
+        issueId: parsed.value.issueId,
+        subject: parsed.value.subject,
+      });
+      if (!res.ok) {
+        await writeUriResponse(this.app, { ok: false, command, error: res.error });
+        return `${command} failed: ${res.error}`;
+      }
+      void appendAuditLine(this.app, {
+        cmd: command,
+        issue: parsed.value.issueId,
+        note: `squashed=${res.squashed} newSha=${res.newSha?.slice(0, 7) ?? "?"}`,
+      });
+      await writeUriResponse(this.app, {
+        ok: true,
+        command,
+        issueId: parsed.value.issueId,
+        squashed: res.squashed,
+        newSha: res.newSha,
+        squashedShas: res.squashedShas,
+      });
+      return `${command}: ${parsed.value.issueId} squashed ${res.squashed} → ${res.newSha?.slice(0, 7) ?? "?"}`;
+    } catch (err: any) {
+      const msg = err?.message ?? String(err);
+      console.error("[op-obsidian]", command, err);
+      await writeUriResponse(this.app, { ok: false, command, error: msg });
+      return `${command} failed: ${msg}`;
+    }
+  }
+
+  private async handleOpFlushVaultHistoryUri(
+    params: Record<string, string>,
+  ): Promise<UriResponsePayload> {
+    const command = "op-flush-vault-history";
+    const parsed = parseFlushVaultHistoryParams(params);
+    if (!parsed.ok) throw new Error(parsed.error);
+    const base = resolveVaultBasePath(this.app);
+    if (!base) throw new Error("vault path unavailable");
+    const res = await flushVaultHistory({
+      vaultBase: base,
+      issueId: parsed.value.issueId,
+      subject: parsed.value.subject,
+    });
+    if (!res.ok) throw new Error(res.error ?? "flush failed");
+    void appendAuditLine(this.app, {
+      cmd: command,
+      issue: parsed.value.issueId,
+      note: `squashed=${res.squashed} newSha=${res.newSha?.slice(0, 7) ?? "?"}`,
+    });
+    return {
+      ok: true,
+      command,
+      issueId: parsed.value.issueId,
+      squashed: res.squashed,
+      newSha: res.newSha,
+      squashedShas: res.squashedShas,
+    };
+  }
+
+  /**
+   * OP-261 (Phase 4 of OP-218): one-shot vault-git init offer. Fires only
+   * when both vaultGit toggles are on, the vault is not yet a git repo, and
+   * the offer hasn't already been resolved this install. Surfaces an
+   * actionable Notice; runs `gitInitVault` on accept and flips
+   * `vaultGitInitOffered` either way (accept OR dismiss) so the prompt
+   * doesn't re-fire each reload.
+   */
+  private async maybeOfferVaultGitInit(): Promise<void> {
+    try {
+      const { autoCommit, initOnEnable } = this.settings.vaultGit;
+      if (!autoCommit || !initOnEnable) return;
+      if (this.settings.vaultGitInitOffered) return;
+      const base = resolveVaultBasePath(this.app);
+      if (!base) return;
+      if (isVaultGitRepoSync(base)) {
+        // Already a repo — flip the bit so we don't re-evaluate next reload.
+        this.settings.vaultGitInitOffered = true;
+        await this.saveSettings();
+        return;
+      }
+      notifyAction({
+        text: "op vault git: initialize this vault as a git repo (.gitignore + initial commit)?",
+        actions: [
+          {
+            label: "Initialize",
+            onClick: async () => {
+              const res = await gitInitVault({ vaultBase: base });
+              if (res.initialized) {
+                notify("op vault git: vault initialized.");
+                void appendAuditLine(this.app, {
+                  cmd: "op-vault-git-init",
+                  note: "initialized via startup offer",
+                });
+              } else {
+                notify(
+                  `op vault git: init failed (${res.error ?? "unknown"}). Run \`git init\` manually.`,
+                );
+              }
+              this.settings.vaultGitInitOffered = true;
+              await this.saveSettings();
+            },
+          },
+        ],
+      });
+      // Flip the bit immediately too: the user dismissing the Notice
+      // (clicking elsewhere, ignoring it) shouldn't re-prompt next reload.
+      // The action callback above is idempotent on the same bit.
+      this.settings.vaultGitInitOffered = true;
+      await this.saveSettings();
+    } catch (err) {
+      console.warn("[op-obsidian] maybeOfferVaultGitInit failed", err);
+    }
+  }
+
+  /**
    * OP-255: idempotent op_managed: true backfill. Runs once per upgrade. The
    * migration itself short-circuits per-file on already-flagged notes so a
    * re-run on a fully migrated vault is a fast scan with zero writes.
@@ -2988,7 +3160,7 @@ export default class OpPlugin extends Plugin {
       const result = await migrateAddManagedFlag(this.app);
       this.settings.developer.lastManagedMigrationVersion = currentVersion;
       await this.saveSettings();
-      void appendAuditLine(this.app, {
+      this.recordOpMutation({
         cmd: "op-migrate-add-managed-flag",
         paths: result.patchedPaths.slice(0, 50),
         note: `scanned=${result.scanned} patched=${result.patched} alreadyFlagged=${result.alreadyFlagged} skipped=${result.skipped}`,
@@ -3013,6 +3185,41 @@ export default class OpPlugin extends Plugin {
     if (!path) return;
     this.inFlightOpWritePaths.add(path);
     setTimeout(() => this.inFlightOpWritePaths.delete(path), 1500);
+  }
+
+  /**
+   * OP-261 (Phase 4): single emission point for op-* mutation side-effects.
+   * Always appends an audit-log line; when `vaultGit.autoCommit` is on AND
+   * the vault is a git repo, also fires off a best-effort `git add` +
+   * `git commit` for the paths the entry touched.
+   *
+   * Both side-effects are fire-and-forget — they MUST NOT block the
+   * underlying op-* response. The bypass-detection listener in `onload`
+   * stays direct (calls `appendAuditLine` itself) so unattributed writes
+   * don't get turned into auto-commits.
+   *
+   * `subject` is an optional one-liner threaded into the commit message.
+   * Callers pass it to give human-readable commit subjects (section name,
+   * resolution status, etc.); when omitted we fall back to the entry's
+   * `note` field, then the cmd alone.
+   */
+  private recordOpMutation(entry: AuditEntryInput, subject?: string): void {
+    void appendAuditLine(this.app, entry);
+    if (!this.settings.vaultGit.autoCommit) return;
+    const base = resolveVaultBasePath(this.app);
+    if (!base || !isVaultGitRepoSync(base)) return;
+    const paths = entry.paths ?? [];
+    if (paths.length === 0) return;
+    const message = formatCommitMessage({
+      cmd: entry.cmd,
+      issueId: entry.issue,
+      subject: subject ?? entry.note,
+    });
+    void runAutoCommit({ vaultBase: base, paths, message }).then((res) => {
+      if (res.error) {
+        console.warn("[op-obsidian] vaultGit auto-commit failed", res.error);
+      }
+    });
   }
 
   private handleOpSetFlowUri(
@@ -3411,7 +3618,7 @@ export default class OpPlugin extends Plugin {
       const auditPaths = [res.basePath, res.statusPath, res.workflowPath];
       if (res.seed?.path) auditPaths.push(res.seed.path);
       auditPaths.forEach((p) => this.markInFlightOpWrite(p));
-      void appendAuditLine(this.app, {
+      this.recordOpMutation({
         cmd: command,
         project: res.slug,
         paths: auditPaths,
@@ -3476,7 +3683,7 @@ export default class OpPlugin extends Plugin {
         scopeBody,
       });
       this.markInFlightOpWrite(res.path);
-      void appendAuditLine(this.app, {
+      this.recordOpMutation({
         cmd: command,
         issue: res.id,
         project: slug,
@@ -3529,7 +3736,7 @@ export default class OpPlugin extends Plugin {
       const workPaths = [res.path];
       if (res.createdTaskPath) workPaths.push(res.createdTaskPath);
       workPaths.forEach((p) => this.markInFlightOpWrite(p));
-      void appendAuditLine(this.app, {
+      this.recordOpMutation({
         cmd: command,
         issue: res.issueId,
         paths: workPaths,
@@ -3569,7 +3776,7 @@ export default class OpPlugin extends Plugin {
       const res = await appendCommit(this.app, entry, { sha, subject });
       if (res.added) {
         this.markInFlightOpWrite(res.path);
-        void appendAuditLine(this.app, {
+        this.recordOpMutation({
           cmd: command,
           issue: res.issueId,
           paths: [res.path],
@@ -3605,7 +3812,7 @@ export default class OpPlugin extends Plugin {
       const entry = this.resolveByIdOrThrow(id);
       const res = await setPr(this.app, entry, url);
       this.markInFlightOpWrite(res.path);
-      void appendAuditLine(this.app, {
+      this.recordOpMutation({
         cmd: command,
         issue: res.issueId,
         paths: [res.path],
@@ -3810,7 +4017,7 @@ export default class OpPlugin extends Plugin {
       const entry = this.resolveByIdOrThrow(id);
       const res = await setScope(this.app, entry, scope, { mode });
       this.markInFlightOpWrite(res.path);
-      void appendAuditLine(this.app, {
+      this.recordOpMutation({
         cmd: command,
         issue: res.issueId,
         paths: [res.path],
@@ -3844,7 +4051,7 @@ export default class OpPlugin extends Plugin {
       const entry = this.resolveByIdOrThrow(id);
       const res = await setSection(this.app, entry, name, content, { append });
       this.markInFlightOpWrite(res.path);
-      void appendAuditLine(this.app, {
+      this.recordOpMutation({
         cmd: command,
         issue: res.issueId,
         paths: [res.path],
@@ -3882,7 +4089,7 @@ export default class OpPlugin extends Plugin {
       const entry = this.resolveByIdOrThrow(id);
       const res = await setEvaluation(this.app, entry, evaluation);
       this.markInFlightOpWrite(res.path);
-      void appendAuditLine(this.app, {
+      this.recordOpMutation({
         cmd: command,
         issue: res.issueId,
         paths: [res.path],
@@ -4062,7 +4269,7 @@ export default class OpPlugin extends Plugin {
         );
         auditPaths.forEach((p) => this.markInFlightOpWrite(p));
         if (result.sourcePath) this.markInFlightOpWrite(result.sourcePath);
-        void appendAuditLine(this.app, {
+        this.recordOpMutation({
           cmd: command,
           issue: result.issueId,
           paths: auditPaths,

@@ -81,6 +81,25 @@ export interface AgentDisciplineSettings {
   managedNoteGuard: boolean;
 }
 
+/**
+ * OP-261 (Phase 4 of OP-218): optional vault-git auto-commit. Both flags
+ * default to `false`; flipping them on is the user's opt-in to either
+ * per-call git commits on every successful mutating op-* call, or the
+ * startup `git init` offer when the vault isn't yet a repo.
+ */
+export interface VaultGitSettings {
+  /** When true and the vault is a git repo, every successful mutating op-*
+   * call runs `git -C <vault> add <paths> && git -C <vault> commit -m
+   * "<cmd>: <id> · <subject>"`. Best-effort: failures are logged and never
+   * block the op-* response. Skipped silently when the vault is not a git
+   * repo and `initOnEnable` is false. */
+  autoCommit: boolean;
+  /** When true (and `autoCommit` is also true), the plugin offers to
+   * `git init` the vault on next startup if it isn't already a git repo,
+   * seeding a sensible `.gitignore`. */
+  initOnEnable: boolean;
+}
+
 export interface DeveloperSettings {
   // When true, `op-dev:*` debugging commands appear in the command palette.
   // Default false so end-user palettes aren't crowded with plugin-author
@@ -249,6 +268,13 @@ export interface OpSettings {
    *  in the project's `STATUS.md` `vars:` map (resolved by OP-197 already);
    *  per-launch overrides arrive via OP-199/OP-200. Defaults to `{}`. */
   workflowVars: Record<string, string>;
+  /** OP-261 (Phase 4 of OP-218): opt-in vault-git auto-commit + flush. */
+  vaultGit: VaultGitSettings;
+  /** OP-261: one-shot bit set after the startup init-on-enable offer has
+   * either been accepted or dismissed for the current
+   * (autoCommit, initOnEnable) combination. Prevents the offer Notice from
+   * re-firing every reload until the user toggles a flag. */
+  vaultGitInitOffered: boolean;
   /** OP-206 (3f): persistent dismiss for the LaunchAgentModal "Composed
    *  prompt preview" auto-expand. The launch counter itself is session-
    *  scoped (`previewAutoExpand.ts`) — this flag, when true, suppresses
@@ -337,6 +363,11 @@ export const DEFAULT_SETTINGS: OpSettings = {
   firstRunCompleted: false,
   workflowMode: "modules",
   workflowVars: {},
+  vaultGit: {
+    autoCommit: false,
+    initOnEnable: false,
+  },
+  vaultGitInitOffered: false,
   previewAutoExpandDismissed: false,
 };
 
@@ -545,6 +576,14 @@ export function mergeSettings(loaded: unknown): OpSettings {
   }
   if (typeof (l as { previewAutoExpandDismissed?: unknown }).previewAutoExpandDismissed === "boolean") {
     base.previewAutoExpandDismissed = (l as { previewAutoExpandDismissed: boolean }).previewAutoExpandDismissed;
+  }
+  if (l.vaultGit && typeof l.vaultGit === "object" && !Array.isArray(l.vaultGit)) {
+    const v = l.vaultGit as Partial<VaultGitSettings>;
+    if (typeof v.autoCommit === "boolean") base.vaultGit.autoCommit = v.autoCommit;
+    if (typeof v.initOnEnable === "boolean") base.vaultGit.initOnEnable = v.initOnEnable;
+  }
+  if (typeof (l as { vaultGitInitOffered?: unknown }).vaultGitInitOffered === "boolean") {
+    base.vaultGitInitOffered = (l as { vaultGitInitOffered: boolean }).vaultGitInitOffered;
   }
   return base;
 }
