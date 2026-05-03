@@ -127,6 +127,7 @@ type SectionId =
   | "flowChaining"
   | "github"
   | "dashboard"
+  | "vaultGit"
   | "developer";
 
 /** Subset of SectionId covering only the collapsible Advanced subsections. */
@@ -190,6 +191,12 @@ const ADVANCED_SECTIONS: ReadonlyArray<{
     title: "Dashboard",
     blurb:
       "Localhost iTerm2 browser-tab dashboard for live observation and steering of launched agents. Configures the OP-230 daemon (port + open-in target) and exposes Install / Restart / Logs / Regenerate-token controls.",
+  },
+  {
+    id: "vaultGit",
+    title: "Vault git (opt-in)",
+    blurb:
+      "Optional: auto-commit every successful op-* mutation to the vault's git repo, so each plugin call lands as one commit. Off by default — pairs with the always-on JSONL audit log at Projects/_scratch/op-audit.jsonl.",
   },
   {
     id: "developer",
@@ -388,6 +395,7 @@ export class OpSettingsTab extends PluginSettingTab {
       case "flowChaining":
       case "github":
       case "dashboard":
+      case "vaultGit":
       case "developer":
         return this.renderAdvancedSection(id, el);
       default: {
@@ -419,6 +427,8 @@ export class OpSettingsTab extends PluginSettingTab {
         return this.renderGithub(el);
       case "dashboard":
         return this.renderDashboard(el);
+      case "vaultGit":
+        return this.renderVaultGit(el);
       case "developer":
         return this.renderDeveloper(el);
       default: {
@@ -2163,6 +2173,47 @@ export class OpSettingsTab extends PluginSettingTab {
             await refreshStatus();
           }),
       );
+  }
+
+  /**
+   * OP-261 (Phase 4 of OP-218): opt-in vault-git auto-commit + flush helper.
+   * Both toggles default to off and are orthogonal to OP-Test seed reset
+   * (vault git lives in the user's own vault, not the OP-Test scratch repo).
+   */
+  private renderVaultGit(containerEl: HTMLElement): void {
+    const s = this.plugin.settings;
+    new Setting(containerEl)
+      .setName("Auto-commit every op-* mutation to vault git")
+      .setDesc(
+        "When the vault is a git repo, commit each successful op-* mutation as a single commit (`<cmd>: <id> · <subject>`). Failures are logged silently — vault git failures never block the op-* response. Skipped silently when the vault is not a git repo.",
+      )
+      .addToggle((t) =>
+        t.setValue(s.vaultGit.autoCommit).onChange(async (v) => {
+          s.vaultGit.autoCommit = v;
+          // Reset the init-offered bit so toggling auto-commit on a fresh
+          // session re-prompts the init offer when applicable.
+          if (v) s.vaultGitInitOffered = false;
+          await this.plugin.saveSettings();
+        }),
+      );
+
+    new Setting(containerEl)
+      .setName("Offer to git-init the vault on next startup")
+      .setDesc(
+        "When auto-commit is on AND the vault is not a git repo, surface a Notice on next startup offering to `git init` it with a sensible `.gitignore` (.obsidian/workspace*, Projects/_scratch/, *.tmp). One-shot — dismiss to silence.",
+      )
+      .addToggle((t) =>
+        t.setValue(s.vaultGit.initOnEnable).onChange(async (v) => {
+          s.vaultGit.initOnEnable = v;
+          if (v) s.vaultGitInitOffered = false;
+          await this.plugin.saveSettings();
+        }),
+      );
+
+    const help = containerEl.createEl("p", { cls: "setting-item-description" });
+    help.setText(
+      "Squash a noisy run of per-call commits via the `op-flush-vault-history issue=<ID>` CLI/URI command. See schema.md → Audit log → Vault git for the full opt-in story.",
+    );
   }
 
   private renderDeveloper(containerEl: HTMLElement): void {

@@ -524,6 +524,19 @@ export function parseDocEditParams(
   return { ok: true, value: out };
 }
 
+export function parseFlushVaultHistoryParams(
+  params: Record<string, string>,
+): ParamsResult<{ issueId: string; subject?: string }> {
+  const issueId = nonEmptyTrim(params.issue ?? params.id);
+  if (!issueId) {
+    return { ok: false, error: "op-flush-vault-history failed: --issue is required" };
+  }
+  const subject = nonEmptyTrim(params.subject ?? params.message);
+  const out: { issueId: string; subject?: string } = { issueId };
+  if (subject !== undefined) out.subject = subject;
+  return { ok: true, value: out };
+}
+
 export function parseListVarsParams(
   params: Record<string, string>,
 ): ParamsResult<{ project?: string; issue?: string }> {

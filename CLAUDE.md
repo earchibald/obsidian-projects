@@ -93,6 +93,10 @@ node scripts/smoke-workflow-modules.mjs
 
 The harness invokes `op-explain-workflow id=TST-5 mode=kickoff` and `mode=plan`, plus `op-list-vars project=testing issue=TST-5`, then asserts the composed prompt contains the expected module bodies, that variables resolve through the precedence chain (project-default overrides the module's `name=VALUE` default), and that no `error`-severity diagnostics are emitted. Other workers landing changes in the OP-181 child series should run this against `seed/workflow-modules` after their dev-sync as part of the per-PR smoke step.
 
+### `vaultGit.autoCommit` is opt-in and orthogonal to seed reset
+
+OP-261 (Phase 4 of OP-218) added optional vault-git auto-commit (`vaultGit.autoCommit` + `vaultGit.initOnEnable` in Settings → op → Advanced → Vault git). Both default off and live entirely in the user's own vault. They have **no interaction** with `scripts/reset-test-vault.mjs` (which targets the OP-Test scratch repo) and no interaction with per-project `repo_path/` git workflows. If you flip them on in OP-Test for smoke purposes, remember to flip them back so the seed-reset replay stays clean. See `plugins/op/skills/op/reference/schema.md` → "Audit log" → "Vault git (opt-in)" for the full opt-in story.
+
 ## Agent-Vault is BRAT-only
 
 The user's daily-driver vault at `~/work/Agent-Vault/` no longer receives dev syncs. It consumes op-obsidian releases like an external user would, via [BRAT](https://github.com/TfTHacker/obsidian42-brat). One-time detach (idempotent — re-runs are no-ops):
