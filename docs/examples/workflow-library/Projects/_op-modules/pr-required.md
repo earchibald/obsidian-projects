@@ -5,7 +5,6 @@ type: workflow-module
 scope: review
 order: 10
 vars:
-  - default_branch=main
   - { name: pr_title_pattern, default: "<ID>: <subject>", description: "Required PR title shape; <ID> is the issue id, <subject> is the imperative-mood summary." }
   - merge_command=gh pr merge --squash --delete-branch
 ---
