@@ -222,6 +222,21 @@ function linksIssue(task: TaskEntry, issue: IssueEntry): boolean {
   return basename.length > 0 && link.includes(basename);
 }
 
+/**
+ * Resolve modal's Enter / Mod+Enter handler. Skips when an input/textarea is
+ * focused so typing in any future field doesn't accidentally confirm; otherwise
+ * suppresses the default and calls `onConfirm`.
+ */
+export function handleResolveModalEnter(
+  evt: { target?: EventTarget | null; preventDefault: () => void },
+  onConfirm: () => void,
+): void {
+  const t = evt.target as { tagName?: string } | null | undefined;
+  if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA")) return;
+  evt.preventDefault();
+  onConfirm();
+}
+
 function confirmModal(
   app: App,
   issue: IssueEntry,
@@ -289,12 +304,7 @@ class ResolveConfirmModal extends Modal {
           .onClick(() => this.confirm()),
       );
 
-    const onEnter = (evt: KeyboardEvent) => {
-      const t = evt.target as HTMLElement | null;
-      if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA")) return;
-      evt.preventDefault();
-      this.confirm();
-    };
+    const onEnter = (evt: KeyboardEvent) => handleResolveModalEnter(evt, () => this.confirm());
     this.scope.register([], "Enter", onEnter);
     this.scope.register(["Mod"], "Enter", onEnter);
   }
