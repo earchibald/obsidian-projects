@@ -19,12 +19,16 @@ vi.mock("obsidian", () => ({
   },
 }));
 
+import { existsSync } from "node:fs";
+
 import {
   DASHBOARD_AIOHTTP_SPEC,
   dashboardClientPath,
+  dashboardConfigPath,
   dashboardDependencyInstallArgs,
   installDaemon,
   listITermPythonRuntimes,
+  pluginDataJsonPath,
 } from "./dashboardSetupModal";
 
 describe("dashboardClientPath", () => {
@@ -58,6 +62,44 @@ describe("installDaemon", () => {
     expect(readFileSync(daemonPath, "utf8")).toContain("print('ok')");
     expect(readFileSync(dashboardClientPath(daemonPath), "utf8")).toContain("<!doctype html>");
     expect(statSync(daemonPath).mode & 0o777).toBe(0o755);
+  });
+
+  it("writes op-dashboard.config.json when a config is supplied (OP-242)", () => {
+    workDir = mkdtempSync(path.join(tmpdir(), "op-dashboard-install-"));
+    const daemonPath = path.join(workDir, "Scripts", "AutoLaunch", "op-dashboard.py");
+    const dataJson = "/Users/whoever/Vault/.obsidian/plugins/op-obsidian/data.json";
+    const result = installDaemon(
+      {
+        sourceLabel: "embedded",
+        daemonContent: "#!/usr/bin/env python3\n",
+        clientContent: "<!doctype html>",
+      },
+      daemonPath,
+      { vaultDataPaths: [dataJson] },
+    );
+    expect(result).toEqual({ ok: true });
+    const cfg = JSON.parse(readFileSync(dashboardConfigPath(daemonPath), "utf8"));
+    expect(cfg).toEqual({ vault_data_paths: [dataJson] });
+  });
+
+  it("omits the config file when no config is supplied", () => {
+    workDir = mkdtempSync(path.join(tmpdir(), "op-dashboard-install-"));
+    const daemonPath = path.join(workDir, "Scripts", "AutoLaunch", "op-dashboard.py");
+    installDaemon(
+      {
+        sourceLabel: "embedded",
+        daemonContent: "#!/usr/bin/env python3\n",
+        clientContent: "<!doctype html>",
+      },
+      daemonPath,
+    );
+    expect(existsSync(dashboardConfigPath(daemonPath))).toBe(false);
+  });
+
+  it("pluginDataJsonPath joins the vault adapter base path", () => {
+    expect(pluginDataJsonPath("/Users/x/Vault")).toBe(
+      "/Users/x/Vault/.obsidian/plugins/op-obsidian/data.json",
+    );
   });
 
   it("fails when the embedded daemon payload is empty", () => {

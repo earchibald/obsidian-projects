@@ -243,6 +243,7 @@ export class DashboardSetupModal extends Modal {
       this.app,
       this.deps.bundledAssets,
       targetPath,
+      vaultBasePathFromApp(this.app),
       () => void this.refresh(),
     ).open();
   }
@@ -253,6 +254,9 @@ class InstallDaemonConfirmModal extends Modal {
     app: App,
     private assets: BundledDashboardAssets,
     private targetPath: string,
+    /** OP-242: vault base path so we can write the daemon's config sidecar.
+     *  May be empty in unusual adapters; we just skip the config file then. */
+    private vaultBasePath: string,
     private onInstalled: () => void,
   ) {
     super(app);
@@ -294,7 +298,13 @@ class InstallDaemonConfirmModal extends Modal {
           .setButtonText(exists ? "Reinstall" : "Install")
           .setCta()
           .onClick(async () => {
-            const result = installDaemon(this.assets, this.targetPath);
+            const result = installDaemon(
+              this.assets,
+              this.targetPath,
+              this.vaultBasePath
+                ? { vaultDataPaths: [pluginDataJsonPath(this.vaultBasePath)] }
+                : undefined,
+            );
             if (!result.ok) {
               notify(`Install failed: ${result.reason}`, 8000);
               return;
@@ -328,6 +338,16 @@ export interface InstallDaemonResult {
   reason?: string;
 }
 
+/** OP-242: optional config payload written next to the daemon as
+ *  `op-dashboard.config.json`. The daemon reads this on startup to discover
+ *  the plugin's `data.json` and enrich each agent surface with its
+ *  `model` / `workdir` / `started_at`. Without this, the daemon falls back
+ *  to the `OP_DASHBOARD_DATA_JSON` env var (set by no one in the install
+ *  flow) and the enrichment is silently empty. */
+export interface InstallDaemonConfig {
+  vaultDataPaths: string[];
+}
+
 export interface DashboardDependencyInstallResult {
   ok: boolean;
   runtimesInstalled: number;
@@ -342,6 +362,7 @@ export interface DashboardDependencyInstallResult {
 export function installDaemon(
   assets: BundledDashboardAssets,
   targetPath: string,
+  config?: InstallDaemonConfig,
 ): InstallDaemonResult {
   try {
     if (!assets.daemonContent.trim()) {
@@ -354,6 +375,17 @@ export function installDaemon(
     fs.writeFileSync(targetPath, assets.daemonContent, "utf8");
     fs.mkdirSync(path.dirname(dashboardClientPath(targetPath)), { recursive: true });
     fs.writeFileSync(dashboardClientPath(targetPath), assets.clientContent, "utf8");
+    // OP-242: persist the config sidecar so the daemon can locate the
+    // plugin's data.json and enrich surfaces with model/workdir/started_at.
+    // Only written when a config is supplied — keeps tests / non-vault
+    // callers backwards-compatible.
+    if (config) {
+      fs.writeFileSync(
+        dashboardConfigPath(targetPath),
+        JSON.stringify({ vault_data_paths: config.vaultDataPaths }, null, 2) + "\n",
+        "utf8",
+      );
+    }
     // Daemon expects executable permission. `iterm2` AutoLaunch runs `python3
     // <script>` so technically the bit isn't required, but setting it
     // matches what users get if they install via `cp` and means manual
@@ -441,6 +473,28 @@ export async function installDashboardDependencies(
 }
 export function dashboardClientPath(targetPath: string): string {
   return path.join(path.dirname(targetPath), "client", "index.html");
+}
+
+/** OP-242: sidecar config path next to the daemon. The daemon hardcodes
+ *  the basename `op-dashboard.config.json` in the same directory; keep the
+ *  two in sync. */
+export function dashboardConfigPath(targetPath: string): string {
+  return path.join(path.dirname(targetPath), "op-dashboard.config.json");
+}
+
+/** OP-242: build the absolute path to the plugin's `data.json` for a vault.
+ *  The plugin id is hardcoded — `app.vault.adapter.basePath` + the plugin's
+ *  install-relative path. Used by both install paths (Setup modal + Settings). */
+export function pluginDataJsonPath(vaultBasePath: string): string {
+  return path.join(vaultBasePath, ".obsidian", "plugins", "op-obsidian", "data.json");
+}
+
+/** OP-242: probe the vault adapter for a filesystem base path. Obsidian's
+ *  desktop FileSystemAdapter sets `basePath`; mobile / unusual adapters may
+ *  not. Returns "" when unavailable so callers can skip the config-write. */
+export function vaultBasePathFromApp(app: App): string {
+  const adapter = app.vault.adapter as unknown as { basePath?: string };
+  return typeof adapter.basePath === "string" ? adapter.basePath : "";
 }
 
 async function defaultClipboardWriter(text: string): Promise<void> {

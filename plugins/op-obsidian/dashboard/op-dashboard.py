@@ -552,6 +552,18 @@ class Hub:
             with contextlib.suppress(Exception):
                 await ws.close()
 
+    async def close_all(self, code: int, message: bytes = b"") -> None:
+        """Close every client with the given WS close `code`, but keep the
+        client set intact — the registered handler removes the entry on its
+        own when its `async for msg in ws` loop falls through. Used by
+        /regenerate-token to invalidate live sessions without racing the
+        per-handler cleanup."""
+        async with self._lock:
+            clients = list(self._clients)
+        for ws in clients:
+            with contextlib.suppress(Exception):
+                await ws.close(code=code, message=message)
+
 
 # ---- Auth ------------------------------------------------------------------
 
@@ -580,6 +592,10 @@ class AppState:
     iterm: ITermBridge
     poll_task: Optional[asyncio.Task] = None
     shutdown_event: asyncio.Event = field(default_factory=asyncio.Event)
+    # Set by POST /restart. Read by run() after the shutdown_event fires +
+    # cleanup completes; if true, run() execs the same script with the same
+    # argv, replacing the process in place.
+    restart_requested: bool = False
     # Serializes mutating tmux operations (send-keys / kill-window) across
     # all clients. Two browser tabs sending to the same window simultaneously
     # would otherwise interleave at command granularity (e.g. tmux receives
@@ -641,6 +657,33 @@ def build_app(state: AppState):
             "uptime_s": int(time.time() - state.started_at),
             "iterm": state.iterm.available,
         })
+
+    @routes.post("/regenerate-token")
+    async def regenerate_token(request):
+        # Authenticate against the *current* token — a malicious local process
+        # without the token can't rotate ours out from under live clients.
+        if not token_ok(request_token(request), state.token):
+            return web.json_response({"ok": False, "error": "auth"}, status=401)
+        new_token = generate_token()
+        # Persist + swap before invalidating clients so a race-fast
+        # reconnecting tab still sees the new token in the file.
+        write_token(TOKEN_PATH, new_token)
+        state.token = new_token
+        log.info("token rotated; invalidating %d ws client(s)", state.hub.count)
+        await state.hub.close_all(WS_CLOSE_TOKEN_INVALID, b"token rotated")
+        return web.Response(status=200)
+
+    @routes.post("/restart")
+    async def restart(request):
+        if not token_ok(request_token(request), state.token):
+            return web.json_response({"ok": False, "error": "auth"}, status=401)
+        log.info("restart requested via POST /restart")
+        state.restart_requested = True
+        # Defer the shutdown signal so the response can be flushed first;
+        # otherwise the client sees a connection reset instead of 200.
+        loop = asyncio.get_running_loop()
+        loop.call_soon(state.shutdown_event.set)
+        return web.Response(status=200)
 
     @routes.get("/ws")
     async def ws_handler(request):
@@ -976,7 +1019,19 @@ async def run(args: argparse.Namespace, connection: Any = None) -> int:
             await state.poll_task
     await state.hub.shutdown()
     await runner.cleanup()
+    if state.restart_requested:
+        # Replace the process in place. iTerm's AutoLaunch supervises us, but
+        # execv keeps us under the same supervisor — same argv, same env. Use
+        # sys.executable so we keep iTerm's bundled Python (which has aiohttp
+        # installed). Tests stub out _execv to assert without re-execing.
+        log.info("restart_requested — execv'ing %s %s", sys.executable, sys.argv)
+        _execv(sys.executable, [sys.executable, *sys.argv])
     return 0
+
+
+# Indirected so tests can stub the exec without replacing the process.
+def _execv(path: str, argv: List[str]) -> None:  # pragma: no cover - trivial wrapper
+    os.execv(path, argv)
 
 
 async def autolaunch_main(connection: Any) -> None:

@@ -9,6 +9,7 @@ and the data.json reader's defensive fallbacks.
 """
 from __future__ import annotations
 
+import asyncio
 import base64
 import importlib.util
 import json
@@ -16,6 +17,7 @@ import os
 import stat
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 
@@ -380,6 +382,210 @@ class TmuxSessionRegexTests(unittest.TestCase):
     def test_rejects(self):
         for s in ["op-agent", "op-agentsx", "op-agents-", "op-agents-1a", "main"]:
             self.assertIsNone(opd.TMUX_SESSION_RE.match(s))
+
+
+try:
+    from aiohttp import web as _aiohttp_web  # noqa: F401
+    from aiohttp.test_utils import TestClient, TestServer
+    HAS_AIOHTTP = True
+except ImportError:  # pragma: no cover - dev env without aiohttp
+    HAS_AIOHTTP = False
+
+
+@unittest.skipUnless(HAS_AIOHTTP, "aiohttp not installed")
+class RegenerateAndRestartTests(unittest.TestCase):
+    """OP-242: POST /regenerate-token + POST /restart.
+
+    Both endpoints authenticate against the *current* X-Op-Token. Regenerate
+    rotates state.token, persists via write_token, and broadcasts WS close
+    code 4401 to live clients. Restart sets state.restart_requested and
+    state.shutdown_event so run() execs the same script with the same argv
+    after cleanup.
+    """
+
+    def _make_state(self, token: str, token_path):
+        return opd.AppState(
+            token=token,
+            started_at=time.time(),
+            registry=opd.SessionRegistry(),
+            hub=opd.Hub(),
+            iterm=opd.ITermBridge(),
+        )
+
+    def test_regenerate_requires_current_token(self):
+        async def _run():
+            with tempfile.TemporaryDirectory() as td:
+                token_path = Path(td) / "tok"
+                opd.write_token(token_path, "current")
+                # Patch TOKEN_PATH so the handler writes into the temp dir.
+                orig = opd.TOKEN_PATH
+                opd.TOKEN_PATH = token_path
+                try:
+                    state = self._make_state("current", token_path)
+                    app = opd.build_app(state)
+                    async with TestClient(TestServer(app)) as client:
+                        # No header → 401.
+                        r = await client.post("/regenerate-token")
+                        self.assertEqual(r.status, 401)
+                        # Wrong header → 401, token unchanged.
+                        r = await client.post(
+                            "/regenerate-token",
+                            headers={"X-Op-Token": "wrong"},
+                        )
+                        self.assertEqual(r.status, 401)
+                        self.assertEqual(state.token, "current")
+                        # Correct header → 200, new token persisted, state swapped.
+                        r = await client.post(
+                            "/regenerate-token",
+                            headers={"X-Op-Token": "current"},
+                        )
+                        self.assertEqual(r.status, 200)
+                        self.assertNotEqual(state.token, "current")
+                        self.assertEqual(token_path.read_text(), state.token)
+                        self.assertEqual(stat.S_IMODE(token_path.stat().st_mode), 0o600)
+                finally:
+                    opd.TOKEN_PATH = orig
+        asyncio.run(_run())
+
+    def test_regenerate_closes_live_ws_with_4401(self):
+        async def _run():
+            with tempfile.TemporaryDirectory() as td:
+                token_path = Path(td) / "tok"
+                opd.write_token(token_path, "tok-a")
+                orig = opd.TOKEN_PATH
+                opd.TOKEN_PATH = token_path
+                try:
+                    state = self._make_state("tok-a", token_path)
+                    app = opd.build_app(state)
+                    async with TestClient(TestServer(app)) as client:
+                        ws = await client.ws_connect("/ws?token=tok-a")
+                        # Drain the snapshot frame so the next .receive() gets
+                        # the close.
+                        snap = await ws.receive_json()
+                        self.assertEqual(snap["type"], "snapshot")
+                        # Rotate.
+                        r = await client.post(
+                            "/regenerate-token",
+                            headers={"X-Op-Token": "tok-a"},
+                        )
+                        self.assertEqual(r.status, 200)
+                        # Client sees the close code.
+                        msg = await ws.receive(timeout=2.0)
+                        # aiohttp surfaces server-initiated closes as
+                        # WSMsgType.CLOSE with .data == close code.
+                        from aiohttp import WSMsgType
+                        self.assertEqual(msg.type, WSMsgType.CLOSE)
+                        self.assertEqual(msg.data, opd.WS_CLOSE_TOKEN_INVALID)
+                        await ws.close()
+                finally:
+                    opd.TOKEN_PATH = orig
+        asyncio.run(_run())
+
+    def test_restart_requires_current_token(self):
+        async def _run():
+            with tempfile.TemporaryDirectory() as td:
+                token_path = Path(td) / "tok"
+                opd.write_token(token_path, "tok-r")
+                orig = opd.TOKEN_PATH
+                opd.TOKEN_PATH = token_path
+                try:
+                    state = self._make_state("tok-r", token_path)
+                    app = opd.build_app(state)
+                    async with TestClient(TestServer(app)) as client:
+                        r = await client.post("/restart")
+                        self.assertEqual(r.status, 401)
+                        self.assertFalse(state.restart_requested)
+                        self.assertFalse(state.shutdown_event.is_set())
+                finally:
+                    opd.TOKEN_PATH = orig
+        asyncio.run(_run())
+
+    def test_restart_sets_flag_and_shutdown_event(self):
+        async def _run():
+            with tempfile.TemporaryDirectory() as td:
+                token_path = Path(td) / "tok"
+                opd.write_token(token_path, "tok-r")
+                orig = opd.TOKEN_PATH
+                opd.TOKEN_PATH = token_path
+                try:
+                    state = self._make_state("tok-r", token_path)
+                    app = opd.build_app(state)
+                    async with TestClient(TestServer(app)) as client:
+                        r = await client.post(
+                            "/restart",
+                            headers={"X-Op-Token": "tok-r"},
+                        )
+                        self.assertEqual(r.status, 200)
+                        self.assertTrue(state.restart_requested)
+                        # call_soon-scheduled — let the loop tick.
+                        await asyncio.sleep(0)
+                        self.assertTrue(state.shutdown_event.is_set())
+                finally:
+                    opd.TOKEN_PATH = orig
+        asyncio.run(_run())
+
+
+@unittest.skipUnless(HAS_AIOHTTP, "aiohttp not installed")
+class RunRestartExecTests(unittest.TestCase):
+    """run() should call _execv(sys.executable, [sys.executable, *sys.argv])
+    after cleanup when state.restart_requested. We pre-bind the port so
+    run()'s single-instance probe accepts it and the rest of the path runs."""
+
+    def test_run_execs_when_restart_requested(self):
+        import argparse as _argparse
+        async def _run():
+            recorded = {}
+
+            def fake_execv(p, argv):
+                recorded["path"] = p
+                recorded["argv"] = list(argv)
+
+            orig_execv = opd._execv
+            opd._execv = fake_execv
+            # Pick a free port by binding+closing — there's a TOCTOU window
+            # but the daemon's own bind() is the real test of single-instance,
+            # not this fixture.
+            import socket
+            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            sock.bind(("127.0.0.1", 0))
+            port = sock.getsockname()[1]
+            sock.close()
+            try:
+                args = _argparse.Namespace(port=port, host="127.0.0.1", no_iterm=True)
+
+                async def trip_restart():
+                    # Wait briefly for run() to bring up the server, then
+                    # request restart.
+                    await asyncio.sleep(0.2)
+                    # Need to find the live state — trip via a side channel:
+                    # run() sets state.restart_requested itself only after
+                    # /restart fires, but for unit testing it's enough to set
+                    # shutdown_event (and the flag) on the state we hand it.
+                    # We can't reach it from out here, so we POST /restart.
+                    import aiohttp
+                    tok = opd.TOKEN_PATH.read_text().strip()
+                    async with aiohttp.ClientSession() as cs:
+                        async with cs.post(
+                            f"http://127.0.0.1:{port}/restart",
+                            headers={"X-Op-Token": tok},
+                            timeout=aiohttp.ClientTimeout(total=2.0),
+                        ) as r:
+                            self.assertEqual(r.status, 200)
+
+                with tempfile.TemporaryDirectory() as td:
+                    orig_token_path = opd.TOKEN_PATH
+                    opd.TOKEN_PATH = Path(td) / "tok"
+                    try:
+                        rc, _ = await asyncio.gather(opd.run(args), trip_restart())
+                        self.assertEqual(rc, 0)
+                        self.assertEqual(recorded["path"], sys.executable)
+                        self.assertEqual(recorded["argv"][0], sys.executable)
+                    finally:
+                        opd.TOKEN_PATH = orig_token_path
+            finally:
+                opd._execv = orig_execv
+
+        asyncio.run(_run())
 
 
 if __name__ == "__main__":
