@@ -29,6 +29,10 @@ export interface HookInstallOptions {
    *  install/uninstall plumbing as the managed-note layer. Default **on**
    *  as of OP-263 (Phase 6 of OP-218). */
   newFileGuard?: boolean;
+  /** OP-269: when true, op-obsidian writes a `statusLine` entry in
+   *  `~/.claude/settings.json` pointing at `~/.claude/statusline-plugin/run`.
+   *  When false, any op-managed statusLine entry is removed. Default true. */
+  usePluginStatusline?: boolean;
 }
 
 export interface HookInstallResult {
@@ -39,6 +43,8 @@ export interface HookInstallResult {
   guardInstalled: string[];
   guardUninstalled: string[];
   guardSkipped: string[];
+  statusLineInstalled: boolean;
+  statusLineRemoved: boolean;
 }
 
 const MARKER = "op-obsidian-session-end";
@@ -57,6 +63,8 @@ export async function installAgentHooks(
   const enforceWorktree = !!options.enforceWorktree;
   const managedNoteGuard = !!options.managedNoteGuard;
   const newFileGuard = !!options.newFileGuard;
+  // Default true per OP-269: "use plugin statusline" on unless explicitly disabled.
+  const usePluginStatusline = options.usePluginStatusline !== false;
   await writeGuardScript(guardScriptPath, {
     enforceWorktree,
     managedNoteGuard,
@@ -111,6 +119,18 @@ export async function installAgentHooks(
     await guardStep("gemini", () => uninstallGeminiPretoolGuard(home));
   }
 
+  let statusLineInstalled = false;
+  let statusLineRemoved = false;
+  try {
+    if (usePluginStatusline) {
+      statusLineInstalled = await installClaudeStatusLine(home);
+    } else {
+      statusLineRemoved = await removeClaudeStatusLine(home);
+    }
+  } catch (err) {
+    console.warn("[op-obsidian] statusLine update skipped:", err);
+  }
+
   return {
     scriptPath,
     installed,
@@ -119,6 +139,8 @@ export async function installAgentHooks(
     guardInstalled,
     guardUninstalled,
     guardSkipped,
+    statusLineInstalled,
+    statusLineRemoved,
   };
 }
 
@@ -396,6 +418,50 @@ async function uninstallGeminiPretoolGuard(home: string): Promise<"installed" | 
     typeof entry?.command === "string" && entry.command.includes(GUARD_MARKER),
   );
   return removed ? "removed" : "noop";
+}
+
+// OP-269: The stable wrapper installed by the statusline-plugin.
+const STATUSLINE_RUN_REL = path.join(".claude", "statusline-plugin", "run");
+// Pattern matching the old version-pinned path written by earlier statusline-config skill versions.
+const STATUSLINE_OLD_PATTERN = /\.claude\/plugins\/cache\/[^/]+\/statusline-plugin\/[^/]+\/bin\/statusline\.js/;
+
+// Install the statusline-plugin run wrapper path into ~/.claude/settings.json.
+// Idempotent: no-op if the command already points at our managed path.
+// Safe: does not overwrite commands that don't look like our managed statusLine.
+// Returns true when the file was changed.
+async function installClaudeStatusLine(home: string): Promise<boolean> {
+  const file = path.join(home, ".claude", "settings.json");
+  const runPath = path.join(home, STATUSLINE_RUN_REL);
+  const json = await readJson(file);
+  const existing = json.statusLine?.command;
+  // Already pointing at our managed path — no-op.
+  if (typeof existing === "string" && existing === runPath) return false;
+  // Points at something else that isn't ours to manage — leave it alone.
+  if (typeof existing === "string" && existing !== "" && !STATUSLINE_OLD_PATTERN.test(existing)) {
+    return false;
+  }
+  // Missing, empty, or old version-pinned path — install/update.
+  json.statusLine = { type: "command", command: runPath };
+  await writeJson(file, json);
+  return true;
+}
+
+// Remove the op-managed statusLine entry from ~/.claude/settings.json.
+// Only removes entries that point at our managed run wrapper; does not touch
+// custom user-provided statusLine commands. Returns true when the file changed.
+async function removeClaudeStatusLine(home: string): Promise<boolean> {
+  const file = path.join(home, ".claude", "settings.json");
+  const runPath = path.join(home, STATUSLINE_RUN_REL);
+  let json: any;
+  try {
+    json = await readJson(file);
+  } catch {
+    return false;
+  }
+  if (json?.statusLine?.command !== runPath) return false;
+  delete json.statusLine;
+  await writeJson(file, json);
+  return true;
 }
 
 // Upsert a { matcher, hooks:[{type:"command",command}] } block into

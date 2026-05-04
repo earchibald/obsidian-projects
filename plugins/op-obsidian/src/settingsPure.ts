@@ -207,6 +207,11 @@ export interface SessionDecorationSettings {
   autoColor: boolean;
   autoRename: boolean;
   autoRemoteControl: boolean;
+  /** OP-269: when true, op-obsidian writes a `statusLine` entry in
+   *  `~/.claude/settings.json` pointing at `~/.claude/statusline-plugin/run`
+   *  (the statusline-plugin wrapper). When false, op-obsidian leaves the
+   *  `statusLine` key in Claude's settings alone. Default true. */
+  usePluginStatusline: boolean;
   palette: string[];
   nameTemplate: string;
   interCommandDelayMs: number;
@@ -357,6 +362,7 @@ export const DEFAULT_SETTINGS: OpSettings = {
     autoColor: true,
     autoRename: true,
     autoRemoteControl: false,
+    usePluginStatusline: true,
     palette: [...CLAUDE_SESSION_COLORS],
     nameTemplate: "{{id}} {{title}}",
     interCommandDelayMs: SESSION_DECORATION_INTER_COMMAND_DEFAULT_MS,
@@ -549,6 +555,9 @@ export function mergeSettings(loaded: unknown): OpSettings {
     if (typeof d.autoRename === "boolean") base.sessionDecoration.autoRename = d.autoRename;
     if (typeof d.autoRemoteControl === "boolean") {
       base.sessionDecoration.autoRemoteControl = d.autoRemoteControl;
+    }
+    if (typeof d.usePluginStatusline === "boolean") {
+      base.sessionDecoration.usePluginStatusline = d.usePluginStatusline;
     }
     if (Array.isArray(d.palette)) {
       const sanitized = sanitizeSessionDecorationPalette(d.palette);

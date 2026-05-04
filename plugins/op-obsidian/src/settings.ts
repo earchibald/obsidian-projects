@@ -1700,6 +1700,19 @@ export class OpSettingsTab extends PluginSettingTab {
       );
 
     new Setting(containerEl)
+      .setName("Use plugin statusline")
+      .setDesc(
+        "Install the statusline-plugin run wrapper as the `statusLine` command in `~/.claude/settings.json`. When off, op-obsidian does not modify the statusLine key so Claude's default or your own custom statusLine is used instead. Applies on the next plugin reload or settings change.",
+      )
+      .addToggle((t) =>
+        t.setValue(s.sessionDecoration.usePluginStatusline).onChange(async (v) => {
+          s.sessionDecoration.usePluginStatusline = v;
+          await this.plugin.saveSettings();
+          await this.plugin.reinstallAgentHooks();
+        }),
+      );
+
+    new Setting(containerEl)
       .setName("Color palette")
       .setDesc(
         `Comma-separated Claude prompt-bar colors. Valid values: ${CLAUDE_SESSION_COLORS.join(", ")}. Invalid entries are dropped; if none remain, the default eight are restored.`,

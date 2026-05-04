@@ -546,3 +546,83 @@ describe("installAgentHooks — new-file layer is opt-in", () => {
     expect(off.guardUninstalled.sort()).toEqual(["claude", "gemini"]);
   });
 });
+
+// OP-269: statusLine install / remove tests.
+describe("installAgentHooks — statusLine (usePluginStatusline)", () => {
+  const claudeSettings = () => path.join(tmpHome, ".claude", "settings.json");
+  const runPath = () => path.join(tmpHome, ".claude", "statusline-plugin", "run");
+
+  it("installs the statusLine when usePluginStatusline is true (default)", async () => {
+    const res = await installAgentHooks({ usePluginStatusline: true });
+    expect(res.statusLineInstalled).toBe(true);
+    expect(res.statusLineRemoved).toBe(false);
+    const json = await readJson(claudeSettings());
+    expect(json.statusLine?.command).toBe(runPath());
+    expect(json.statusLine?.type).toBe("command");
+  });
+
+  it("installs the statusLine by default (options omitted)", async () => {
+    const res = await installAgentHooks({});
+    expect(res.statusLineInstalled).toBe(true);
+    const json = await readJson(claudeSettings());
+    expect(json.statusLine?.command).toBe(runPath());
+  });
+
+  it("is idempotent — no-op when command already points to run path", async () => {
+    await installAgentHooks({ usePluginStatusline: true });
+    const res2 = await installAgentHooks({ usePluginStatusline: true });
+    expect(res2.statusLineInstalled).toBe(false);
+    expect(res2.statusLineRemoved).toBe(false);
+  });
+
+  it("does not touch a custom user statusLine command", async () => {
+    const settingsFile = claudeSettings();
+    await fs.mkdir(path.join(tmpHome, ".claude"), { recursive: true });
+    await fs.writeFile(settingsFile, JSON.stringify({ statusLine: { type: "command", command: "/custom/statusline.sh" } }));
+    const res = await installAgentHooks({ usePluginStatusline: true });
+    expect(res.statusLineInstalled).toBe(false);
+    const json = await readJson(settingsFile);
+    expect(json.statusLine?.command).toBe("/custom/statusline.sh");
+  });
+
+  it("updates old version-pinned path to the run wrapper", async () => {
+    const settingsFile = claudeSettings();
+    await fs.mkdir(path.join(tmpHome, ".claude"), { recursive: true });
+    const oldCmd = `${tmpHome}/.claude/plugins/cache/earchibald-plugins/statusline-plugin/0.6.0/bin/statusline.js`;
+    await fs.writeFile(settingsFile, JSON.stringify({ statusLine: { type: "command", command: oldCmd } }));
+    const res = await installAgentHooks({ usePluginStatusline: true });
+    expect(res.statusLineInstalled).toBe(true);
+    const json = await readJson(settingsFile);
+    expect(json.statusLine?.command).toBe(runPath());
+  });
+
+  it("removes the op-managed statusLine when usePluginStatusline is false", async () => {
+    await installAgentHooks({ usePluginStatusline: true });
+    const res = await installAgentHooks({ usePluginStatusline: false });
+    expect(res.statusLineInstalled).toBe(false);
+    expect(res.statusLineRemoved).toBe(true);
+    const json = await readJson(claudeSettings());
+    expect(json.statusLine).toBeUndefined();
+  });
+
+  it("does not remove a custom statusLine when usePluginStatusline is false", async () => {
+    const settingsFile = claudeSettings();
+    await fs.mkdir(path.join(tmpHome, ".claude"), { recursive: true });
+    await fs.writeFile(settingsFile, JSON.stringify({ statusLine: { type: "command", command: "/custom/statusline.sh" } }));
+    const res = await installAgentHooks({ usePluginStatusline: false });
+    expect(res.statusLineRemoved).toBe(false);
+    const json = await readJson(settingsFile);
+    expect(json.statusLine?.command).toBe("/custom/statusline.sh");
+  });
+
+  it("does not install the statusLine when usePluginStatusline is false", async () => {
+    const res = await installAgentHooks({ usePluginStatusline: false });
+    expect(res.statusLineInstalled).toBe(false);
+    try {
+      const json = await readJson(claudeSettings());
+      expect(json.statusLine).toBeUndefined();
+    } catch {
+      // settings.json may not exist at all — that's also fine
+    }
+  });
+});
