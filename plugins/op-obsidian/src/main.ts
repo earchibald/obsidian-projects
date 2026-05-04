@@ -5550,6 +5550,7 @@ export default class OpPlugin extends Plugin {
         enforceWorktree: this.settings.agents.enforceWorktree,
         managedNoteGuard: this.settings.agentDiscipline.managedNoteGuard,
         newFileGuard: this.settings.agentDiscipline.newFileGuard,
+        usePluginStatusline: this.settings.sessionDecoration.usePluginStatusline,
       });
       if (announce) {
         const summary = res.installed.length
