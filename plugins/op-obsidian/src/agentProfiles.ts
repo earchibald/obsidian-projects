@@ -1,8 +1,8 @@
 import { renderTemplate } from "./renderTemplate";
 
-export type AgentId = "claude" | "gemini" | "copilot";
+export type AgentId = "claude" | "claude-ds" | "gemini" | "copilot";
 
-export const AGENT_IDS: AgentId[] = ["claude", "gemini", "copilot"];
+export const AGENT_IDS: AgentId[] = ["claude", "claude-ds", "gemini", "copilot"];
 
 export function asAgentId(value: string | null | undefined): AgentId | undefined {
   return typeof value === "string" && AGENT_IDS.includes(value as AgentId)
@@ -217,6 +217,32 @@ export const BASE_PROFILES: Readonly<Record<AgentId, AgentProfile>> = Object.fre
     id: "claude",
     label: "Claude Code",
     binary: "claude",
+    launchFlags: ["--permission-mode", "auto"],
+    evaluateLaunchFlags: [...CLAUDE_EVALUATE_LAUNCH_FLAGS],
+    planLaunchFlags: [...CLAUDE_PLAN_LAUNCH_FLAGS],
+    reviewLaunchFlags: [...CLAUDE_REVIEW_LAUNCH_FLAGS],
+    finalizeLaunchFlags: [...CLAUDE_FINALIZE_LAUNCH_FLAGS],
+    promptPreamble: DEFAULT_PREAMBLE,
+    evaluatePromptPreamble: DEFAULT_EVALUATE_PREAMBLE,
+    planPromptPreamble: DEFAULT_PLAN_PREAMBLE,
+    reviewPromptPreamble: DEFAULT_REVIEW_PREAMBLE,
+    finalizePromptPreamble: DEFAULT_FINALIZE_PREAMBLE,
+    postLaunchCommands: ["/color {{color}}", "/rename {{name}}"],
+    evaluatePostLaunchCommands: ["/color {{color}}", "/rename {{name}}"],
+    planPostLaunchCommands: ["/color {{color}}", "/rename {{name}}"],
+    reviewPostLaunchCommands: ["/color {{color}}", "/rename {{name}}"],
+    finalizePostLaunchCommands: ["/color {{color}}", "/rename {{name}}"],
+    postLaunchReadinessRegex: "\\?\\s+for\\s+shortcuts",
+    skillTrigger: "/op:issue {{id}}",
+  },
+  // 100% transparent wrapper for `claude` — same flags, prompts, hooks, and
+  // post-launch commands; only the binary name differs. Listed as a separate
+  // AgentId so `claude-ds` shows up in agent detection and the picker without
+  // forcing users to edit the `claude` profile's `binary` overlay manually.
+  "claude-ds": {
+    id: "claude-ds",
+    label: "Claude Code (claude-ds)",
+    binary: "claude-ds",
     launchFlags: ["--permission-mode", "auto"],
     evaluateLaunchFlags: [...CLAUDE_EVALUATE_LAUNCH_FLAGS],
     planLaunchFlags: [...CLAUDE_PLAN_LAUNCH_FLAGS],
