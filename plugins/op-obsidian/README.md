@@ -84,7 +84,7 @@ Found at `Settings → Community plugins → Obsidian Projects (op)`.
 - **Default agent** — which agent (`claude`, `codex`, `gemini`, `aider`, …) `op: open agent for issue` launches.
 - **Always prompt for agent** — force the picker every time.
 - **Detection** — summary of which agent binaries were found on `PATH`. Click **Re-probe** after installing a new agent.
-- **Profile overlays** — per-agent JSON overlay merged over the built-in profile. Keys: `binary`, `launchFlags` (string[]), `promptPreamble`, `skillTrigger`, `label`. To use `claude-ds` (a 100% transparent wrapper for `claude`), set the `claude` profile's `binary` to `claude-ds` — every flag, prompt, and hook the `claude` profile ships with passes through unchanged.
+- **Profile overlays** — per-agent JSON overlay merged over the built-in profile. Keys: `binary`, `launchFlags` (string[]), `promptPreamble`, `skillTrigger`, `label`. The plugin ships a built-in `claude-ds` agent (the DeepSeek-backed transparent wrapper for `claude`) as a first-class sibling of `claude`, so you no longer need an overlay to use it — pick it in the agent picker or set it as your default. Overlays are still useful for custom binary paths (e.g. `{"binary":"/opt/homebrew/bin/claude"}`) or per-agent prompt tweaks.
 
 ### Injection
 

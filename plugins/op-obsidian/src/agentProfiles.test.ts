@@ -239,15 +239,46 @@ describe("BASE_PROFILES sanity", () => {
       expect(p.finalizePromptPreamble.length).toBeGreaterThan(0);
     }
   });
-  it("only claude ships custom-agent launch flags out of the box", () => {
+  it("the claude family ships custom-agent launch flags out of the box", () => {
     expect(BASE_PROFILES.claude.evaluateLaunchFlags.length).toBeGreaterThan(0);
+    expect(BASE_PROFILES["claude-ds"].evaluateLaunchFlags.length).toBeGreaterThan(0);
     expect(BASE_PROFILES.gemini.evaluateLaunchFlags).toEqual([]);
     expect(BASE_PROFILES.copilot.evaluateLaunchFlags).toEqual(["--autopilot", "--allow-all"]);
   });
-  it("claude and copilot ship post-launch commands out of the box", () => {
+  it("claude / claude-ds / copilot ship post-launch commands out of the box", () => {
     expect(BASE_PROFILES.claude.postLaunchCommands.length).toBeGreaterThan(0);
+    expect(BASE_PROFILES["claude-ds"].postLaunchCommands).toEqual(BASE_PROFILES.claude.postLaunchCommands);
     expect(BASE_PROFILES.gemini.postLaunchCommands).toEqual([]);
     expect(BASE_PROFILES.copilot.postLaunchCommands).toEqual(["/rename {{id}} {{title}}"]);
     expect(BASE_PROFILES.copilot.postLaunchReadinessRegex).toBe("/ commands\\s+·\\s+\\? help");
+  });
+});
+
+describe("BASE_PROFILES['claude-ds']", () => {
+  const claude = BASE_PROFILES.claude;
+  const claudeDs = BASE_PROFILES["claude-ds"];
+
+  it("is registered as its own agent id and binary", () => {
+    expect(claudeDs.id).toBe("claude-ds");
+    expect(claudeDs.binary).toBe("claude-ds");
+    expect(claudeDs.label).not.toBe(claude.label);
+    expect(AGENT_IDS).toContain("claude-ds");
+    expect(asAgentId("claude-ds")).toBe("claude-ds");
+  });
+
+  it("inherits every behaviour-bearing field from the claude profile", () => {
+    expect(claudeDs.launchFlags).toEqual(claude.launchFlags);
+    expect(claudeDs.evaluateLaunchFlags).toEqual(claude.evaluateLaunchFlags);
+    expect(claudeDs.planLaunchFlags).toEqual(claude.planLaunchFlags);
+    expect(claudeDs.reviewLaunchFlags).toEqual(claude.reviewLaunchFlags);
+    expect(claudeDs.finalizeLaunchFlags).toEqual(claude.finalizeLaunchFlags);
+    expect(claudeDs.promptPreamble).toBe(claude.promptPreamble);
+    expect(claudeDs.evaluatePromptPreamble).toBe(claude.evaluatePromptPreamble);
+    expect(claudeDs.planPromptPreamble).toBe(claude.planPromptPreamble);
+    expect(claudeDs.reviewPromptPreamble).toBe(claude.reviewPromptPreamble);
+    expect(claudeDs.finalizePromptPreamble).toBe(claude.finalizePromptPreamble);
+    expect(claudeDs.postLaunchCommands).toEqual(claude.postLaunchCommands);
+    expect(claudeDs.postLaunchReadinessRegex).toBe(claude.postLaunchReadinessRegex);
+    expect(claudeDs.skillTrigger).toBe(claude.skillTrigger);
   });
 });

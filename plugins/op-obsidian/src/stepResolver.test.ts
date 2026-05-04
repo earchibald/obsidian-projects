@@ -12,6 +12,11 @@ import type { WorkflowFile, WorkflowStep } from "./workflowFilePure";
 function detection(installed: Partial<Record<AgentId, boolean>>): DetectionMap {
   return {
     claude: { id: "claude", installed: installed.claude ?? false, binary: "claude" },
+    "claude-ds": {
+      id: "claude-ds",
+      installed: installed["claude-ds"] ?? false,
+      binary: "claude-ds",
+    },
     gemini: { id: "gemini", installed: installed.gemini ?? false, binary: "gemini" },
     copilot: { id: "copilot", installed: installed.copilot ?? false, binary: "copilot" },
   };
