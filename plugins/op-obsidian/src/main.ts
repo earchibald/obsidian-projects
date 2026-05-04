@@ -421,8 +421,9 @@ export default class OpPlugin extends Plugin {
     // configured). Agent-owned issues (`entry.agent` non-empty) are skipped
     // so the agent's own lifecycle isn't preempted. Re-entrancy is blocked
     // by `inFlightResolvePaths` (belt) and the prev-vs-next terminal guard
-    // inside `shouldAutoResolve` (suspenders) — `runResolve` writes
-    // frontmatter before renaming, which fires `issue:status-changed` again.
+    // inside `shouldAutoResolve` (suspenders) — `runResolve` renames first
+    // then writes frontmatter (OP-221 order), each of which fires
+    // `issue:status-changed`; both events are short-circuited by the guards.
     this.bus.on("issue:status-changed", (ev) => {
       const args = shouldAutoResolve(ev, this.inFlightResolvePaths);
       if (!args) {
@@ -3288,8 +3289,8 @@ export default class OpPlugin extends Plugin {
   /**
    * Call {@link runResolve} while tracking the issue's vault path in
    * {@link inFlightResolvePaths}. The `issue:status-changed` auto-mover
-   * consults that set to skip the re-entrant event `runResolve` emits when it
-   * writes `status`/`resolved` frontmatter before renaming.
+   * consults that set to skip the re-entrant events `runResolve` emits when it
+   * renames the file and then writes frontmatter (OP-221 order).
    *
    * Best-effort path resolution: we try to resolve args to a vault path up
    * front so we can register it before any frontmatter write. If we can't

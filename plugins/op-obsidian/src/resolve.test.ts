@@ -80,8 +80,11 @@ function makeFakes(entry: IssueEntry, fmInitial: Record<string, unknown>) {
       ) => {
         cb(fm);
       },
-      renameFile: async (_f: unknown, target: string) => {
+      renameFile: async (f: any, target: string) => {
         recorded.renamedTo = target;
+        // Mimic real Obsidian: TFile.path updates to the target path after rename.
+        f.path = target;
+        f.name = target.split("/").pop() ?? target;
       },
     },
   };

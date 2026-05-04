@@ -49,11 +49,17 @@ export async function healFrontmatter(app: App): Promise<HealResult> {
   }
 
   for (const file of candidates) {
-    const loc = classify(file.path);
-    if (!loc) continue;
     try {
       let appliedRules: string[] = [];
       await app.fileManager.processFrontMatter(file, (fm) => {
+        // OP-270: re-classify at write time. `file.path` is updated by Obsidian
+        // whenever the TFile is renamed — a concurrent `runResolve` can move the
+        // file to RESOLVED ISSUES/ between this loop iteration's await boundary
+        // and the moment the processFrontMatter lock is acquired. Using a `loc`
+        // captured before the await would carry a stale `resolvedFolder: false`,
+        // causing the `staleTerminal` rule to reset `status` back to `"open"`.
+        const loc = classify(file.path);
+        if (!loc) return;
         appliedRules = applyRules(fm, file, loc);
       });
       if (appliedRules.length > 0) {

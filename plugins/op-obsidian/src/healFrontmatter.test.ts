@@ -283,6 +283,41 @@ describe("healFrontmatter", () => {
     });
   });
 
+  describe("OP-270: stale loc after concurrent rename", () => {
+    it("does not apply staleTerminal when file was moved to RESOLVED ISSUES mid-pass", async () => {
+      // Scenario: healFrontmatter captures a candidate at ISSUES/OP-270.md, then
+      // a concurrent runResolve:
+      //   1. renames the file → RESOLVED ISSUES/OP-270 resolved.md
+      //   2. writes fm.status = "resolved"
+      // By the time healFrontmatter's processFrontMatter lock is acquired, file.path
+      // is already the target path. The staleTerminal rule must NOT fire.
+      const tf = Object.assign(
+        new FakeTFile("Projects/p/ISSUES/OP-270 test.md"),
+        { stat: { mtime: 0, ctime: 0 }, fm: { ...FULL_ISSUE_FM, status: "in-progress" } },
+      );
+
+      const app = {
+        vault: {
+          getMarkdownFiles: () => [tf],
+        },
+        fileManager: {
+          processFrontMatter: async (file: any, fn: (fm: Record<string, any>) => void) => {
+            // Simulate: rename completed (and runResolve wrote status) before
+            // the heal callback acquires the lock.
+            file.path = "Projects/p/RESOLVED ISSUES/OP-270 test resolved.md";
+            file.fm.status = "resolved";
+            fn(file.fm);
+          },
+        },
+      } as any;
+
+      const res = await healFrontmatter(app);
+      expect(tf.fm.status).toBe("resolved");
+      const rules = res.fixed[0]?.rules ?? [];
+      expect(rules).not.toContain("issue.status.staleTerminal");
+    });
+  });
+
   describe("error handling", () => {
     it("captures errors per-file without aborting the pass", async () => {
       const ok: FakeFile = { path: "Projects/p/ISSUES/OP-1.md", fm: {} };
