@@ -120,6 +120,7 @@ The repository recognizes `claude`, `gemini`, and `copilot`, but support is not 
 | Runtime | Status | Notes |
 | --- | --- | --- |
 | Claude Code | Primary | The main supported runtime for the skill, plugin smoke tests, and orchestration flow |
+| `claude-ds` | Primary | 100% transparent wrapper for `claude` — point the `claude` profile at it via the per-agent `binary` overlay (`{"binary":"claude-ds"}`) in Settings → Agents. Same flags, prompts, hooks |
 | Gemini CLI | Experimental | Dispatch code exists, but the workflow is not exercised in normal development |
 | Copilot CLI | Experimental | Dispatch code exists, but worktree enforcement hooks are not available and the runtime is not part of the normal smoke path |
 
