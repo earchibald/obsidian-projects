@@ -115,12 +115,12 @@ If you are starting from an older loose `.claude/commands/` setup, see [Migratio
 
 ## Supported runtimes
 
-The repository recognizes `claude`, `gemini`, and `copilot`, but support is not equal.
+The repository recognizes `claude`, `claude-ds`, `gemini`, and `copilot`, but support is not equal.
 
 | Runtime | Status | Notes |
 | --- | --- | --- |
 | Claude Code | Primary | The main supported runtime for the skill, plugin smoke tests, and orchestration flow |
-| `claude-ds` | Primary | 100% transparent wrapper for `claude` — point the `claude` profile at it via the per-agent `binary` overlay (`{"binary":"claude-ds"}`) in Settings → Agents. Same flags, prompts, hooks |
+| `claude-ds` | Primary | First-class sibling of `claude`. Built-in agent profile that inherits every flag, prompt, and hook from the `claude` profile but invokes the `claude-ds` binary (a transparent wrapper that points Claude Code at a DeepSeek-served backend). Pick it independently in the agent picker / launch modal / per-issue `agent:` field |
 | Gemini CLI | Experimental | Dispatch code exists, but the workflow is not exercised in normal development |
 | Copilot CLI | Experimental | Dispatch code exists, but worktree enforcement hooks are not available and the runtime is not part of the normal smoke path |
 
