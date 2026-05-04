@@ -252,22 +252,26 @@ function extractModelRegistry(src) {
   const block = sliceBalanced(src, startIdx - 1, "{", "}");
 
   // Per-agent records: <agent>: { aliases: { ... }, versioned: SET_NAME, },
+  // The agent key may be a bare identifier (`claude`) or a quoted string
+  // when the id contains characters TypeScript can't use unquoted, e.g.
+  // hyphens (`"claude-ds"`).
   const agents = [];
   const agentRe =
-    /(?<agent>\w+)\s*:\s*\{\s*aliases\s*:\s*\{(?<aliases>[^{}]*)\}\s*,\s*versioned\s*:\s*(?<setName>\w+)\s*,?\s*\}/g;
+    /(?:"(?<quotedAgent>[\w-]+)"|(?<bareAgent>\w+))\s*:\s*\{\s*aliases\s*:\s*\{(?<aliases>[^{}]*)\}\s*,\s*versioned\s*:\s*(?<setName>\w+)\s*,?\s*\}/g;
 
   let m;
   while ((m = agentRe.exec(block)) !== null) {
-    const aliasMap = parseAliasMap(m.groups.aliases, m.groups.agent);
+    const agent = m.groups.quotedAgent ?? m.groups.bareAgent;
+    const aliasMap = parseAliasMap(m.groups.aliases, agent);
     const versioned = versionedSets[m.groups.setName];
     if (!versioned) {
       fail(
-        `${rel(MODEL_REGISTRY_PATH)}: agent \`${m.groups.agent}\` references versioned set \`${m.groups.setName}\` ` +
+        `${rel(MODEL_REGISTRY_PATH)}: agent \`${agent}\` references versioned set \`${m.groups.setName}\` ` +
           `but no top-level \`const ${m.groups.setName} = new Set<string>([ … ])\` was found.`,
       );
     }
     agents.push({
-      agent: m.groups.agent,
+      agent,
       aliases: aliasMap,
       versioned,
     });
