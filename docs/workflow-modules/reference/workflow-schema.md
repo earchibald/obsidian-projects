@@ -82,6 +82,7 @@ node scripts/check-workflow-docs.mjs
 | Agent | Aliases (alias → canonical) | Versioned ids |
 | :--- | :--- | :--- |
 | `claude` | `opus` → `claude-opus-4-7`<br>`sonnet` → `claude-sonnet-4-6`<br>`haiku` → `claude-haiku-4-5-20251001` | `claude-opus-4-7`<br>`claude-opus-4-6`<br>`claude-opus-4-5`<br>`claude-sonnet-4-6`<br>`claude-sonnet-4-5`<br>`claude-haiku-4-5`<br>`claude-haiku-4-5-20251001` |
+| `claude-ds` | `opus` → `claude-opus-4-7`<br>`sonnet` → `claude-sonnet-4-6`<br>`haiku` → `claude-haiku-4-5-20251001` | `claude-opus-4-7`<br>`claude-opus-4-6`<br>`claude-opus-4-5`<br>`claude-sonnet-4-6`<br>`claude-sonnet-4-5`<br>`claude-haiku-4-5`<br>`claude-haiku-4-5-20251001` |
 | `gemini` | `pro` → `gemini-2.5-pro`<br>`flash` → `gemini-2.5-flash` | `gemini-2.5-pro`<br>`gemini-2.5-flash`<br>`gemini-2.0-pro`<br>`gemini-2.0-flash` |
 | `copilot` | `default` → `gpt-5` | `gpt-5`<br>`gpt-4.1` |
 <!-- /AUTO-GENERATED:model-registry-table -->

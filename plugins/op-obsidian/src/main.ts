@@ -5875,6 +5875,8 @@ function defaultBinaryFor(id: AgentId): string {
   switch (id) {
     case "claude":
       return "claude";
+    case "claude-ds":
+      return "claude-ds";
     case "gemini":
       return "gemini";
     case "copilot":

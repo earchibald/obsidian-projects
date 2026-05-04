@@ -111,6 +111,15 @@ export const MODEL_REGISTRY: Record<string, AgentModelRegistry> = {
     },
     versioned: CLAUDE_VERSIONED,
   },
+  // 100% transparent wrapper for `claude` — same model surface.
+  "claude-ds": {
+    aliases: {
+      opus: "claude-opus-4-7",
+      sonnet: "claude-sonnet-4-6",
+      haiku: "claude-haiku-4-5-20251001",
+    },
+    versioned: CLAUDE_VERSIONED,
+  },
   gemini: {
     aliases: {
       pro: "gemini-2.5-pro",

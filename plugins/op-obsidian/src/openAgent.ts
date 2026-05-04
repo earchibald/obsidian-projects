@@ -670,7 +670,7 @@ function withModelFlag(
   agentId: AgentId,
   model: string | undefined,
 ): string[] {
-  if (!model || agentId !== "claude") return launchFlags;
+  if (!model || (agentId !== "claude" && agentId !== "claude-ds")) return launchFlags;
   return [...launchFlags, "--model", model];
 }
 
