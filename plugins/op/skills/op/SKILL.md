@@ -27,7 +27,7 @@ This is a **stub**. The canonical operating manual lives **inside** the `op-obsi
 Once the plugin is confirmed enabled, fetch the operating manual:
 
 ```bash
-obsidian op-get-skill            # writes the body to Projects/_scratch/op-last-response.md
+obsidian vault=<name> op-get-skill   # writes the body to Projects/_scratch/op-last-response.md
 ```
 
 Read the `content` field from that JSON payload (or pass `name=skill` explicitly — currently the only recognized name; case-insensitive). The body covers: the full `op-*` command surface (`scaffold`, `new`, `work`, `append-commit`, `set-pr`, `set-scope`, `resolve`, plus the workflow-modules verbs: `edit-workflow`, `edit-module`, `explain-workflow`, `list-vars`, `export-module`, `import-module`, `undo-last-import`), each verb's lifecycle rules (Plan/Notes/Summary/Tasks reconciliation, GitHub issue mirroring, `commits:` back-fill, semver bumping, `obsidian://` link rendering), the workflow-modules system that composes per-step injection at agent launch (governed by the `workflowMode` setting), and the cross-project surfaces (`all-projects.base`, DOCS folder layout).
