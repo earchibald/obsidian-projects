@@ -105,13 +105,16 @@ export function buildDemoStatusBody(): string {
   ].join("\n");
 }
 
-/** Frontmatter for the demo STATUS.md note. */
-export function demoStatusFrontmatter(): string {
+/** Frontmatter for the demo STATUS.md note. OP-265: `vault:` records the
+ *  active vault name at scaffold time so launched agents can derive the
+ *  `vault=<name>` CLI selector from STATUS.md without re-probing. */
+export function demoStatusFrontmatter(vault: string): string {
   return [
     "---",
     "project: " + DEMO_PROJECT_SLUG,
     "type: project-status",
     "prefix: " + DEMO_PROJECT_PREFIX,
+    "vault: " + vault,
     "tags:",
     "  - project/" + DEMO_PROJECT_SLUG,
     "  - status",
@@ -281,7 +284,7 @@ export async function scaffoldDemoProject(app: App): Promise<{
   const issuesDir = `${DEMO_PROJECT_FOLDER}/ISSUES`;
   await ensureFolder(app, DEMO_PROJECT_FOLDER);
   await ensureFolder(app, issuesDir);
-  await app.vault.create(statusPath, demoStatusFrontmatter() + buildDemoStatusBody());
+  await app.vault.create(statusPath, demoStatusFrontmatter(app.vault.getName()) + buildDemoStatusBody());
   await app.vault.create(`${DEMO_PROJECT_FOLDER}/${DEMO_PROJECT_SLUG}.base`, demoBaseBody());
   for (const seed of DEMO_ISSUES) {
     const filename = `${DEMO_PROJECT_PREFIX}-${seed.number} ${seed.title}.md`;
