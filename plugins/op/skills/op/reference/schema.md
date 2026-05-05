@@ -147,7 +147,7 @@ The issue ID is `<PREFIX>-<N>`.
 
 **Number N** — scan **both** `ISSUES/` and `RESOLVED ISSUES/` for existing `id` values, find the highest `N`, and increment by 1 for each new issue.
 
-Use `obsidian vault="<vault>" files folder="Projects/<slug>/ISSUES"` and `files folder="Projects/<slug>/RESOLVED ISSUES"` to enumerate. The filename prefix (`<PREFIX>-<N>`) reveals the id directly; fall back to `property:read name=id file=<name>` if needed.
+Use `obsidian vault="<vault>" files folder="Projects/<slug>/ISSUES"` and `obsidian vault="<vault>" files folder="Projects/<slug>/RESOLVED ISSUES"` to enumerate. The filename prefix (`<PREFIX>-<N>`) reveals the id directly; fall back to `obsidian vault="<vault>" property:read name=id path="<vault-relative-path>"` if needed.
 
 ---
 
