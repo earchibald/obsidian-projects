@@ -13,10 +13,14 @@ This skill manages **vault state and the issue schema** only — folder layout, 
 
 The frontmatter fields `commits:`, `pr:`, `version:`, and `github_issue:` are **optional capabilities** the skill exposes for projects that want them. Whether and when to populate them is project policy. If your project's `CLAUDE.md` says nothing about commit tracking, branching, or release cadence, treat those concerns as out of scope for the skill — do what the project tells you, and if the project says nothing, ask the user rather than inventing a convention.
 
-All vault mutations go through the **`op-obsidian`** plugin. Probe once per session and cache the result:
+All vault mutations go through the **`op-obsidian`** plugin. Probe once per session and cache the result — the very first call is also where you learn which vault you're targeting, so prepend `vault=<name>` to every subsequent invocation:
 
 ```bash
-obsidian eval code='({enabled: app.plugins.enabledPlugins.has("op-obsidian"), version: app.plugins.plugins["op-obsidian"]?.manifest?.version})'
+# Step 1: list registered vaults — the name printed is what you'll pass as vault=<name> below.
+obsidian vault
+
+# Step 2: probe + cache vault name in one shot.
+obsidian vault=<name> eval code='({enabled: app.plugins.enabledPlugins.has("op-obsidian"), version: app.plugins.plugins["op-obsidian"]?.manifest?.version, vault: app.vault.getName()})'
 ```
 
 If the plugin is missing or disabled, **stop and ask the user to install/enable it** rather than improvising with raw `obsidian` CLI primitives — the plugin owns filename sanitization, ID numbering, frontmatter shape, atomic move-and-trash on resolve, and the JSON response payload. For emergencies where the user can't enable it, the op skill's `reference/cli-gotchas.md` documents the raw-CLI fallbacks (including the read-append-rewrite recipe for appending to `commits:` without `op-append-commit`).
@@ -38,7 +42,9 @@ If you find yourself reaching for `obsidian eval code='app.vault.modify(...)'` b
 
 Run `obsidian vault` once to learn the active vault name and path; cache both.
 
-**Target the vault explicitly on every CLI call.** The `obsidian` CLI accepts a top-level `vault=<name>` argument that routes the command at that named vault regardless of which Obsidian window is currently focused — e.g. `obsidian vault=Agent-Vault eval code='app.vault.getName()'`. Use it. Without it, the CLI binds to whichever vault happens to be the active window at that moment, which is a race when more than one agent (or the user) can switch focus between calls. The form is `vault=<name>` (key=value), **not** `--vault <name>`; `obsidian help` documents it as the only top-level option. See the op skill's `reference/cli-gotchas.md` for the canonical worked example.
+**Target the vault explicitly on every CLI call.** The `obsidian` CLI accepts a top-level `vault=<name>` argument that routes the command at that named vault regardless of which Obsidian window is currently focused — e.g. `obsidian vault=Agent-Vault eval code='app.vault.getName()'`. Use it on **every** invocation in this skill — including `op-*` commands, `eval`, `read`, `property:read` / `property:set` / `property:remove`, `move`, `create`, `delete`, `executeCommandById`, and `plugin:reload`. Without it, the CLI binds to whichever vault happens to be the active window at that moment, which is a race when more than one agent (or the user) can switch focus between calls — and a real failure mode: `op-append-commit issue=PRC-2` returning "Issue not found" because the wrong vault was foregrounded is exactly the symptom this rule prevents. The form is `vault=<name>` (key=value), **not** `--vault <name>`; `obsidian help` documents it as the only top-level option. See the op skill's `reference/cli-gotchas.md` for the canonical worked example.
+
+**Where to source the name.** First call of the session: `obsidian vault` (no args) lists registered vaults — pick the one your work targets and cache the name. After that, every project's `STATUS.md` (scaffolded post-OP-265) carries a `vault: <name>` frontmatter field recording the vault active at scaffold time, so an agent already pointed at a project file can derive the right selector without re-probing — `obsidian vault=<cached> property:read name=vault path="Projects/<slug>/STATUS.md"`. Treat the cached name as authoritative for the session and pass it on every call below.
 
 ## Link back to the issue note
 
@@ -203,7 +209,7 @@ Both write a JSON payload to `Projects/_scratch/op-last-response.md` and emit a 
 
 1. Validate `slug` (lowercase + hyphens, `Projects/<slug>/` doesn't already exist).
 2. If the project has a code repo, ask the user for its absolute path (e.g. `/Users/you/Projects/<slug>`) and pass it as `repo_path=`. The plugin writes it to `STATUS.md` frontmatter, where `op:open-agent` reads it to set the agent's working directory and skip the working-dir modal. Must be absolute — no `~`, no vault-relative. Skip this prompt for meta-only projects with no repo.
-3. Run `obsidian op-scaffold slug=<slug> prefix=<PREFIX> [repo_path=/abs/path] [title="…"] [priority=med] [scope="bullet 1\nbullet 2"]`.
+3. Run `obsidian vault=<name> op-scaffold slug=<slug> prefix=<PREFIX> [repo_path=/abs/path] [title="…"] [priority=med] [scope="bullet 1\nbullet 2"]`. The plugin records the resolved active vault name into the new `STATUS.md` as `vault:` so subsequent `/op:*` invocations can derive the selector deterministically.
 4. Report `projectFolder`, `basePath`, `statusPath`, and `seedPath` (if any) from the JSON response — and include the `obsidian://` link for `seedPath` if it was created. Suggest `/op:new <slug>` next.
 
 ---
@@ -219,7 +225,7 @@ Both write a JSON payload to `Projects/_scratch/op-last-response.md` and emit a 
    - **Detailed** (> 140 chars, or multi-line regardless of length) → propose title, priority, summary paragraph + checklist; preserve any explicit acceptance criteria verbatim; confirm.
    - **If unsure** (borderline length, ambiguous structure) → treat as detailed and surface the ambiguity in the confirm step rather than guessing silently.
 3. **Always pause for explicit user confirmation before mutating vault or repo** — even in auto mode. Issue creation is a commitment artifact.
-4. Run `obsidian op-new project=<slug> title="<title>" priority=<low|med|high> [scope="bullet 1\nbullet 2"]`. For multi-paragraph scope or scope with code fences/sub-bullets, add `scope_mode=body` so the payload is written verbatim under `## Scope` instead of being wrapped per-line as `- [ ]`. Bullets-mode payloads must not contain `## ` H2s or code fences — the plugin rejects them rather than mangle the body.
+4. Run `obsidian vault=<name> op-new project=<slug> title="<title>" priority=<low|med|high> [scope="bullet 1\nbullet 2"]`. For multi-paragraph scope or scope with code fences/sub-bullets, add `scope_mode=body` so the payload is written verbatim under `## Scope` instead of being wrapped per-line as `- [ ]`. Bullets-mode payloads must not contain `## ` H2s or code fences — the plugin rejects them rather than mangle the body.
 5. Report the new id and path, and include the `obsidian://` link for the new issue note so the user can open it in one click; suggest `/op:issue <PREFIX>-<N>`.
 
 ---
@@ -234,7 +240,7 @@ Accepts `slug N`, `slug PREFIX-N`, `PREFIX N`, `PREFIX-N`, or just `slug`/`PREFI
 
 ### Start
 
-1. `obsidian op-work issue=<PREFIX>-<N> agent=<your-agent-id> [agent_session=<session-id>]`. The `agent` value is your runtime's identity (`claude`, `codex`, `gemini`, `copilot`, …) — pass the literal id, not the model name. Only `claude` is exercised in this repo's dev workflow and tests; `gemini` and `copilot` are second-class scaffolding (the dispatch code accepts them but no part of the workflow has been validated against a live install — see the README's "Supported AI runtimes" section). The `agent_session` value should be a stable per-session identifier from your runtime; for Claude Code use `$CLAUDE_SESSION_ID` (exported in hook environments and via `--env`), and for other runtimes use whatever equivalent your harness exposes. Omit `agent_session=` if no stable id is available.
+1. `obsidian vault=<name> op-work issue=<PREFIX>-<N> agent=<your-agent-id> [agent_session=<session-id>]`. The `agent` value is your runtime's identity (`claude`, `codex`, `gemini`, `copilot`, …) — pass the literal id, not the model name. Only `claude` is exercised in this repo's dev workflow and tests; `gemini` and `copilot` are second-class scaffolding (the dispatch code accepts them but no part of the workflow has been validated against a live install — see the README's "Supported AI runtimes" section). The `agent_session` value should be a stable per-session identifier from your runtime; for Claude Code use `$CLAUDE_SESSION_ID` (exported in hook environments and via `--env`), and for other runtimes use whatever equivalent your harness exposes. Omit `agent_session=` if no stable id is available.
 
    Read the JSON payload at `Projects/_scratch/op-last-response.md` after the call:
    - `registered: true` and no `conflict` → you own the issue, proceed.
@@ -242,11 +248,11 @@ Accepts `slug N`, `slug PREFIX-N`, `PREFIX N`, `PREFIX-N`, or just `slug`/`PREFI
    - `conflict: { agent?, session? }` → another agent (or another session) is already registered. **Stop and ask the user** whether to take over — never pass `force=true` on your own. If they confirm, retry with `force=true`.
 
    Emit a one-line ack with the issue's `obsidian://` link so the user can open the note while you write `## Plan`.
-2. **Check for a project workflow.** When you're launched via `op:open-agent` with `workflowMode: "modules"` (the post-OP-208 default for fresh installs), the kickoff prompt has already been composed from the project's workflow modules — the rules you need are already in your context. Under `workflowMode: "legacy"`, the kickoff prompt inlines the raw `WORKFLOW.md` text up to a configurable cap. Either way, `obsidian op-explain-workflow issue=<PREFIX>-<N> mode=kickoff` (read-only, non-destructive) is the diagnostic surface to dump exactly what was — or would be — injected. To inspect the raw workflow file, `obsidian op-get-workflow project=<slug>` returns `{exists, path, content}`. If the file is absent, the project has no workflow opinion — ask the user when policy ambiguity comes up; the **`op: edit project workflow (WORKFLOW.md)`** palette command (or `obsidian op-edit-workflow project=<slug>`) launches an agent dedicated to authoring/refining it, and `op: edit workflow module` (`obsidian op-edit-module module=<id> scope=<global|project> [project=<slug>]`) does the same for an individual module.
+2. **Check for a project workflow.** When you're launched via `op:open-agent` with `workflowMode: "modules"` (the post-OP-208 default for fresh installs), the kickoff prompt has already been composed from the project's workflow modules — the rules you need are already in your context. Under `workflowMode: "legacy"`, the kickoff prompt inlines the raw `WORKFLOW.md` text up to a configurable cap. Either way, `obsidian vault=<name> op-explain-workflow issue=<PREFIX>-<N> mode=kickoff` (read-only, non-destructive) is the diagnostic surface to dump exactly what was — or would be — injected. To inspect the raw workflow file, `obsidian vault=<name> op-get-workflow project=<slug>` returns `{exists, path, content}`. If the file is absent, the project has no workflow opinion — ask the user when policy ambiguity comes up; the **`op: edit project workflow (WORKFLOW.md)`** palette command (or `obsidian vault=<name> op-edit-workflow project=<slug>`) launches an agent dedicated to authoring/refining it, and `op: edit workflow module` (`obsidian vault=<name> op-edit-module module=<id> scope=<global|project> [project=<slug>]`) does the same for an individual module.
 3. If the body is empty or one line, scope is ambiguous — state your interpretation and confirm before implementing, even in auto mode.
 4. Reconcile scope vs. current repo/vault state — skip items already done; flag drift between the schema and observed reality.
-5. **Write the `## Plan` section now** (approach, key decisions, files to touch, risks) via `obsidian op-set-section issue=<PREFIX>-<N> name=Plan content="…"`. The verb scopes the rewrite to `## Plan` only — frontmatter, `## Scope`, `## Tasks`, `## Notes`, `## Summary`, and any other sections are untouched. Reconcile, don't overwrite: if the section already has user or prior-agent content, read the file first (`obsidian read`) and pass the merged Plan as `content=` rather than blowing existing prose away. Replace the italic placeholder if still present.
-6. The plugin creates the first TASKS note for you. For additional logical subtasks, create more TASKS notes (`obsidian create` is fine for these auxiliary notes — they're trashed at resolve).
+5. **Write the `## Plan` section now** (approach, key decisions, files to touch, risks) via `obsidian vault=<name> op-set-section issue=<PREFIX>-<N> name=Plan content="…"`. The verb scopes the rewrite to `## Plan` only — frontmatter, `## Scope`, `## Tasks`, `## Notes`, `## Summary`, and any other sections are untouched. Reconcile, don't overwrite: if the section already has user or prior-agent content, read the file first (`obsidian vault=<name> read path="…"`) and pass the merged Plan as `content=` rather than blowing existing prose away. Replace the italic placeholder if still present.
+6. The plugin creates the first TASKS note for you. For additional logical subtasks, create more TASKS notes (`obsidian vault=<name> op-task-create issue=<ID> title="…"` is the right path — `obsidian vault=<name> create` works for raw markdown notes, but TASK notes need the plugin-managed frontmatter and `op_managed: true` flag).
 7. **Mirror every TASK note into a `## Tasks` checklist in the issue body.** After creating the TASK notes (planned upfront, or fix-up tasks discovered mid-session), append a line to the issue body's `## Tasks` section for each one:
 
    ```markdown
@@ -257,7 +263,7 @@ Accepts `slug N`, `slug PREFIX-N`, `PREFIX N`, `PREFIX-N`, or just `slug`/`PREFI
 
    Reconcile rather than overwrite: if the section already exists (prior session, completed task, user-authored entry), preserve existing entries (`- [completed]` / `- [x]`) and append any new tasks not already listed. Mark entries `- [completed]` when the corresponding TASK note flips to `status: completed`. The body checklist is the durable record — TASK notes are trashed at resolve, the issue body isn't.
 
-   When a TASK note flips to `status: completed`, also **append a `### <ISSUE-ID>.<N> — <title>` block under `## Notes`** recording what was done and any deviations from the plan. Use `obsidian op-set-section issue=<ISSUE-ID> name=Notes content="### <ISSUE-ID>.<N> — <title>\n\n…" append=true` — `append=true` extends the section instead of replacing it, which is the racy read-append-rewrite path the verb was built for. Idempotent at the agent level: before appending, check the current Notes section (`obsidian read`); if a block with the same `### <ISSUE-ID>.<N>` heading already exists, call `op-set-section name=Notes content="…"` (no `append=true`) with the merged Notes content to update in place rather than duplicating.
+   When a TASK note flips to `status: completed`, also **append a `### <ISSUE-ID>.<N> — <title>` block under `## Notes`** recording what was done and any deviations from the plan. Use `obsidian vault=<name> op-set-section issue=<ISSUE-ID> name=Notes content="### <ISSUE-ID>.<N> — <title>\n\n…" append=true` — `append=true` extends the section instead of replacing it, which is the racy read-append-rewrite path the verb was built for. Idempotent at the agent level: before appending, check the current Notes section (`obsidian vault=<name> read path="…"`); if a block with the same `### <ISSUE-ID>.<N>` heading already exists, call `obsidian vault=<name> op-set-section issue=<ISSUE-ID> name=Notes content="…"` (no `append=true`) with the merged Notes content to update in place rather than duplicating.
 8. Confirm before any action affecting shared systems (push, release, deploy, external API).
 
 **Reconcile rule for legacy issues.** If the issue body is missing any of `## Plan`, `## Notes`, or `## Summary`, insert the missing sections in canonical order (`Scope → Plan → Tasks → Notes → Summary`) before writing. Never modify user-authored prose in other sections.
@@ -268,10 +274,10 @@ The plugin exposes two capabilities for recording git artifacts on an issue:
 
 ```bash
 # Append a commit ref (idempotent; safe to call repeatedly)
-obsidian op-append-commit issue=<PREFIX>-<N> sha=<sha7> subject=<subject>
+obsidian vault=<name> op-append-commit issue=<PREFIX>-<N> sha=<sha7> subject=<subject>
 
 # Set the PR URL on an issue
-obsidian op-set-pr issue=<PREFIX>-<N> url=<pr-url>
+obsidian vault=<name> op-set-pr issue=<PREFIX>-<N> url=<pr-url>
 ```
 
 **When and whether to call these is project policy** — the project's `CLAUDE.md` decides whether `commits:` is mirrored 1:1 to commits, batch-filled at resolve, or never populated at all; whether PRs are required or skipped; whether commit subjects must reference the issue id. If the project says nothing, ask the user rather than inventing a cadence.
@@ -286,23 +292,23 @@ Canonical relations and call shape:
 
 ```bash
 # X is a child of umbrella Y (many-to-one)
-obsidian op-set-link issue=OP-95 relation=parent target=OP-92
+obsidian vault=<name> op-set-link issue=OP-95 relation=parent target=OP-92
 
 # Equivalent from the umbrella side (same effect — plugin writes both)
-obsidian op-set-link issue=OP-92 relation=children target=OP-95
+obsidian vault=<name> op-set-link issue=OP-92 relation=children target=OP-95
 
 # X blocks on Y (many-to-many)
-obsidian op-set-link issue=OP-X relation=depends_on target=OP-Y
+obsidian vault=<name> op-set-link issue=OP-X relation=depends_on target=OP-Y
 
 # X and Y are related (symmetric)
-obsidian op-set-link issue=OP-X relation=related_to target=OP-Y
+obsidian vault=<name> op-set-link issue=OP-X relation=related_to target=OP-Y
 
 # Remove a link (idempotent)
-obsidian op-remove-link issue=OP-95 relation=parent target=OP-92
+obsidian vault=<name> op-remove-link issue=OP-95 relation=parent target=OP-92
 
 # Audit the entire vault for one-sided drift
-obsidian op-link-check                # report-only
-obsidian op-link-check repair=true    # reconcile drift in place
+obsidian vault=<name> op-link-check                # report-only
+obsidian vault=<name> op-link-check repair=true    # reconcile drift in place
 ```
 
 Resolved-folder issues are valid link targets — a parent→child link must remain valid after the child resolves and moves into `RESOLVED ISSUES/`. The plugin's resolver looks at both folders.
@@ -317,7 +323,7 @@ If the issue has a `github_issue:` frontmatter field, it mirrors a GitHub issue.
 
 `/op:resolve` (or run at the tail of `work`).
 
-1. **Write the `## Summary` section** in the issue body (shipped behavior, PR link, `<sha7> <subject>` commits, follow-ups) via `obsidian op-set-section issue=<PREFIX>-<N> name=Summary content="…"` before the confirmation pause. The verb only touches `## Summary`, leaving frontmatter and every other section untouched. Show its diff in the resolution preview. Replace the italic placeholder if still present; reconcile with any existing prose rather than overwriting.
+1. **Write the `## Summary` section** in the issue body (shipped behavior, PR link, `<sha7> <subject>` commits, follow-ups) via `obsidian vault=<name> op-set-section issue=<PREFIX>-<N> name=Summary content="…"` before the confirmation pause. The verb only touches `## Summary`, leaving frontmatter and every other section untouched. Show its diff in the resolution preview. Replace the italic placeholder if still present; reconcile with any existing prose rather than overwriting.
 2. **Always pause for explicit user confirmation before mutating vault or repo** — even in auto mode. Show the planned transition:
    - Source → target: `Projects/<slug>/ISSUES/<filename>` → `…/RESOLVED ISSUES/<filename>` — include the issue's current `obsidian://` link so the user can click through and verify before approving
 
@@ -328,7 +334,7 @@ If the issue has a `github_issue:` frontmatter field, it mirrors a GitHub issue.
    - GitHub issue: if `github_issue:` is set and `closeGithubIssueOnResolve` is on, note that the plugin will run `gh issue close` on the URL as part of `op-resolve` — do **not** close it yourself beforehand
 3. **`commits:` back-fill is optional and project-driven.** If the project's policy is to record shipped commits on the issue and `commits:` is empty, offer to back-fill from `git log` (referencing the issue id) via `op-append-commit`. If the project doesn't track commits this way — or doesn't have a code repo — skip this step.
 4. **Project-specific release/version steps run here, if the project has any.** If the project's policy ties resolve to a release or version bump, follow the project's `CLAUDE.md` (or equivalent) for the procedure. The schema reserves `version:` on the issue for recording the release identifier shipped, but *when* and *how* to set it is the project's call. Meta-only projects with no release artifact skip this step entirely.
-5. `obsidian op-resolve issue=<PREFIX>-<N>` (or `status=wontfix`). The plugin moves the file, sets `status` and `resolved:`, and trashes linked TASKS atomically. If the issue has a `github_issue:` URL and `closeGithubIssueOnResolve` is on, the plugin also runs `gh issue close` on it — check `githubClosed` / `githubCloseError` in the JSON response. **DOCS are never touched.**
+5. `obsidian vault=<name> op-resolve issue=<PREFIX>-<N>` (or `status=wontfix`). The plugin moves the file, sets `status` and `resolved:`, and trashes linked TASKS atomically. If the issue has a `github_issue:` URL and `closeGithubIssueOnResolve` is on, the plugin also runs `gh issue close` on it — check `githubClosed` / `githubCloseError` in the JSON response. **DOCS are never touched.**
 6. Report: external changes (URLs, commands run, including the linked GH issue if it was auto-closed), vault changes (paths from the JSON response — include the `obsidian://` link for the **post-move** `RESOLVED ISSUES/…` path so the user can open the resolved note directly), and any manual follow-ups (e.g. retrying `gh issue close` manually if `githubCloseError` is set).
 
 ---
@@ -364,9 +370,9 @@ gh pr view <#> --json reviewDecision,statusCheckRollup
 Projects with a code repo keep `DOCS/superpowers/` as a symlink into `<repo>/docs/superpowers/`. Vault-only docs (logs, prompt libraries) live directly in `DOCS/` alongside the symlink. One-time setup:
 
 ```bash
-mkdir -p <vault>/Projects/<slug>/DOCS
-ln -s <repo>/docs/superpowers <vault>/Projects/<slug>/DOCS/superpowers
-obsidian eval code='(async()=>{const a=app.vault.adapter;const base="Projects/<slug>/DOCS/superpowers";for(const sub of ["plans","specs","research","testing"]){await a.reconcileFolderCreation(base+"/"+sub, base+"/"+sub);}})()'
+mkdir -p <vault-path>/Projects/<slug>/DOCS
+ln -s <repo>/docs/superpowers <vault-path>/Projects/<slug>/DOCS/superpowers
+obsidian vault=<name> eval code='(async()=>{const a=app.vault.adapter;const base="Projects/<slug>/DOCS/superpowers";for(const sub of ["plans","specs","research","testing"]){await a.reconcileFolderCreation(base+"/"+sub, base+"/"+sub);}})()'
 ```
 
 Repo-tracked docs (`doc_type: plan|spec|adr|runbook`) → `DOCS/superpowers/{plans,specs,…}/`. Vault-only docs → `DOCS/` directly. Meta-only projects keep a plain `DOCS/` folder, no symlink.

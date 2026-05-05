@@ -42,16 +42,17 @@ To read a frontmatter field, use `obsidian property:read name=<key> path=<vault-
 The CLI exposes only `property:read`, `property:set`, and `property:remove`. To append to a list-valued property (e.g. `commits:`) without the plugin, you have to read → append-in-memory → rewrite:
 
 ```bash
+VAULT=<name>
 ISSUE="Projects/<slug>/ISSUES/<PREFIX>-<N> <title>.md"
 sha=$(git -C <repo> rev-parse --short=7 HEAD)
 sub=$(git -C <repo> log -1 --pretty=%s)
 new="$sha $sub"
 
 # 1. Read the current list (YAML — one "- item" per line, or empty).
-current=$(obsidian property:read name=commits path="$ISSUE")
+current=$(obsidian vault="$VAULT" property:read name=commits path="$ISSUE")
 
 # 2. Build the new list in memory, then rewrite it whole as a JSON array.
-obsidian property:set name=commits type=list \
+obsidian vault="$VAULT" property:set name=commits type=list \
   value='["<sha1> <subj1>","<sha2> <subj2>","'"$new"'"]' \
   path="$ISSUE"
 ```

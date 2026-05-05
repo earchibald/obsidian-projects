@@ -9,10 +9,11 @@ This is a **stub**. The canonical operating manual lives **inside** the `op-obsi
 
 ## Zero-order rules — apply before fetching anything
 
-1. **Probe the plugin once per session and cache the result.** Every `op-*` action goes through it; without the plugin you cannot operate.
+1. **Probe the plugin once per session and cache the result.** Every `op-*` action goes through it; without the plugin you cannot operate. Run `obsidian vault` first to learn the registered vault name, then probe through that vault explicitly:
 
    ```bash
-   obsidian eval code='({enabled: app.plugins.enabledPlugins.has("op-obsidian"), version: app.plugins.plugins["op-obsidian"]?.manifest?.version})'
+   obsidian vault                                                  # list registered vaults; cache the one you'll target
+   obsidian vault=<name> eval code='({enabled: app.plugins.enabledPlugins.has("op-obsidian"), version: app.plugins.plugins["op-obsidian"]?.manifest?.version, vault: app.vault.getName()})'
    ```
 
    If `enabled` is `false` or the eval throws, **stop and ask the user to install/enable `op-obsidian`** before going further. Do not improvise with raw `obsidian` CLI primitives — the plugin owns filename sanitization, ID numbering, frontmatter shape, atomic move-and-trash on resolve, and the JSON response payload at `Projects/_scratch/op-last-response.md`.
