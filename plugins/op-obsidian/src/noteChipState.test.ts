@@ -189,6 +189,46 @@ describe("resolveChipState — every row of the chip-state matrix", () => {
       false,
     );
     expect(state?.action).toBe("start-agent");
+    expect(state?.storedAgent).toBeUndefined();
+  });
+
+  it("storedAgent is surfaced from frontmatter agent field", () => {
+    const state = resolveChipState(
+      { id: "OP-10", type: "issue", status: "in-progress", agent: "claude" },
+      true,
+    );
+    expect(state?.storedAgent).toBe("claude");
+  });
+
+  it("OP-256: tooltip honours storedAgent over the settings default (option B)", () => {
+    const state = resolveChipState(
+      { id: "OP-11", type: "issue", status: "open", agent: "claude" },
+      false,
+    );
+    // re-attach state — not start-agent, so the standard label
+    expect(state?.action).toBe("reattach-fresh");
+    // For start-agent specifically, build a fresh state with no stored agent:
+    const start = resolveChipState({ id: "OP-12", type: "issue", status: "open" }, true);
+    expect(describeChipPrimaryAction(start!, "copilot")).toBe(
+      "▶ Start agent (default: copilot; Cmd/Ctrl-click to pick agent)",
+    );
+    // And one with a stored agent (in-progress without live tmux session):
+    const stored = resolveChipState(
+      { id: "OP-13", type: "issue", status: "in-progress" },
+      true,
+    );
+    // OP-13 has no stored agent, so this case still falls back to defaultAgent.
+    // To exercise stored-agent tooltip routing we manually craft the state
+    // because no current row produces a start-agent ChipState carrying a
+    // stored agent (start-agent only fires when hasAgent is false). The
+    // tooltip routing is still useful as defensive code: if a future row
+    // carries both, the tooltip MUST show the stored agent.
+    expect(
+      describeChipPrimaryAction(
+        { ...stored!, action: "start-agent", storedAgent: "gemini" },
+        "copilot",
+      ),
+    ).toBe("▶ Start agent (default: gemini; Cmd/Ctrl-click to pick agent)");
   });
 
   it("primaryCommand is always a bare id — no op-obsidian: prefix (dispatch contract)", () => {
