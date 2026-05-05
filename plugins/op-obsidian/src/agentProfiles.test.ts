@@ -69,8 +69,64 @@ describe("preferredLaunchAgentOverride", () => {
     ).toBe("gemini");
   });
 
+  it("explicit override beats Settings default too", () => {
+    expect(
+      preferredLaunchAgentOverride({
+        agentOverride: "gemini",
+        defaultAgent: "copilot",
+        interactive: true,
+      }),
+    ).toBe("gemini");
+  });
+
   it("reuses the stored issue agent for normal launches", () => {
     expect(preferredLaunchAgentOverride({ issueAgent: "copilot" })).toBe("copilot");
+  });
+
+  it("stored issue agent beats Settings default (option B: stored > defaults)", () => {
+    expect(
+      preferredLaunchAgentOverride({
+        issueAgent: "claude",
+        defaultAgent: "copilot",
+        interactive: true,
+      }),
+    ).toBe("claude");
+  });
+
+  it("seeds Settings default for interactive launches with no stored agent (option B)", () => {
+    expect(
+      preferredLaunchAgentOverride({
+        defaultAgent: "copilot",
+        interactive: true,
+      }),
+    ).toBe("copilot");
+  });
+
+  it("treats undefined interactive as interactive (chip/palette/sidebar default)", () => {
+    expect(
+      preferredLaunchAgentOverride({
+        defaultAgent: "copilot",
+      }),
+    ).toBe("copilot");
+  });
+
+  it("does NOT seed Settings default for auto-advance launches (interactive: false)", () => {
+    expect(
+      preferredLaunchAgentOverride({
+        defaultAgent: "copilot",
+        interactive: false,
+      }),
+    ).toBeUndefined();
+  });
+
+  it("auto-advance still honours stored issue agent over the workflow file", () => {
+    expect(
+      preferredLaunchAgentOverride({
+        issueAgent: "claude",
+        defaultAgent: "copilot",
+        interactive: false,
+      }),
+    ).toBe("claude");
   });
 
   it("suppresses stored issue agents when force-pick is requested", () => {
@@ -82,8 +138,22 @@ describe("preferredLaunchAgentOverride", () => {
     ).toBeUndefined();
   });
 
+  it("force-pick suppresses Settings default seed too", () => {
+    expect(
+      preferredLaunchAgentOverride({
+        defaultAgent: "copilot",
+        forcePick: true,
+        interactive: true,
+      }),
+    ).toBeUndefined();
+  });
+
   it("ignores unknown stored agent values", () => {
     expect(preferredLaunchAgentOverride({ issueAgent: "bogus" })).toBeUndefined();
+  });
+
+  it("falls through to undefined when nothing fires (workflow resolver wins)", () => {
+    expect(preferredLaunchAgentOverride({})).toBeUndefined();
   });
 });
 

@@ -5115,10 +5115,17 @@ export default class OpPlugin extends Plugin {
       // in the gap right after a chip/sidebar action writes `agent:`.
       const storedIssueAgent = asAgentId(entry.agent);
       const liveIssueAgent = await readIssueAgentOverride(this.app, entry.path);
+      // OP-256: pass defaultAgent + interactive so manual launches (chip,
+      // palette, sidebar) seed Settings → Default agent ahead of the
+      // project's `WORKFLOW.md` `default_agent:`. `interactive: false` from
+      // `advanceFlowAndLaunch` opts out and lets the workflow resolver win
+      // for auto-advance.
       let effectiveAgentOverride = preferredLaunchAgentOverride({
         agentOverride: opts.agentOverride,
         issueAgent: liveIssueAgent ?? entry.agent,
         forcePick: opts.forcePick,
+        defaultAgent: this.settings.defaultAgent,
+        interactive: opts.interactive,
       });
       let effectiveLaunchVars = opts.launchVars;
       if (opts.forcePick) {

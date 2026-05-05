@@ -10,14 +10,31 @@ export function asAgentId(value: string | null | undefined): AgentId | undefined
     : undefined;
 }
 
+/**
+ * OP-256 (option B): manual-launch agent precedence.
+ *
+ *   explicit override > forcePick → undefined > stored issue agent >
+ *   settings default (interactive only) > undefined (workflow resolver wins)
+ *
+ * Returning a non-undefined value here makes `openAgent` skip
+ * `loadAndResolveStep`, so seeding `defaultAgent` for interactive launches is
+ * how Settings → Default agent beats the project's `WORKFLOW.md`
+ * `default_agent:`. Auto-advance launches pass `interactive: false` and skip
+ * the seed, leaving workflow-driven per-step agent selection intact.
+ */
 export function preferredLaunchAgentOverride(opts: {
   agentOverride?: AgentId;
   issueAgent?: string;
   forcePick?: boolean;
+  defaultAgent?: AgentId;
+  interactive?: boolean;
 }): AgentId | undefined {
   if (opts.agentOverride) return opts.agentOverride;
   if (opts.forcePick) return undefined;
-  return asAgentId(opts.issueAgent);
+  const stored = asAgentId(opts.issueAgent);
+  if (stored) return stored;
+  if (opts.interactive !== false && opts.defaultAgent) return opts.defaultAgent;
+  return undefined;
 }
 
 const DEFAULT_PREAMBLE =

@@ -88,6 +88,10 @@ export interface ChipState {
   /** Status used by the resolver, normalized — surfaced so the strip helper
    * can reuse it without re-parsing. */
   status: IssueStatus;
+  /** OP-256: stored `agent:` from frontmatter, surfaced so the chip tooltip
+   * can advertise the *actual* agent the click will launch under option-B
+   * precedence (stored > settings default). Empty/missing → undefined. */
+  storedAgent?: string;
 }
 
 export interface ChipPrimaryClickEvent {
@@ -157,7 +161,9 @@ export function resolveChipState(
   const status = normalizeStatus(fm!.status);
   if (!status) return null;
   const id = fm!.id!;
-  const hasAgent = typeof fm!.agent === "string" && fm!.agent.trim().length > 0;
+  const rawAgent = typeof fm!.agent === "string" ? fm!.agent.trim() : "";
+  const hasAgent = rawAgent.length > 0;
+  const storedAgent = hasAgent ? rawAgent : undefined;
   const githubIssue = typeof fm!.githubIssue === "string" && fm!.githubIssue.trim().length > 0;
 
   if (status === "resolved" || status === "wontfix") {
@@ -179,6 +185,7 @@ export function resolveChipState(
       menu,
       issueId: id,
       status,
+      storedAgent,
     };
   }
 
@@ -192,6 +199,7 @@ export function resolveChipState(
       menu: [APPEND_COMMIT_MENU, SET_PR_MENU, RESOLVE_MENU],
       issueId: id,
       status,
+      storedAgent,
     };
   }
 
@@ -213,6 +221,7 @@ export function resolveChipState(
       ],
       issueId: id,
       status,
+      storedAgent,
     };
   }
 
@@ -234,6 +243,7 @@ export function resolveChipState(
       ],
       issueId: id,
       status,
+      storedAgent,
     };
   }
 
@@ -273,12 +283,20 @@ export function resolveChipState(
     menu: startMenu,
     issueId: id,
     status,
+    storedAgent,
   };
 }
 
+/**
+ * OP-256: tooltip reflects the *actual* agent the click will launch under
+ * option-B precedence (stored > settings default). When the issue has a
+ * stored `agent:`, advertise it; otherwise fall back to Settings → Default
+ * agent.
+ */
 export function describeChipPrimaryAction(state: ChipState, defaultAgent: string): string {
   if (state.action !== "start-agent") return state.primaryLabel;
-  return `${state.primaryLabel} (default: ${defaultAgent}; Cmd/Ctrl-click to pick agent)`;
+  const resolved = state.storedAgent && state.storedAgent.length > 0 ? state.storedAgent : defaultAgent;
+  return `${state.primaryLabel} (default: ${resolved}; Cmd/Ctrl-click to pick agent)`;
 }
 
 export function chipPrimaryCommandForClick(
