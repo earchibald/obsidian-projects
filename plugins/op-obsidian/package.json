@@ -1,6 +1,10 @@
 {
   "name": "op-obsidian",
-  "version": "0.95.0",
+<<<<<<< HEAD
+  "version": "0.95.1",
+=======
+  "version": "0.95.1",
+>>>>>>> 6787d49 (OP-272: add in-flight re-entrancy guard to doOpenAgent)
   "description": "Obsidian plugin that owns the deterministic half of the op workflow.",
   "main": "main.js",
   "scripts": {
