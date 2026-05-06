@@ -149,7 +149,7 @@ The issue ID is `<PREFIX>-<N>`.
 
 **Number N** — scan **both** `ISSUES/` and `RESOLVED ISSUES/` for existing `id` values, find the highest `N`, and increment by 1 for each new issue.
 
-Use `obsidian vault="<vault>" files folder="Projects/<slug>/ISSUES"` and `files folder="Projects/<slug>/RESOLVED ISSUES"` to enumerate. The filename prefix (`<PREFIX>-<N>`) reveals the id directly; fall back to `property:read name=id file=<name>` if needed.
+Use `obsidian vault="<vault>" files folder="Projects/<slug>/ISSUES"` and `obsidian vault="<vault>" files folder="Projects/<slug>/RESOLVED ISSUES"` to enumerate. The filename prefix (`<PREFIX>-<N>`) reveals the id directly; fall back to `obsidian vault="<vault>" property:read name=id path="<vault-relative-path>"` if needed.
 
 ---
 
@@ -209,6 +209,7 @@ Each project root must contain a `STATUS.md` that carries project-level metadata
 project: <slug>
 prefix: <PREFIX>
 type: project-status
+vault: <vault-name>                     # OP-265, written at scaffold time
 repo_path: /Users/you/Projects/<slug>   # optional, absolute path
 ---
 ![[<project>.base#Open Issues]]
@@ -218,6 +219,7 @@ repo_path: /Users/you/Projects/<slug>   # optional, absolute path
 - `project` — slug, matches the folder name.
 - `prefix` — canonical issue-ID prefix (e.g. `JB`, `TMB`). This is the authoritative location for the prefix; commands that need it (`/issue`, `/create-issue`) MUST read it from here first.
 - `type: project-status` — lets Bases distinguish STATUS notes from issues/tasks/docs.
+- `vault` — the Obsidian vault name active at scaffold time (`app.vault.getName()`). Recorded so launched agents can derive the `vault=<name>` CLI selector deterministically from STATUS.md without re-probing `obsidian vault`. Plugin-managed at `op-scaffold`. Pre-OP-265 projects don't carry this field; agents falling back to the discovery path call `obsidian vault` (no args) and cache the result for the session. If the user renames the vault after scaffold, this field will go stale — overwriting it manually is a one-line `obsidian vault=<new-name> property:set name=vault value=<new-name> path="Projects/<slug>/STATUS.md"`.
 - `repo_path` — *optional* absolute path to the project's code repo. When set, the `op-obsidian` plugin's `op:open-agent` command uses it as the agent's working directory and skips the working-dir modal. Must be an absolute path — no `~` expansion, no vault-relative paths. Leave unset for meta-only projects with no repo; the plugin falls back to the per-project working-dir setting, then prompts.
 
 **Fallback for legacy projects:** if `prefix` is missing from STATUS.md, fall back to scanning issue filenames (`Projects/<slug>/ISSUES/*.md` and `RESOLVED ISSUES/*.md`). If neither the field nor any issue exists, stop and ask the user — a freshly scaffolded project with zero issues has no implicit prefix, so the scaffolder is responsible for writing `prefix` at creation time.

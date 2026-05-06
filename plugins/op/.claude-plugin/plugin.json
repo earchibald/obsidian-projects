@@ -1,7 +1,11 @@
 {
   "name": "op",
   "description": "Obsidian Projects workflow — schema, slash commands, and agent skill for running a Jira-lite issue tracker inside an Obsidian vault.",
-  "version": "0.95.0",
+<<<<<<< HEAD
+  "version": "0.95.1",
+=======
+  "version": "0.95.1",
+>>>>>>> 6787d49 (OP-272: add in-flight re-entrancy guard to doOpenAgent)
   "author": {
     "name": "Eugene Archibald"
   },

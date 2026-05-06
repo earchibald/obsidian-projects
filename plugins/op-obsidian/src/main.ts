@@ -280,6 +280,12 @@ export default class OpPlugin extends Plugin {
    * are added in handleOp*Cli/Uri handlers and cleared after a short tick.
    */
   private inFlightOpWritePaths = new Set<string>();
+  /** OP-272: re-entrancy guard for doOpenAgent. Tracks issue IDs currently
+   *  launching an agent so that rapid re-clicks on the "Start agent" chip
+   *  (or the dual CM6 + post-processor chips in Live Preview) don't spawn
+   *  multiple sessions for the same issue. Analogous to
+   *  {@link dashboardCommandInFlight} for the dashboard SPA. */
+  private inFlightAgentLaunches = new Set<string>();
   /** Last-known set of live tmux window names (`op:<ISSUE-ID>`). Populated
    * by the stale-agent probe on layout-ready and refreshed every
    * {@link CHIP_LIVENESS_INTERVAL_MS} so the OP-151 note chip can answer
@@ -5167,6 +5173,14 @@ export default class OpPlugin extends Plugin {
       launchModelOverride?: string;
     } = {},
   ): Promise<void> {
+    if (this.inFlightAgentLaunches.has(entry.id)) {
+      console.info(
+        "[op-obsidian] doOpenAgent: launch already in-flight for",
+        entry.id,
+      );
+      return;
+    }
+    this.inFlightAgentLaunches.add(entry.id);
     try {
       // OP-204 (3d): forcePick paths route through the new launch modal so the
       // user can both pick the agent AND set Workflow-variable overrides at
@@ -5267,6 +5281,8 @@ export default class OpPlugin extends Plugin {
     } catch (err: any) {
       console.error("[op-obsidian] op-open-agent failed", err);
       notify(`op-open-agent failed: ${err?.message ?? err}`);
+    } finally {
+      this.inFlightAgentLaunches.delete(entry.id);
     }
   }
 
