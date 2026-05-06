@@ -15,7 +15,7 @@ import { EventBus } from "./eventBus";
 import { IssueStore } from "./issueStore";
 import { createIssue, type CreateIssueInput, type Priority } from "./createIssue";
 import { findIssue } from "./findIssue";
-import { applyProjectOrder, listProjects } from "./projects";
+import { applyProjectOrder, findProjectByPrefix, findProjectBySlug, listProjects } from "./projects";
 import {
   AppendCommitModal,
   FindIssueModal,
@@ -108,6 +108,7 @@ import {
   handleOpGetSkillUri as handleOpGetSkillUriPure,
   handleOpExplainWorkflowUri as handleOpExplainWorkflowUriPure,
   handleOpListVarsUri as handleOpListVarsUriPure,
+  handleOpWorkflowUri as handleOpWorkflowUriPure,
   type UriHandlerDeps,
 } from "./uriHandlers";
 import {
@@ -137,8 +138,9 @@ import {
   parseDocCreateParams,
   parseDocEditParams,
   parseFlushVaultHistoryParams,
+  parseWorkflowParams,
 } from "./cliHandlers";
-import { explainWorkflow, listVars } from "./explainWorkflow";
+import { explainWorkflow, getProjectWorkflow, listVars } from "./explainWorkflow";
 import {
   summarizeExplainPayload,
 } from "./explainWorkflowPure";
@@ -1142,6 +1144,12 @@ export default class OpPlugin extends Plugin {
       );
     });
 
+    this.registerObsidianProtocolHandler("op-workflow", (params) => {
+      this.runUri("op-workflow", normalizeUriParams(params), (p) =>
+        this.handleOpWorkflowUri(p),
+      );
+    });
+
     this.registerObsidianProtocolHandler("op-get-skill", (params) => {
       this.runUri("op-get-skill", normalizeUriParams(params), (p) =>
         handleOpGetSkillUriPure(this.uriDeps(), p),
@@ -1493,6 +1501,26 @@ export default class OpPlugin extends Plugin {
         },
       },
       (params) => this.handleOpListVarsCli(params),
+    );
+
+    this.registerCliHandler(
+      "op-workflow",
+      "Return WORKFLOW.md (legacy) or compiled modular workflow (modules) for a project. Read-only.",
+      {
+        project: {
+          value: "<slug>",
+          description: "Project slug (folder name under Projects/). Mutually exclusive with --prefix.",
+        },
+        prefix: {
+          value: "<PREFIX>",
+          description: "Issue-ID prefix (e.g. OP). Mutually exclusive with --project.",
+        },
+        step: {
+          value: "<step>",
+          description: "Workflow step id to compose (default: kickoff). Only relevant in modules mode.",
+        },
+      },
+      (params) => this.handleOpWorkflowCli(params),
     );
 
     this.registerCliHandler(
@@ -2565,6 +2593,7 @@ export default class OpPlugin extends Plugin {
       linkCheck: (opts) => linkCheck(this.app, this.store, opts),
       migrateLinks: () => migrateLinks(this.app, this.store),
       getWorkflow: (project) => getWorkflow(this.app, project),
+      getProjectWorkflow: (args) => getProjectWorkflow(this.app, this.settings, args),
       explainWorkflow: (args) =>
         explainWorkflow(
           this.app,
@@ -2626,6 +2655,12 @@ export default class OpPlugin extends Plugin {
     params: Record<string, string>,
   ): Promise<UriResponsePayload> {
     return handleOpGetWorkflowUriPure(this.uriDeps(), params);
+  }
+
+  private handleOpWorkflowUri(
+    params: Record<string, string>,
+  ): Promise<UriResponsePayload> {
+    return handleOpWorkflowUriPure(this.uriDeps(), params);
   }
 
   private handleOpSetScopeUri(
@@ -3958,6 +3993,54 @@ export default class OpPlugin extends Plugin {
       );
       await writeUriResponse(this.app, { ok: true, command, ...payload });
       return summarizeListVarsPayload(payload);
+    } catch (err: any) {
+      const msg = err?.message ?? String(err);
+      console.error("[op-obsidian]", command, err);
+      await writeUriResponse(this.app, { ok: false, command, error: msg });
+      return `${command} failed: ${msg}`;
+    }
+  }
+
+  private async handleOpWorkflowCli(params: Record<string, string>): Promise<string> {
+    const command = "op-workflow";
+    try {
+      const parsed = parseWorkflowParams(params);
+      if (!parsed.ok) return parsed.error;
+      const { project: rawProject, prefix, step } = parsed.value;
+
+      let project: string;
+      if (rawProject) {
+        const info = findProjectBySlug(this.app, rawProject);
+        if (!info) {
+          const msg = `project not found: ${rawProject}`;
+          await writeUriResponse(this.app, { ok: false, command, error: msg });
+          return `${command} failed: ${msg}`;
+        }
+        project = info.slug;
+      } else {
+        const info = findProjectByPrefix(this.app, prefix!);
+        if (!info) {
+          const msg = `no project with prefix: ${prefix}`;
+          await writeUriResponse(this.app, { ok: false, command, error: msg });
+          return `${command} failed: ${msg}`;
+        }
+        project = info.slug;
+      }
+
+      const res = await getProjectWorkflow(this.app, this.settings, { project, step });
+      await writeUriResponse(this.app, {
+        ok: true,
+        command,
+        project: res.project,
+        mode: res.mode,
+        path: res.path,
+        exists: res.exists,
+        content: res.content,
+        size: res.size,
+      });
+      return res.exists
+        ? `${command}: ${res.project} [${res.mode}] → ${res.path} (${res.size} chars)`
+        : `${command}: ${res.project} [${res.mode}] → no WORKFLOW.md (would live at ${res.path})`;
     } catch (err: any) {
       const msg = err?.message ?? String(err);
       console.error("[op-obsidian]", command, err);

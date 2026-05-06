@@ -537,6 +537,21 @@ export function parseFlushVaultHistoryParams(
   return { ok: true, value: out };
 }
 
+export function parseWorkflowParams(
+  params: Record<string, string>,
+): ParamsResult<{ project?: string; prefix?: string; step: string }> {
+  const project = nonEmptyTrim(params.project ?? params.slug);
+  const prefix = nonEmptyTrim(params.prefix);
+  if (!project && !prefix) {
+    return { ok: false, error: "op-workflow failed: --project or --prefix is required" };
+  }
+  if (project && prefix) {
+    return { ok: false, error: "op-workflow failed: pass --project or --prefix, not both" };
+  }
+  const step = nonEmptyTrim(params.step) ?? "kickoff";
+  return { ok: true, value: { project, prefix, step } };
+}
+
 export function parseListVarsParams(
   params: Record<string, string>,
 ): ParamsResult<{ project?: string; issue?: string }> {
