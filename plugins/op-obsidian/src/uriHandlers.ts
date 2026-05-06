@@ -16,6 +16,7 @@ import type { SetFlowResult, Flow, Complexity } from "./setFlow";
 import type { ResolveArgs, ResolveStatus } from "./resolve";
 import type { ApplyLinkResult, LinkCheckResult, MigrateLinksResult } from "./links";
 import type { GetWorkflowResult } from "./workflow";
+import type { GetProjectWorkflowResult } from "./explainWorkflow";
 import { getSkill } from "./skill";
 import type { ExplainWorkflowPayload } from "./explainWorkflowPure";
 import type { ListVarsPayload } from "./listVarsPure";
@@ -54,6 +55,7 @@ export interface UriHandlerDeps {
   linkCheck?: (opts: { repair?: boolean }) => Promise<LinkCheckResult>;
   migrateLinks?: () => Promise<MigrateLinksResult>;
   getWorkflow?: (project: string) => Promise<GetWorkflowResult>;
+  getProjectWorkflow?: (args: { project: string; step?: string }) => Promise<GetProjectWorkflowResult>;
   explainWorkflow?: (args: {
     issueId: string;
     mode: string;
@@ -421,5 +423,26 @@ export async function handleOpListVarsUri(
     ok: true,
     command: "op-list-vars",
     ...payload,
+  };
+}
+
+export async function handleOpWorkflowUri(
+  deps: UriHandlerDeps,
+  params: Record<string, string>,
+): Promise<UriResponsePayload> {
+  if (!deps.getProjectWorkflow) throw new Error("op-workflow not wired");
+  const project = params.project ?? params.slug;
+  if (!project) throw new Error("op-workflow URI requires project");
+  const step = typeof params.step === "string" ? params.step.trim() : undefined;
+  const res = await deps.getProjectWorkflow({ project, step });
+  return {
+    ok: true,
+    command: "op-workflow",
+    project: res.project,
+    mode: res.mode,
+    path: res.path,
+    exists: res.exists,
+    content: res.content,
+    size: res.size,
   };
 }

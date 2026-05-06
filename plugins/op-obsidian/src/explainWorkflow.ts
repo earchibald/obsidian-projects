@@ -12,6 +12,7 @@ import {
 } from "./explainWorkflowPure";
 import { buildListVarsPayload, type ListVarsPayload } from "./listVarsPure";
 import type { WorkflowDiagnostic } from "./workflowDiagnostic";
+import { getWorkflow, type GetWorkflowResult } from "./workflow";
 
 // IO seam for OP-203's two diagnostic CLIs. Both verbs need the same
 // composed-prompt pipeline that the launcher uses (so output matches what the
@@ -202,4 +203,64 @@ function vaultBasePath(app: App): string {
 
 function today(): string {
   return new Date().toISOString().slice(0, 10);
+}
+
+export interface GetProjectWorkflowResult {
+  project: string;
+  mode: "legacy" | "modules";
+  path: string;
+  exists: boolean;
+  content: string | null;
+  size: number;
+}
+
+/** Return the project workflow per the configured `workflowMode`:
+ *  - legacy: raw WORKFLOW.md content (same as `op-get-workflow`)
+ *  - modules: the composed kickoff prompt from the modular pipeline */
+export async function getProjectWorkflow(
+  app: App,
+  settings: OpSettings,
+  args: { project: string; step?: string },
+): Promise<GetProjectWorkflowResult> {
+  const project = args.project.trim();
+  if (!project) throw new Error("op-workflow: project is required");
+  const step = args.step ?? "kickoff";
+
+  if (settings.workflowMode === "legacy") {
+    const res = await getWorkflow(app, project);
+    return { project: res.project, mode: "legacy", path: res.path, exists: res.exists, content: res.content, size: res.size };
+  }
+
+  // Modules mode: compose with a minimal render context (no issue needed).
+  const renderContext: RenderContext = {
+    id: "",
+    title: "",
+    project,
+    status: "",
+    parent: null,
+    vault_path: vaultBasePath(app),
+    vault_name: app.vault.getName(),
+    today: today(),
+    agent: settings.defaultAgent,
+    mode: step,
+  };
+
+  const projectVars = readProjectVars(app, project);
+
+  const { composed } = await loadAndComposeWorkflow(app, {
+    project,
+    step,
+    ctx: {
+      render: renderContext,
+      globalVars: settings.workflowVars ?? {},
+      projectVars,
+      maxWorkflowChars: settings.injection.maxWorkflowChars,
+    },
+  });
+
+  if (!composed) {
+    return { project, mode: "modules", path: `Projects/${project}/WORKFLOW.md`, exists: false, content: null, size: 0 };
+  }
+
+  return { project, mode: "modules", path: `Projects/${project}/WORKFLOW.md`, exists: true, content: composed.text, size: composed.sizeChars };
 }
