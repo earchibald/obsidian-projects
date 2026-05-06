@@ -31,6 +31,7 @@ import {
 } from "./modals";
 import { scaffoldProject, type ScaffoldProjectResult } from "./scaffoldProject";
 import { workIssue, type WorkIssueResult } from "./workIssue";
+import { onboardIssue } from "./onboardIssue";
 import { appendCommit, setPr } from "./commits";
 import { getWorkflow } from "./workflow";
 import { getSkill } from "./skill";
@@ -113,6 +114,7 @@ import {
 } from "./uriHandlers";
 import {
   parseWorkParams,
+  parseOnboardParams,
   parseAppendCommitParams,
   parseSetPrParams,
   parseSetScopeParams,
@@ -280,6 +282,12 @@ export default class OpPlugin extends Plugin {
    * are added in handleOp*Cli/Uri handlers and cleared after a short tick.
    */
   private inFlightOpWritePaths = new Set<string>();
+  /** OP-272: re-entrancy guard for doOpenAgent. Tracks issue IDs currently
+   *  launching an agent so that rapid re-clicks on the "Start agent" chip
+   *  (or the dual CM6 + post-processor chips in Live Preview) don't spawn
+   *  multiple sessions for the same issue. Analogous to
+   *  {@link dashboardCommandInFlight} for the dashboard SPA. */
+  private inFlightAgentLaunches = new Set<string>();
   /** Last-known set of live tmux window names (`op:<ISSUE-ID>`). Populated
    * by the stale-agent probe on layout-ready and refreshed every
    * {@link CHIP_LIVENESS_INTERVAL_MS} so the OP-151 note chip can answer
@@ -1420,6 +1428,20 @@ export default class OpPlugin extends Plugin {
         id: { value: "<id>", description: "Alias for issue" },
       },
       (params) => this.handleOpWorkCli(params),
+    );
+
+    this.registerCliHandler(
+      "op-onboard",
+      "Link an already-running agent to an issue (status → in-progress, assign agent).",
+      {
+        issue: { value: "<id>", description: "Issue id (e.g. OP-34)" },
+        id: { value: "<id>", description: "Alias for issue" },
+        agent: { value: "<agent>", description: "Agent type (claude, claude-ds, gemini, copilot)" },
+        agent_session: { value: "<sid>", description: "Opaque per-session id" },
+        session: { value: "<sid>", description: "Alias for agent_session" },
+        force: { description: "Override existing agent registration" },
+      },
+      (params) => this.handleOpOnboardCli(params),
     );
 
     this.registerCliHandler(
@@ -3802,6 +3824,52 @@ export default class OpPlugin extends Plugin {
     }
   }
 
+  private async handleOpOnboardCli(params: Record<string, string>): Promise<string> {
+    const command = "op-onboard";
+    try {
+      const parsed = parseOnboardParams(params);
+      if (!parsed.ok) return parsed.error;
+      const entry = this.resolveByIdOrThrow(parsed.value.id);
+      const res = await onboardIssue(this.app, this.store, entry, {
+        agent: parsed.value.agent,
+        agentSession: parsed.value.agentSession,
+        force: parsed.value.force,
+      });
+      const onboardPaths = [res.path];
+      if (res.createdTaskPath) onboardPaths.push(res.createdTaskPath);
+      onboardPaths.forEach((p) => this.markInFlightOpWrite(p));
+      this.recordOpMutation({
+        cmd: command,
+        issue: res.issueId,
+        paths: onboardPaths,
+        note: `prev=${res.previousStatus} agent=${parsed.value.agent}`,
+      });
+      await writeUriResponse(this.app, {
+        ok: true,
+        command,
+        issueId: res.issueId,
+        path: res.path,
+        previousStatus: res.previousStatus,
+        createdTaskPath: res.createdTaskPath,
+        registered: res.registered,
+        registration: res.registration,
+        alreadyHeld: res.alreadyHeld,
+        conflict: res.conflict,
+        onboardedAt: res.onboardedAt,
+      });
+      await this.recordRecency(res.issueId);
+      const extra = res.createdTaskPath ? ` · created ${res.createdTaskPath.split("/").pop()}` : "";
+      const regNote = formatRegistrationNote(res);
+      const onboardNote = res.onboardedAt ? ` · onboarded ${res.onboardedAt}` : "";
+      return `${command}: ${res.issueId} → in-progress as ${parsed.value.agent}${extra}${regNote}${onboardNote}`;
+    } catch (err: any) {
+      const msg = err?.message ?? String(err);
+      console.error("[op-obsidian]", command, err);
+      await writeUriResponse(this.app, { ok: false, command, error: msg });
+      return `${command} failed: ${msg}`;
+    }
+  }
+
   private async handleOpAppendCommitCli(params: Record<string, string>): Promise<string> {
     const command = "op-append-commit";
     try {
@@ -5188,6 +5256,14 @@ export default class OpPlugin extends Plugin {
       launchModelOverride?: string;
     } = {},
   ): Promise<void> {
+    if (this.inFlightAgentLaunches.has(entry.id)) {
+      console.info(
+        "[op-obsidian] doOpenAgent: launch already in-flight for",
+        entry.id,
+      );
+      return;
+    }
+    this.inFlightAgentLaunches.add(entry.id);
     try {
       // OP-204 (3d): forcePick paths route through the new launch modal so the
       // user can both pick the agent AND set Workflow-variable overrides at
@@ -5288,6 +5364,8 @@ export default class OpPlugin extends Plugin {
     } catch (err: any) {
       console.error("[op-obsidian] op-open-agent failed", err);
       notify(`op-open-agent failed: ${err?.message ?? err}`);
+    } finally {
+      this.inFlightAgentLaunches.delete(entry.id);
     }
   }
 

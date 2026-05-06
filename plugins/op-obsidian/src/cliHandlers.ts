@@ -31,6 +31,25 @@ function nonEmptyTrim(v: unknown): string | undefined {
   return t.length > 0 ? t : undefined;
 }
 
+export function parseOnboardParams(
+  params: Record<string, string>,
+): ParamsResult<{ id: string; agent: string; agentSession?: string; force: boolean }> {
+  const id = params.issue ?? params.id;
+  if (!id) return { ok: false, error: "op-onboard failed: --issue is required" };
+  const agent = nonEmptyTrim(params.agent);
+  if (agent === undefined) {
+    return { ok: false, error: "op-onboard failed: --agent is required" };
+  }
+  if (/\s/.test(agent)) {
+    return { ok: false, error: "op-onboard failed: --agent must not contain whitespace" };
+  }
+  const agentSession = nonEmptyTrim(params.agent_session ?? params.session);
+  const force = params.force === "1" || params.force === "true";
+  const out: { id: string; agent: string; agentSession?: string; force: boolean } = { id, agent, force };
+  if (agentSession !== undefined) out.agentSession = agentSession;
+  return { ok: true, value: out };
+}
+
 export function parseAppendCommitParams(
   params: Record<string, string>,
 ): ParamsResult<{ id: string; sha: string; subject: string }> {

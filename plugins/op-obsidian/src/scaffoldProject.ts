@@ -73,7 +73,11 @@ export async function scaffoldProject(
   await app.vault.create(basePath, renderBase(slug));
 
   const statusPath = normalizePath(`${projectFolder}/STATUS.md`);
-  await app.vault.create(statusPath, renderStatus(slug, prefix, repoPath));
+  // OP-265: record the resolved vault name so launched agents can derive the
+  // `vault=<name>` selector deterministically from STATUS.md without
+  // re-probing `obsidian vault`. Source of truth at scaffold time is
+  // app.vault.getName() — whichever vault Obsidian is currently writing to.
+  await app.vault.create(statusPath, renderStatus(slug, prefix, app.vault.getName(), repoPath));
 
   // OP-188: seed the default workflow file so the orchestrator's
   // workflow-file walker (flowOrchestrator.ts) finds a canonical step list
@@ -129,12 +133,13 @@ function sleep(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms));
 }
 
-function renderStatus(slug: string, prefix: string, repoPath?: string): string {
+function renderStatus(slug: string, prefix: string, vault: string, repoPath?: string): string {
   const lines = [
     "---",
     `project: ${slug}`,
     `prefix: ${prefix}`,
     "type: project-status",
+    `vault: ${vault}`,
   ];
   if (repoPath && repoPath.trim()) {
     lines.push(`repo_path: ${repoPath.trim()}`);
