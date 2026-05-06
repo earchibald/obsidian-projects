@@ -45,6 +45,8 @@ pr:                      # optional; PR or MR URL if one exists
 github_issue:            # optional; direct mapping to a GitHub issue URL
 agent:                   # optional; agent runtime currently working the issue (e.g. claude, codex, gemini, copilot — only `claude` is exercised in this repo's dev/test workflow; gemini/copilot are accepted but untested)
 agent_session:           # optional; opaque per-session id paired with `agent:` — used by op-work for conflict detection
+onboarded_at:            # optional; ISO 8601 timestamp set by op-onboard when agent linkage is established outside the normal launch flow
+agent_origin:            # optional; "onboard" (set by op-onboard) or absent (set by op-work / openAgent) — distinguishes agents linked via onboard from those launched via terminalLaunch
 version:                 # optional; semver string of the release that shipped this issue, set at resolve
 flow:                    # optional; current stage of the multi-mode workflow (evaluate → planning → implementation → review → finalization → done)
 complexity:              # optional; simple | complex — simple issues may skip evaluate/review modes

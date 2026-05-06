@@ -31,6 +31,7 @@ import {
 } from "./modals";
 import { scaffoldProject, type ScaffoldProjectResult } from "./scaffoldProject";
 import { workIssue, type WorkIssueResult } from "./workIssue";
+import { onboardIssue } from "./onboardIssue";
 import { appendCommit, setPr } from "./commits";
 import { getWorkflow } from "./workflow";
 import { getSkill } from "./skill";
@@ -112,6 +113,7 @@ import {
 } from "./uriHandlers";
 import {
   parseWorkParams,
+  parseOnboardParams,
   parseAppendCommitParams,
   parseSetPrParams,
   parseSetScopeParams,
@@ -1418,6 +1420,20 @@ export default class OpPlugin extends Plugin {
         id: { value: "<id>", description: "Alias for issue" },
       },
       (params) => this.handleOpWorkCli(params),
+    );
+
+    this.registerCliHandler(
+      "op-onboard",
+      "Link an already-running agent to an issue (status → in-progress, assign agent).",
+      {
+        issue: { value: "<id>", description: "Issue id (e.g. OP-34)" },
+        id: { value: "<id>", description: "Alias for issue" },
+        agent: { value: "<agent>", description: "Agent type (claude, claude-ds, gemini, copilot)" },
+        agent_session: { value: "<sid>", description: "Opaque per-session id" },
+        session: { value: "<sid>", description: "Alias for agent_session" },
+        force: { description: "Override existing agent registration" },
+      },
+      (params) => this.handleOpOnboardCli(params),
     );
 
     this.registerCliHandler(
@@ -3765,6 +3781,52 @@ export default class OpPlugin extends Plugin {
       const extra = res.createdTaskPath ? ` · created ${res.createdTaskPath.split("/").pop()}` : "";
       const regNote = formatRegistrationNote(res);
       return `${command}: ${res.issueId} → in-progress${extra}${regNote}`;
+    } catch (err: any) {
+      const msg = err?.message ?? String(err);
+      console.error("[op-obsidian]", command, err);
+      await writeUriResponse(this.app, { ok: false, command, error: msg });
+      return `${command} failed: ${msg}`;
+    }
+  }
+
+  private async handleOpOnboardCli(params: Record<string, string>): Promise<string> {
+    const command = "op-onboard";
+    try {
+      const parsed = parseOnboardParams(params);
+      if (!parsed.ok) return parsed.error;
+      const entry = this.resolveByIdOrThrow(parsed.value.id);
+      const res = await onboardIssue(this.app, this.store, entry, {
+        agent: parsed.value.agent,
+        agentSession: parsed.value.agentSession,
+        force: parsed.value.force,
+      });
+      const onboardPaths = [res.path];
+      if (res.createdTaskPath) onboardPaths.push(res.createdTaskPath);
+      onboardPaths.forEach((p) => this.markInFlightOpWrite(p));
+      this.recordOpMutation({
+        cmd: command,
+        issue: res.issueId,
+        paths: onboardPaths,
+        note: `prev=${res.previousStatus} agent=${parsed.value.agent}`,
+      });
+      await writeUriResponse(this.app, {
+        ok: true,
+        command,
+        issueId: res.issueId,
+        path: res.path,
+        previousStatus: res.previousStatus,
+        createdTaskPath: res.createdTaskPath,
+        registered: res.registered,
+        registration: res.registration,
+        alreadyHeld: res.alreadyHeld,
+        conflict: res.conflict,
+        onboardedAt: res.onboardedAt,
+      });
+      await this.recordRecency(res.issueId);
+      const extra = res.createdTaskPath ? ` · created ${res.createdTaskPath.split("/").pop()}` : "";
+      const regNote = formatRegistrationNote(res);
+      const onboardNote = res.onboardedAt ? ` · onboarded ${res.onboardedAt}` : "";
+      return `${command}: ${res.issueId} → in-progress as ${parsed.value.agent}${extra}${regNote}${onboardNote}`;
     } catch (err: any) {
       const msg = err?.message ?? String(err);
       console.error("[op-obsidian]", command, err);
