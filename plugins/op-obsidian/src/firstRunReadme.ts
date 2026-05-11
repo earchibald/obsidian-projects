@@ -16,23 +16,29 @@
 
 import type { App } from "obsidian";
 import { normalizePath } from "obsidian";
+import {
+  DEFAULT_PROJECTS_ROOT,
+  currentProjectsRoot,
+  demoProjectFolderPath,
+  onboardingReadmePath,
+} from "./projectPaths";
 
-export const README_PATH = "Projects/_op-readme.md";
+export const README_PATH = onboardingReadmePath();
 export const DEMO_PROJECT_SLUG = "op-demo";
 export const DEMO_PROJECT_PREFIX = "DEMO";
-export const DEMO_PROJECT_FOLDER = `Projects/${DEMO_PROJECT_SLUG}`;
+export const DEMO_PROJECT_FOLDER = demoProjectFolderPath();
 
 /**
  * Pure markdown body for the first-run README. Kept pure so tests can
  * assert the chip codeblocks are present without spinning up an
  * Obsidian app instance.
  */
-export function buildReadmeBody(): string {
+export function buildReadmeBody(projectsRoot = DEFAULT_PROJECTS_ROOT): string {
   return [
     "# Welcome to op",
     "",
     "Obsidian Projects (op) is a tiny issue tracker that lives in this vault.",
-    "Issues are markdown notes under `Projects/<slug>/ISSUES/`; commands sit",
+    `Issues are markdown notes under \`${projectsRoot}/<slug>/ISSUES/\`; commands sit`,
     "under `op:` in the command palette; agents launch into tmux. Dismiss",
     "this README by deleting it — it won't come back.",
     "",
@@ -70,8 +76,8 @@ export function buildReadmeBody(): string {
     "## Workflow modules",
     "",
     "op composes the prompt your agents receive out of small markdown",
-    "modules under `Projects/_op-modules/` (global) and",
-    "`Projects/<slug>/MODULES/` (per-project). Read the docs to see how",
+    `modules under \`${projectsRoot}/_op-modules/\` (global) and`,
+    `\`${projectsRoot}/<slug>/MODULES/\` (per-project). Read the docs to see how`,
     "the precedence chain fits together and how to author your first",
     "module:",
     "",
@@ -209,6 +215,7 @@ export function buildDemoIssueNote(seed: DemoIssueSeed): string {
  */
 export interface FirstRunSettings {
   firstRunCompleted: boolean;
+  projectsRoot?: string;
 }
 
 /** Pure decision: should we scaffold the README on this load? */
@@ -237,11 +244,11 @@ export async function scaffoldFirstRunReadme(
   writer: ReadmeWriter,
   saveSettings: () => Promise<void>,
 ): Promise<{ scaffolded: boolean; readmePath: string }> {
-  const path = README_PATH;
+  const path = onboardingReadmePath(settings.projectsRoot);
   if (!shouldScaffoldReadme(settings, writer.exists(path))) {
     return { scaffolded: false, readmePath: path };
   }
-  await writer.write(path, buildReadmeBody());
+  await writer.write(path, buildReadmeBody(settings.projectsRoot));
   settings.firstRunCompleted = true;
   await saveSettings();
   return { scaffolded: true, readmePath: path };
@@ -277,15 +284,16 @@ export async function scaffoldDemoProject(app: App): Promise<{
   created: boolean;
   statusPath: string;
 }> {
-  const statusPath = `${DEMO_PROJECT_FOLDER}/STATUS.md`;
+  const demoFolder = demoProjectFolderPath(currentProjectsRoot(app));
+  const statusPath = `${demoFolder}/STATUS.md`;
   if (app.vault.getAbstractFileByPath(statusPath)) {
     return { created: false, statusPath };
   }
-  const issuesDir = `${DEMO_PROJECT_FOLDER}/ISSUES`;
-  await ensureFolder(app, DEMO_PROJECT_FOLDER);
+  const issuesDir = `${demoFolder}/ISSUES`;
+  await ensureFolder(app, demoFolder);
   await ensureFolder(app, issuesDir);
   await app.vault.create(statusPath, demoStatusFrontmatter(app.vault.getName()) + buildDemoStatusBody());
-  await app.vault.create(`${DEMO_PROJECT_FOLDER}/${DEMO_PROJECT_SLUG}.base`, demoBaseBody());
+  await app.vault.create(`${demoFolder}/${DEMO_PROJECT_SLUG}.base`, demoBaseBody());
   for (const seed of DEMO_ISSUES) {
     const filename = `${DEMO_PROJECT_PREFIX}-${seed.number} ${seed.title}.md`;
     await app.vault.create(`${issuesDir}/${filename}`, buildDemoIssueNote(seed));
@@ -308,10 +316,11 @@ async function ensureFolder(app: App, path: string): Promise<void> {
 export async function removeDemoProject(
   app: App,
 ): Promise<{ removed: boolean; folder: string }> {
-  const folder = app.vault.getAbstractFileByPath(DEMO_PROJECT_FOLDER);
-  if (!folder) return { removed: false, folder: DEMO_PROJECT_FOLDER };
+  const demoFolder = demoProjectFolderPath(currentProjectsRoot(app));
+  const folder = app.vault.getAbstractFileByPath(demoFolder);
+  if (!folder) return { removed: false, folder: demoFolder };
   await app.vault.trash(folder, true);
-  return { removed: true, folder: DEMO_PROJECT_FOLDER };
+  return { removed: true, folder: demoFolder };
 }
 
 /** Public for tests + the codeblock chip parser. */

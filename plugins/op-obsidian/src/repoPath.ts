@@ -1,5 +1,6 @@
 import { App, TFile } from "obsidian";
 import type { OpSettings } from "./settings";
+import { findProjectBySlug } from "./projects";
 
 export function resolveRepoPath(
   app: App,
@@ -13,7 +14,8 @@ export function resolveRepoPath(
 }
 
 function readRepoPathFromStatus(app: App, slug: string): string | undefined {
-  const path = `Projects/${slug}/STATUS.md`;
+  const path = findProjectBySlug(app, slug)?.statusPath;
+  if (!path) return undefined;
   const f = app.vault.getAbstractFileByPath(path);
   if (!(f instanceof TFile)) return undefined;
   const fm = app.metadataCache.getFileCache(f)?.frontmatter;

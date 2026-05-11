@@ -1,6 +1,7 @@
 import { promises as fs } from "fs";
 import * as os from "os";
 import * as path from "path";
+import { normalizeProjectsRoot } from "./projectPaths";
 
 // Installs a SessionEnd hook for each supported agent (Claude Code, Gemini CLI,
 // Copilot CLI). The hook invokes a shared shell script that opens an
@@ -33,6 +34,8 @@ export interface HookInstallOptions {
    *  `~/.claude/settings.json` pointing at `~/.claude/statusline-plugin/run`.
    *  When false, any op-managed statusLine entry is removed. Default true. */
   usePluginStatusline?: boolean;
+  /** Configured vault-relative root that contains project folders. */
+  projectsRoot?: string;
 }
 
 export interface HookInstallResult {
@@ -65,10 +68,12 @@ export async function installAgentHooks(
   const newFileGuard = !!options.newFileGuard;
   // Default true per OP-269: "use plugin statusline" on unless explicitly disabled.
   const usePluginStatusline = options.usePluginStatusline !== false;
+  const projectsRoot = normalizeProjectsRoot(options.projectsRoot);
   await writeGuardScript(guardScriptPath, {
     enforceWorktree,
     managedNoteGuard,
     newFileGuard,
+    projectsRoot,
   });
 
   const installed: string[] = [];
@@ -176,6 +181,7 @@ interface GuardScriptLayers {
   enforceWorktree: boolean;
   managedNoteGuard: boolean;
   newFileGuard: boolean;
+  projectsRoot: string;
 }
 
 async function writeGuardScript(
@@ -305,23 +311,23 @@ async function writeGuardScript(
   if (layers.newFileGuard) {
     body.push(
     "# === Layer 3: new-file refusal ===",
+    `projects_root=${shQuote(layers.projectsRoot)}`,
+    'projects_root_re=$(printf %s "$projects_root" | sed \'s/[][(){}.^$+*?|\\/]/\\\\&/g\')',
     'if [ "${OP_ALLOW_NEW_FILE:-}" != "1" ] && [ -n "$file" ]; then',
-    '  case "$file" in',
-    '    */Projects/*/ISSUES/*|*/Projects/*/RESOLVED\\ ISSUES/*|*/Projects/*/TASKS/*)',
-    '      if [ ! -e "$file" ]; then',
-    '        case "$file" in',
-    '          */Projects/*/ISSUES/*)             new_hint="Use op-new project=<slug> title=\\"...\\" to create new issues — the plugin owns ID numbering, filename sanitization, and the schema-conformant frontmatter." ;;',
-    '          */Projects/*/TASKS/*)              new_hint="Use op-task-create issue=<id> title=\\"...\\" to create new TASK notes — the plugin links them to the parent issue and sets the schema." ;;',
-    '          */Projects/*/RESOLVED\\ ISSUES/*)  new_hint="" ;;',
-    '          *)                                 new_hint="" ;;',
-    "        esac",
+    '  if printf %s "$file" | grep -Eq "/${projects_root_re}/[^/]+/(ISSUES|RESOLVED ISSUES|TASKS)/"; then',
+    '    if [ ! -e "$file" ]; then',
+    '      new_hint=""',
+    '      if printf %s "$file" | grep -Eq "/${projects_root_re}/[^/]+/ISSUES/"; then',
+    '        new_hint="Use op-new project=<slug> title=\\"...\\" to create new issues — the plugin owns ID numbering, filename sanitization, and the schema-conformant frontmatter."',
+    '      elif printf %s "$file" | grep -Eq "/${projects_root_re}/[^/]+/TASKS/"; then',
+    '        new_hint="Use op-task-create issue=<id> title=\\"...\\" to create new TASK notes — the plugin links them to the parent issue and sets the schema."',
+    "      fi",
     '        echo "op-obsidian: refusing creation of new file under managed folder: $file" >&2',
     '        if [ -n "$new_hint" ]; then echo "$new_hint" >&2; fi',
     '        echo "Override with OP_ALLOW_NEW_FILE=1 for a one-line edit." >&2',
     "        exit 2",
-    "      fi",
-    "      ;;",
-    "  esac",
+    '    fi',
+    '  fi',
     "fi",
     "",
     );

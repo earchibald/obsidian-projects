@@ -1,7 +1,8 @@
 import { App, Notice, TFile, normalizePath } from "obsidian";
 import { showActionableNotice, type ActionableNoticeOptions } from "./actionableNotices";
+import { currentProjectsRoot, scratchFilePath } from "./projectPaths";
 
-export const NOTIFICATION_LOG_PATH = "Projects/_scratch/op-notifications.md";
+export const NOTIFICATION_LOG_PATH = scratchFilePath("op-notifications.md");
 export const MAX_LOG_ENTRIES = 500;
 
 const HEADER =
@@ -86,7 +87,9 @@ export function appendNotification(
 }
 
 async function writeOnce(app: App, entry: NotificationEntry): Promise<void> {
-  const path = normalizePath(NOTIFICATION_LOG_PATH);
+  const path = normalizePath(
+    scratchFilePath("op-notifications.md", currentProjectsRoot(app)),
+  );
   const folder = path.split("/").slice(0, -1).join("/");
   if (folder && !(await app.vault.adapter.exists(folder))) {
     await app.vault.createFolder(folder).catch(() => {});
@@ -125,7 +128,9 @@ export function notifyAction(opts: ActionableNoticeOptions): Notice {
 }
 
 export async function openNotificationLog(app: App): Promise<void> {
-  const path = normalizePath(NOTIFICATION_LOG_PATH);
+  const path = normalizePath(
+    scratchFilePath("op-notifications.md", currentProjectsRoot(app)),
+  );
   const existing = app.vault.getAbstractFileByPath(path);
   if (existing instanceof TFile) {
     await app.workspace.getLeaf(false).openFile(existing);

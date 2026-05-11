@@ -3,6 +3,7 @@ import type { ITermPlacement } from "./terminalLaunch";
 import { LAYOUT_IDS, type LayoutId } from "./layout/layouts";
 import { type RegistryData, emptyRegistry, mergeRegistry } from "./layout/registry";
 import type { OrchestratorSettings } from "./orchestrator";
+import { DEFAULT_PROJECTS_ROOT, normalizeProjectsRoot } from "./projectPaths";
 import { type RecencyEntry, sanitizeRecency } from "./recencyLog";
 
 export const EXTRA_PREAMBLE_MAX = 4000;
@@ -221,6 +222,7 @@ export interface OpSettings {
   defaultAgent: AgentId;
   alwaysPick: boolean;
   agentOverlays: Partial<Record<AgentId, ProfileOverlay>>;
+  projectsRoot: string;
   injection: InjectionSettings;
   workingDirs: Record<string, string>;
   terminal: "Terminal" | "iTerm";
@@ -303,6 +305,7 @@ export const DEFAULT_SETTINGS: OpSettings = {
   defaultAgent: "claude",
   alwaysPick: false,
   agentOverlays: {},
+  projectsRoot: DEFAULT_PROJECTS_ROOT,
   injection: {
     injectBody: true,
     maxBodyChars: 8000,
@@ -422,6 +425,11 @@ export function mergeSettings(loaded: unknown): OpSettings {
   if (typeof l.alwaysPick === "boolean") base.alwaysPick = l.alwaysPick;
   if (l.agentOverlays && typeof l.agentOverlays === "object") {
     base.agentOverlays = l.agentOverlays;
+  }
+  if (typeof (l as { projectsRoot?: unknown }).projectsRoot === "string") {
+    base.projectsRoot = normalizeProjectsRoot(
+      (l as { projectsRoot: string }).projectsRoot,
+    );
   }
   if (l.injection && typeof l.injection === "object") {
     base.injection = { ...base.injection, ...l.injection };

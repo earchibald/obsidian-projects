@@ -1,5 +1,11 @@
 import { App, TFile } from "obsidian";
 import type { IssueStore } from "./issueStore";
+import {
+  currentProjectsRoot,
+  joinVaultPath,
+  projectFolderFromManagedNotePath,
+  projectFolderPath,
+} from "./projectPaths";
 import type { IssueEntry } from "./types";
 
 export interface WorkIssueArgs {
@@ -161,7 +167,10 @@ function nonEmpty(v: unknown): string | undefined {
 }
 
 async function createDefaultTask(app: App, entry: IssueEntry): Promise<string> {
-  const folder = `Projects/${entry.project}/TASKS`;
+  const folder =
+    projectFolderFromManagedNotePath(entry.path)
+      ? joinVaultPath(projectFolderFromManagedNotePath(entry.path), "TASKS")
+      : joinVaultPath(projectFolderPath(entry.project, currentProjectsRoot(app)), "TASKS");
   if (!app.vault.getAbstractFileByPath(folder)) {
     await app.vault.createFolder(folder);
   }

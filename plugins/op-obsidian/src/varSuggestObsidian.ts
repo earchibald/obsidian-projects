@@ -17,6 +17,7 @@ import {
   type VarCandidate,
 } from "./varSuggest";
 import { loadModules } from "./workflowModule";
+import { currentProjectsRoot } from "./projectPaths";
 import {
   parseModule,
   type WorkflowModule,
@@ -72,7 +73,8 @@ export class VarEditorSuggest extends EditorSuggest<Suggestion> {
 
   onTrigger(cursor: EditorPosition, editor: Editor, file: TFile | null): EditorSuggestTriggerInfo | null {
     if (!file) { this.pending = null; return null; }
-    if (!isWorkflowFile(file.path)) { this.pending = null; return null; }
+    const projectsRoot = currentProjectsRoot(this.app);
+    if (!isWorkflowFile(file.path, projectsRoot)) { this.pending = null; return null; }
 
     // 1. vars: block snippet — fires only on an empty bullet line.
     const lines = editor.getValue().split("\n");
@@ -206,7 +208,7 @@ interface VarSuggestContext {
 }
 
 function loadVarSuggestContext(app: App, file: TFile): VarSuggestContext {
-  const cls = classifyWorkflowFile(file.path);
+  const cls = classifyWorkflowFile(file.path, currentProjectsRoot(app));
   if (!cls) return { currentModule: null, globalModules: [], projectModules: [] };
 
   const slug =

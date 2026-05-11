@@ -175,7 +175,7 @@ const HINTS: Readonly<Record<WorkflowDiagnosticCode, string>> = Object.freeze({
   "missing-var":
     "Declare a default in the module's `vars:` block, or supply a value at the next-higher precedence scope.",
   "unknown-module":
-    "Check the spelling, or create the module file at `Projects/_op-modules/<id>.md`.",
+    "Check the spelling, or create the module file in the configured global modules folder.",
   "schema-mismatch":
     "Update the module to the current schema version. See docs/schema.md for the migration.",
   "import-collision":

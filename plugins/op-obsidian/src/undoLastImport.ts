@@ -5,6 +5,7 @@ import {
   parseTransaction,
   type TransactionRecord,
 } from "./exportImportPure";
+import { currentProjectsRoot, importHistoryDirPath, statusPathFor } from "./projectPaths";
 
 // IO seam for `op-undo-last-import` (OP-187 / Child 4 of OP-181).
 // Reverses the most recent transaction record in `Projects/_op-import-history/`:
@@ -100,7 +101,9 @@ export async function undoLastImport(
     }
     // project scope
     if (!v.projectSlug) continue;
-    const statusPath = normalizePath(`Projects/${v.projectSlug}/STATUS.md`);
+    const statusPath = normalizePath(
+      statusPathFor(v.projectSlug, currentProjectsRoot(app)),
+    );
     const statusFile = app.vault.getAbstractFileByPath(statusPath);
     if (!(statusFile instanceof TFile)) continue;
     await app.fileManager.processFrontMatter(
@@ -148,7 +151,9 @@ export async function undoLastImport(
 async function findLatestTransaction(
   app: App,
 ): Promise<{ file: TFile; record: TransactionRecord } | null> {
-  const dir = app.vault.getAbstractFileByPath(normalizePath(TRANSACTION_HISTORY_DIR));
+  const dir = app.vault.getAbstractFileByPath(
+    normalizePath(importHistoryDirPath(currentProjectsRoot(app))),
+  );
   if (!dir || dir instanceof TFile) return null;
   // TFolder duck-typed (`children` array).
   const children = (dir as { children?: Array<unknown> }).children ?? [];

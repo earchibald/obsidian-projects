@@ -1,5 +1,6 @@
 import { App, TFile, normalizePath } from "obsidian";
 import { findProjectBySlug } from "./projects";
+import { joinVaultPath } from "./projectPaths";
 import { sanitizeIssueTitle } from "./sanitize";
 import { renderDocNote, isDocType, type DocType } from "./docCreatePure";
 
@@ -34,7 +35,7 @@ export async function docCreate(app: App, input: DocCreateInput): Promise<DocCre
     throw new Error("op-doc-create: title sanitizes to empty — pass a non-empty title");
   }
 
-  const docsFolder = `Projects/${project.slug}/DOCS`;
+  const docsFolder = joinVaultPath(project.folderPath, "DOCS");
   if (!app.vault.getAbstractFileByPath(docsFolder)) {
     await app.vault.createFolder(docsFolder);
   }

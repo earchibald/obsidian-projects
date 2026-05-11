@@ -1,5 +1,6 @@
 import { App, TFile, normalizePath } from "obsidian";
 import { loadModules } from "./workflowModule";
+import { currentProjectsRoot, exportDirPath } from "./projectPaths";
 import type { WorkflowModule } from "./workflowModulePure";
 import { formatExportFile } from "./exportImportPure";
 
@@ -13,7 +14,7 @@ import { formatExportFile } from "./exportImportPure";
 //                        project modules + globals carrying that `project:`)
 //                        to `Projects/_op-export/<slug>/<id>.md`.
 
-export const EXPORT_DIR = "Projects/_op-export";
+export const EXPORT_DIR = exportDirPath();
 
 export interface ExportSingleArgs {
   kind: "id";
@@ -52,6 +53,7 @@ export interface ExportResult {
  * half-written bundle.
  */
 export async function exportModules(app: App, args: ExportArgs): Promise<ExportResult> {
+  const exportDir = exportDirPath(currentProjectsRoot(app));
   const { modules: discovered, diagnostics } = loadModules(app);
   const fatal = diagnostics.filter((d) => d.severity === "error");
   if (fatal.length > 0) {
@@ -69,8 +71,8 @@ export async function exportModules(app: App, args: ExportArgs): Promise<ExportR
     );
   }
 
-  await ensureFolder(app, EXPORT_DIR);
-  const subfolder = args.kind === "project" ? `${EXPORT_DIR}/${args.projectSlug}` : null;
+  await ensureFolder(app, exportDir);
+  const subfolder = args.kind === "project" ? `${exportDir}/${args.projectSlug}` : null;
   if (subfolder) await ensureFolder(app, subfolder);
 
   const out: ExportedFile[] = [];
@@ -84,7 +86,7 @@ export async function exportModules(app: App, args: ExportArgs): Promise<ExportR
     const raw = await app.vault.read(tfile);
     const body = stripFrontmatter(raw);
     const exportPath = normalizePath(
-      subfolder ? `${subfolder}/${module.id}.md` : `${EXPORT_DIR}/${module.id}.md`,
+      subfolder ? `${subfolder}/${module.id}.md` : `${exportDir}/${module.id}.md`,
     );
     const content = formatExportFile({ module, body });
     await writeFile(app, exportPath, content);

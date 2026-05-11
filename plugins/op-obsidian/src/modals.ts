@@ -13,6 +13,13 @@ import {
   validateSha,
   validateSubject,
 } from "./modalValidation";
+import {
+  currentProjectsRoot,
+  exportDirPath,
+  globalModulesDirPath,
+  importHistoryDirPath,
+  modulesFolderPath,
+} from "./projectPaths";
 
 export class AgentPickerModal extends FuzzySuggestModal<AgentId> {
   constructor(
@@ -143,8 +150,8 @@ export class NewModuleIdModal extends Modal {
     contentEl.empty();
     const where =
       this.scopeKind === "global"
-        ? "Projects/_op-modules/"
-        : `Projects/${this.projectSlug ?? ""}/MODULES/`;
+        ? `${globalModulesDirPath(currentProjectsRoot(this.app))}/`
+        : `${modulesFolderPath(this.projectSlug ?? "", currentProjectsRoot(this.app))}/`;
     contentEl.createEl("h2", { text: "New workflow module" });
     contentEl.createEl("p", {
       text: `The new module will be created at ${where}<id>.md when the agent writes it.`,
@@ -653,9 +660,10 @@ export class ExportModulePromptModal extends Modal {
   onOpen(): void {
     const { contentEl } = this;
     contentEl.empty();
+    const projectsRoot = currentProjectsRoot(this.app);
     contentEl.createEl("h2", { text: "Export workflow module(s)" });
     contentEl.createEl("p", {
-      text: "Writes to Projects/_op-export/. Pick id (single module) or project (bundle).",
+      text: `Writes to ${exportDirPath(projectsRoot)}/. Pick id (single module) or project (bundle).`,
     });
     new Setting(contentEl)
       .setName("Mode")
@@ -722,15 +730,16 @@ export class ImportModulePromptModal extends Modal {
   onOpen(): void {
     const { contentEl } = this;
     contentEl.empty();
+    const projectsRoot = currentProjectsRoot(this.app);
     contentEl.createEl("h2", { text: "Import workflow module" });
     contentEl.createEl("p", {
-      text: "Reads from a vault path or absolute filesystem path. Backs up any existing target file and writes a transaction record under Projects/_op-import-history/.",
+      text: `Reads from a vault path or absolute filesystem path. Backs up any existing target file and writes a transaction record under ${importHistoryDirPath(projectsRoot)}/.`,
     });
     new Setting(contentEl)
       .setName("Source path")
       .setDesc("Vault-relative or absolute path to the bundle .md file.")
       .addText((t) =>
-        t.setPlaceholder("Projects/_op-export/orient.md").onChange((v) => {
+        t.setPlaceholder(`${exportDirPath(projectsRoot)}/orient.md`).onChange((v) => {
           this.sourcePath = v;
         }),
       );
@@ -738,8 +747,8 @@ export class ImportModulePromptModal extends Modal {
       .setName("Land as")
       .addDropdown((d) =>
         d
-          .addOption("global", "Global (Projects/_op-modules/)")
-          .addOption("project", "Per-project (Projects/<slug>/MODULES/)")
+          .addOption("global", `Global (${globalModulesDirPath(projectsRoot)}/)`)
+          .addOption("project", `Per-project (${projectsRoot}/<slug>/MODULES/)`)
           .setValue("global")
           .onChange((v) => {
             this.targetScope = v as "global" | "project";

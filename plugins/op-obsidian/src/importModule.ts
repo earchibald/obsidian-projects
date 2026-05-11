@@ -14,6 +14,13 @@ import {
   serializeTransaction,
   transactionFilename,
 } from "./exportImportPure";
+import {
+  currentProjectsRoot,
+  globalModulePath,
+  importHistoryDirPath,
+  modulesFolderPath,
+  statusPathFor,
+} from "./projectPaths";
 import type { WorkflowModule, VarDecl } from "./workflowModulePure";
 
 /**
@@ -23,7 +30,7 @@ import type { WorkflowModule, VarDecl } from "./workflowModulePure";
  * a vitest run that mocks `obsidian` minimally.
  */
 function readProjectVars(app: App, project: string): Record<string, string> {
-  const statusPath = `Projects/${project}/STATUS.md`;
+  const statusPath = statusPathFor(project, currentProjectsRoot(app));
   const file = app.vault.getAbstractFileByPath(statusPath);
   if (!(file instanceof TFile)) return {};
   const fm = app.metadataCache.getFileCache(file)?.frontmatter;
@@ -131,8 +138,8 @@ export async function prepareImport(
 
   const targetPath =
     args.targetScope === "global"
-      ? `Projects/_op-modules/${parsed.module.id}.md`
-      : `Projects/${args.targetProjectSlug!.trim()}/MODULES/${parsed.module.id}.md`;
+      ? globalModulePath(parsed.module.id, currentProjectsRoot(app))
+      : `${modulesFolderPath(args.targetProjectSlug!.trim(), currentProjectsRoot(app))}/${parsed.module.id}.md`;
 
   const existing = app.vault.getAbstractFileByPath(normalizePath(targetPath));
   const existingTargetPath = existing instanceof TFile ? existing.path : undefined;
@@ -146,6 +153,7 @@ export async function prepareImport(
     module: parsed.module,
     body: parsed.body,
     targetScope: args.targetScope,
+    projectsRoot: currentProjectsRoot(app),
     globalVars: settings.workflowVars,
     projectVars,
   };
@@ -220,10 +228,11 @@ export async function commitImport(
 
   const date = now();
   const tsFilename = transactionFilename(date);
-  const backupRoot = `${TRANSACTION_HISTORY_DIR}/${tsFilename}.bak`;
-  const transactionPath = `${TRANSACTION_HISTORY_DIR}/${tsFilename}.json`;
+  const historyDir = importHistoryDirPath(currentProjectsRoot(app));
+  const backupRoot = `${historyDir}/${tsFilename}.bak`;
+  const transactionPath = `${historyDir}/${tsFilename}.json`;
 
-  await ensureFolder(app, TRANSACTION_HISTORY_DIR);
+  await ensureFolder(app, historyDir);
 
   // 1. Back up an existing file at the target, if any.
   let backupPath: string | undefined;
@@ -345,7 +354,9 @@ async function applyVarWrite(
   if (!w.projectSlug) {
     throw new Error(`applyVarWrite: project-scope write missing projectSlug for ${w.name}`);
   }
-  const statusPath = normalizePath(`Projects/${w.projectSlug}/STATUS.md`);
+  const statusPath = normalizePath(
+    statusPathFor(w.projectSlug, currentProjectsRoot(app)),
+  );
   const file = app.vault.getAbstractFileByPath(statusPath);
   if (!(file instanceof TFile)) {
     throw new Error(

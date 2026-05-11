@@ -1,6 +1,10 @@
 import { App, normalizePath } from "obsidian";
+import {
+  currentProjectsRoot,
+  scratchFilePath,
+} from "./projectPaths";
 
-export const SCRATCH_PATH = "Projects/_scratch/op-last-response.md";
+export const SCRATCH_PATH = scratchFilePath("op-last-response.md");
 
 export interface UriResponsePayload {
   ok: boolean;
@@ -26,7 +30,7 @@ export async function writeUriResponse(app: App, payload: UriResponsePayload): P
     "",
   ].join("\n");
 
-  const path = normalizePath(SCRATCH_PATH);
+  const path = normalizePath(scratchFilePath("op-last-response.md", currentProjectsRoot(app)));
   const folder = path.slice(0, path.lastIndexOf("/"));
   if (!app.vault.getAbstractFileByPath(folder)) {
     await app.vault.createFolder(folder);

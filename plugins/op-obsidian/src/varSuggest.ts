@@ -30,6 +30,7 @@ import {
   precedenceScopeLabel,
   type PrecedenceScope,
 } from "./workflowDiagnosticFormat";
+import { globalModulesDirPath, normalizeProjectsRoot } from "./projectPaths";
 import type { VarDecl, WorkflowModule } from "./workflowModulePure";
 
 // ---------------------------------------------------------------------------
@@ -425,8 +426,6 @@ function scopeSourcePhrase(scope: PrecedenceScope, sourceId: string): string {
 // File-path classification (pure)
 // ---------------------------------------------------------------------------
 
-const PROJECTS_ROOT = "Projects/";
-const GLOBAL_MODULES_DIR = "Projects/_op-modules/";
 const PER_PROJECT_MODULES_INFIX = "/MODULES/";
 const WORKFLOW_FILENAME = "WORKFLOW.md";
 
@@ -443,19 +442,22 @@ export type WorkflowFileKind =
  * `workflowModule.ts` + `workflowFile.ts`; keep both in lockstep when the
  * directory layout evolves.
  */
-export function isWorkflowFile(path: string): boolean {
-  return classifyWorkflowFile(path) !== null;
+export function isWorkflowFile(path: string, projectsRoot?: string): boolean {
+  return classifyWorkflowFile(path, projectsRoot) !== null;
 }
 
-export function classifyWorkflowFile(path: string): WorkflowFileKind | null {
-  if (!path.startsWith(PROJECTS_ROOT)) return null;
-  if (path.startsWith(GLOBAL_MODULES_DIR)) {
-    const rel = path.slice(GLOBAL_MODULES_DIR.length);
+export function classifyWorkflowFile(path: string, projectsRoot?: string): WorkflowFileKind | null {
+  const root = normalizeProjectsRoot(projectsRoot);
+  const rootPrefix = `${root}/`;
+  const globalModulesDir = `${globalModulesDirPath(root)}/`;
+  if (!path.startsWith(rootPrefix)) return null;
+  if (path.startsWith(globalModulesDir)) {
+    const rel = path.slice(globalModulesDir.length);
     if (rel.includes("/") || !rel.endsWith(".md")) return null;
     return { kind: "global-module", id: rel.slice(0, -3) };
   }
   if (path.endsWith(`/${WORKFLOW_FILENAME}`)) {
-    const trimmed = path.slice(PROJECTS_ROOT.length);
+    const trimmed = path.slice(rootPrefix.length);
     const slugEnd = trimmed.indexOf("/");
     if (slugEnd === -1) return null;
     const slug = trimmed.slice(0, slugEnd);
@@ -467,7 +469,7 @@ export function classifyWorkflowFile(path: string): WorkflowFileKind | null {
   const slugStart = before.lastIndexOf("/");
   if (slugStart === -1) return null;
   const slug = before.slice(slugStart + 1);
-  if (!slug || before !== `${PROJECTS_ROOT.slice(0, -1)}/${slug}`) return null;
+  if (!slug || before !== `${root}/${slug}`) return null;
   const after = path.slice(moduleIdx + PER_PROJECT_MODULES_INFIX.length);
   if (after.includes("/") || !after.endsWith(".md")) return null;
   return { kind: "project-module", slug, id: after.slice(0, -3) };

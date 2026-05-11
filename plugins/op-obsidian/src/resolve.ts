@@ -1,5 +1,11 @@
 import { App, Modal, Setting, TFile, normalizePath } from "obsidian";
 import type { IssueStore } from "./issueStore";
+import {
+  currentProjectsRoot,
+  joinVaultPath,
+  projectFolderFromManagedNotePath,
+  projectFolderPath,
+} from "./projectPaths";
 import type { IssueEntry, TaskEntry } from "./types";
 import { findIssue } from "./findIssue";
 import { listProjects } from "./projects";
@@ -95,7 +101,11 @@ export async function runResolve(
   if (!(file instanceof TFile)) return { ok: false, error: "Issue file missing", issueId: entry.id };
 
   const tasks = store.tasks().filter((t) => linksIssue(t, entry));
-  const targetDir = `Projects/${entry.project}/RESOLVED ISSUES`;
+  const targetDir = joinVaultPath(
+    projectFolderFromManagedNotePath(entry.path) ??
+      projectFolderPath(entry.project, currentProjectsRoot(app)),
+    "RESOLVED ISSUES",
+  );
   const targetPath = normalizePath(`${targetDir}/${file.name}`);
 
   if (!args.confirmed) {

@@ -353,6 +353,13 @@ describe("isWorkflowFile / classifyWorkflowFile", () => {
     });
   });
 
+  it("recognises workflow files under a configured root", () => {
+    expect(classifyWorkflowFile("Workspace/Projects/demo/WORKFLOW.md", "Workspace/Projects")).toEqual({
+      kind: "workflow",
+      slug: "demo",
+    });
+  });
+
   it("rejects regular issue notes", () => {
     expect(isWorkflowFile("Projects/demo/ISSUES/OP-1 something.md")).toBe(false);
     expect(classifyWorkflowFile("Projects/demo/ISSUES/OP-1 something.md")).toBeNull();

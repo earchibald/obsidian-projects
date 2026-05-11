@@ -1,8 +1,10 @@
+import { scratchFilePath } from "./projectPaths";
+
 // Pure helpers for the op-audit JSONL writer. Splitting the encode + rotation
 // logic from the obsidian-bound writer (`auditLog.ts`) keeps it vitest-friendly
 // and lets the bypass detector reuse the same encoding path.
 
-export const AUDIT_LOG_PATH = "Projects/_scratch/op-audit.jsonl";
+export const AUDIT_LOG_PATH = scratchFilePath("op-audit.jsonl");
 export const AUDIT_ROTATE_BYTES = 10 * 1024 * 1024; // 10 MB
 export const AUDIT_MAX_BACKUPS = 5;
 
