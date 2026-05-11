@@ -1,4 +1,5 @@
 import type { App } from "obsidian";
+import { currentProjectsRoot, globalModulesDirPath } from "./projectPaths";
 
 // Inline example workflow-module library for the Settings → Workflows
 // empty-state. The "Install example library" button writes these files into
@@ -12,7 +13,7 @@ import type { App } from "obsidian";
 // one with a `vars:` block. They serve double duty as documentation — opening
 // either file shows a complete, valid module.
 
-const EXAMPLES_DIR = "Projects/_op-modules/";
+const EXAMPLES_DIR = `${globalModulesDirPath()}/`;
 
 export interface ExampleModule {
   /** Module id — used for the filename, must match the frontmatter `id:`. */
@@ -97,9 +98,10 @@ export interface InstallExamplesResult {
 export async function installExampleLibrary(app: App): Promise<InstallExamplesResult> {
   const installed: string[] = [];
   const skipped: string[] = [];
-  await ensureDir(app, EXAMPLES_DIR);
+  const examplesDir = `${globalModulesDirPath(currentProjectsRoot(app))}/`;
+  await ensureDir(app, examplesDir);
   for (const ex of EXAMPLE_MODULES) {
-    const filePath = `${EXAMPLES_DIR}${ex.id}.md`;
+    const filePath = `${examplesDir}${ex.id}.md`;
     if (await app.vault.adapter.exists(filePath)) {
       skipped.push(filePath);
       continue;

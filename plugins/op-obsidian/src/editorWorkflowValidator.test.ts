@@ -122,6 +122,12 @@ describe("classifyFile", () => {
       project: "",
     });
   });
+  it("classifies files under a configured root", () => {
+    expect(classifyFile("Workspace/Projects/demo/WORKFLOW.md", "Workspace/Projects")).toEqual({
+      kind: "workflow",
+      project: "demo",
+    });
+  });
   it("rejects unrelated paths", () => {
     expect(classifyFile("Projects/demo/ISSUES/OP-1.md")).toBeNull();
     expect(classifyFile("Projects/_op-modules/sub/nested.md")).toBeNull();

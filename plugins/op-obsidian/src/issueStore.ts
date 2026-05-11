@@ -1,5 +1,6 @@
 import { App, TFile, Component, CachedMetadata, EventRef } from "obsidian";
 import type { EventBus } from "./eventBus";
+import { currentProjectsRoot, isWithinProjectsRoot } from "./projectPaths";
 import type {
   IssueEntry,
   IssueStatus,
@@ -7,8 +8,6 @@ import type {
   TaskEntry,
   TaskStatus,
 } from "./types";
-
-const PROJECTS_ROOT = "Projects/";
 
 export class IssueStore extends Component {
   private entries = new Map<string, StoreEntry>();
@@ -47,8 +46,9 @@ export class IssueStore extends Component {
 
   rebuild(): void {
     this.entries.clear();
+    const root = currentProjectsRoot(this.app);
     for (const file of this.app.vault.getMarkdownFiles()) {
-      if (!file.path.startsWith(PROJECTS_ROOT)) continue;
+      if (!isWithinProjectsRoot(file.path, root)) continue;
       const cache = this.app.metadataCache.getFileCache(file);
       const entry = this.parse(file, cache);
       if (entry) this.entries.set(file.path, entry);
@@ -79,7 +79,7 @@ export class IssueStore extends Component {
   }
 
   private handleChange(file: TFile): void {
-    if (!file.path.startsWith(PROJECTS_ROOT)) return;
+    if (!isWithinProjectsRoot(file.path, currentProjectsRoot(this.app))) return;
     const cache = this.app.metadataCache.getFileCache(file);
     const next = this.parse(file, cache);
     const prev = this.entries.get(file.path);

@@ -24,6 +24,12 @@ import {
   type VarDecl,
   type WorkflowModule,
 } from "./workflowModulePure";
+import {
+  globalModulePath,
+  importHistoryDirPath,
+  modulesFolderPath,
+  normalizeProjectsRoot,
+} from "./projectPaths";
 import type { WorkflowDiagnostic } from "./workflowDiagnostic";
 
 // ---------------------------------------------------------------------------
@@ -295,6 +301,8 @@ export interface PlanImportArgs {
   targetScope: ImportScopeKind;
   /** Required when `targetScope === "project"`. */
   targetProjectSlug?: string;
+  /** Vault-relative Projects root to land under. Defaults to `Projects`. */
+  projectsRoot?: string;
   /**
    * The user's pre-supplied answers for any var the importer would otherwise
    * prompt for. Keyed by var name. Empty string is preserved as a real answer.
@@ -391,10 +399,11 @@ export function planImport(args: PlanImportArgs): ImportPlan {
     throw new Error("planImport: targetProjectSlug is required when targetScope=project");
   }
 
+  const projectsRoot = normalizeProjectsRoot(args.projectsRoot);
   const targetPath =
     targetScope === "global"
-      ? `Projects/_op-modules/${module.id}.md`
-      : `Projects/${targetProjectSlug!.trim()}/MODULES/${module.id}.md`;
+      ? globalModulePath(module.id, projectsRoot)
+      : `${modulesFolderPath(targetProjectSlug!.trim(), projectsRoot)}/${module.id}.md`;
 
   // Project rewrite: per-project landings always set `project:` to the slug
   // they land under. Global landings preserve the source `project:` field.
@@ -506,7 +515,7 @@ function hasExplicitDefault(decl: VarDecl): boolean {
 // Transaction record
 // ---------------------------------------------------------------------------
 
-export const TRANSACTION_HISTORY_DIR = "Projects/_op-import-history";
+export const TRANSACTION_HISTORY_DIR = importHistoryDirPath();
 export const TRANSACTION_VERSION = 1;
 
 export interface TransactionModuleEntry {

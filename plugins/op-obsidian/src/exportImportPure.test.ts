@@ -267,6 +267,19 @@ describe("planImport", () => {
     expect(plan.rewrittenProject).toBe("new-slug");
   });
 
+  it("targets the configured root when projectsRoot is provided", () => {
+    const plan = planImport({
+      module: baseModule,
+      body: baseBody,
+      targetScope: "project",
+      targetProjectSlug: "demo",
+      projectsRoot: "Workspace/Projects",
+      globalVars: {},
+      projectVars: {},
+    });
+    expect(plan.targetPath).toBe("Workspace/Projects/demo/MODULES/orient.md");
+  });
+
   it("throws when scope=project lacks a slug", () => {
     expect(() =>
       planImport({

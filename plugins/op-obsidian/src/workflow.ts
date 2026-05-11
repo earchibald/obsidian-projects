@@ -1,4 +1,5 @@
 import { App, TFile, normalizePath } from "obsidian";
+import { currentProjectsRoot, workflowPathForProject } from "./projectPaths";
 
 export interface GetWorkflowResult {
   project: string;
@@ -8,14 +9,17 @@ export interface GetWorkflowResult {
   size: number;
 }
 
-export function workflowPathFor(project: string): string {
-  return normalizePath(`Projects/${project}/WORKFLOW.md`);
+export function workflowPathFor(
+  project: string,
+  projectsRoot = currentProjectsRoot(undefined),
+): string {
+  return normalizePath(workflowPathForProject(project, projectsRoot));
 }
 
 export async function getWorkflow(app: App, project: string): Promise<GetWorkflowResult> {
   const slug = project.trim();
   if (!slug) throw new Error("project is required");
-  const path = workflowPathFor(slug);
+  const path = workflowPathFor(slug, currentProjectsRoot(app));
   const f = app.vault.getAbstractFileByPath(path);
   if (!(f instanceof TFile)) {
     return { project: slug, path, exists: false, content: null, size: 0 };

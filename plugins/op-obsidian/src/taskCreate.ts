@@ -1,5 +1,6 @@
 import { App, TFile, normalizePath } from "obsidian";
 import type { IssueStore } from "./issueStore";
+import { joinVaultPath, projectFolderFromManagedNotePath } from "./projectPaths";
 import type { IssueEntry } from "./types";
 import { issueFilename } from "./sanitize";
 import {
@@ -36,7 +37,11 @@ export async function taskCreate(
   input: TaskCreateInput,
 ): Promise<TaskCreateResult> {
   const issue = findIssueById(store, input.issueId);
-  const folder = `Projects/${issue.project}/TASKS`;
+  const projectFolder = projectFolderFromManagedNotePath(issue.path);
+  if (!projectFolder) {
+    throw new Error(`op-task-create: could not derive project folder from ${issue.path}`);
+  }
+  const folder = joinVaultPath(projectFolder, "TASKS");
   if (!app.vault.getAbstractFileByPath(folder)) {
     await app.vault.createFolder(folder);
   }

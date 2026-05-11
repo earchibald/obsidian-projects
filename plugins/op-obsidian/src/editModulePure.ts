@@ -1,3 +1,8 @@
+import {
+  globalModulePath,
+  modulesFolderPath,
+} from "./projectPaths";
+
 // Pure helpers for op-edit-module. Kept separate from editModule.ts so they
 // can be unit-tested without loading the obsidian module.
 
@@ -112,15 +117,16 @@ export function modulePathFor(args: {
   scopeKind: ModuleScopeKind;
   projectSlug?: string;
   moduleId: string;
+  projectsRoot?: string;
 }): string {
-  const { scopeKind, projectSlug, moduleId } = args;
+  const { scopeKind, projectSlug, moduleId, projectsRoot } = args;
   const id = moduleId.trim();
   if (!id) throw new Error("modulePathFor: moduleId is required");
   if (scopeKind === "global") {
-    return `Projects/_op-modules/${id}.md`;
+    return globalModulePath(id, projectsRoot);
   }
   if (!projectSlug || !projectSlug.trim()) {
     throw new Error("modulePathFor: projectSlug is required for scopeKind=project");
   }
-  return `Projects/${projectSlug.trim()}/MODULES/${id}.md`;
+  return `${modulesFolderPath(projectSlug.trim(), projectsRoot)}/${id}.md`;
 }

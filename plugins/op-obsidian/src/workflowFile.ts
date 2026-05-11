@@ -7,6 +7,7 @@ import {
   type WorkflowFile,
   type WorkflowStep,
 } from "./workflowFilePure";
+import { currentProjectsRoot, workflowPathForProject } from "./projectPaths";
 import type { WorkflowDiagnostic } from "./workflowDiagnostic";
 
 export type {
@@ -32,8 +33,6 @@ export {
   synthesizeLegacyWorkflow,
   validateWorkflowModels,
 } from "./workflowFilePure";
-
-const PROJECTS_ROOT = "Projects/";
 
 export interface LoadWorkflowResult {
   /** Resolved + merged workflow, or `null` if the file couldn't be salvaged. */
@@ -83,7 +82,9 @@ export async function loadWorkflowFile(
       ],
     };
   }
-  const path = normalizePath(`${PROJECTS_ROOT}${slug}/WORKFLOW.md`);
+  const path = normalizePath(
+    workflowPathForProject(slug, currentProjectsRoot(app)),
+  );
   return loadAtPath(app, { path, project: slug, allowExtends: true });
 }
 

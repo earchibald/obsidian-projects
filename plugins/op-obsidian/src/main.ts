@@ -185,6 +185,7 @@ import { notify, notifyAction, registerApp, unregisterApp, openNotificationLog }
 import { probeLiveTmuxWindows, selectStaleAgentBadges } from "./staleAgentBadges";
 import { appendRecency, mostRecent } from "./recencyLog";
 import { deriveTitle, packScope, resolveCaptureProject } from "./quickCapture";
+import { currentProjectsRoot, isWithinProjectsRoot, scratchDirPath } from "./projectPaths";
 import { openErrorLog, writeErrorLog } from "./errorLog";
 import { configureClient } from "./iterm/client";
 import { closeWindow as itermCloseWindow, openBrowserTab as itermOpenBrowserTab } from "./iterm/driver";
@@ -600,9 +601,10 @@ export default class OpPlugin extends Plugin {
       this.app.vault.on("modify", (file) => {
         if (!file || !(file instanceof TFile)) return;
         const path = file.path;
-        if (!path.startsWith("Projects/")) return;
+        const projectsRoot = currentProjectsRoot(this.app, this.settings);
+        if (!isWithinProjectsRoot(path, projectsRoot)) return;
         if (!path.endsWith(".md")) return;
-        if (path.startsWith("Projects/_scratch/")) return;
+        if (path.startsWith(`${scratchDirPath(projectsRoot)}/`)) return;
         if (this.inFlightOpWritePaths.has(path)) return;
         void appendAuditLine(this.app, {
           cmd: "bypass",
@@ -1553,7 +1555,7 @@ export default class OpPlugin extends Plugin {
         project: {
           value: "<slug>",
           description:
-            "Project slug — required for per-project modules; omit for globals (Projects/_op-modules/).",
+            "Project slug — required for per-project modules; omit for globals (the configured global modules folder).",
         },
         scope: {
           value: "<global|project>",
@@ -1566,7 +1568,7 @@ export default class OpPlugin extends Plugin {
 
     this.registerCliHandler(
       "op-export-module",
-      "Export workflow module(s) to Projects/_op-export/. Pass --id <id> for a single module or --project <slug> to bundle all modules visible to that project.",
+      "Export workflow module(s) to the configured _op-export/ folder. Pass --id <id> for a single module or --project <slug> to bundle all modules visible to that project.",
       {
         id: { value: "<id>", description: "Module id (filename basename, no .md). Single-module mode." },
         project: {
@@ -1580,7 +1582,7 @@ export default class OpPlugin extends Plugin {
 
     this.registerCliHandler(
       "op-import-module",
-      "Import a workflow module from a vault path or absolute filesystem path. Bootstraps missing vars at the chosen scope; backs up any existing target file; writes a transaction record under Projects/_op-import-history/.",
+      "Import a workflow module from a vault path or absolute filesystem path. Bootstraps missing vars at the chosen scope; backs up any existing target file; writes a transaction record under the configured _op-import-history/ folder.",
       {
         path: {
           value: "<path>",
@@ -5720,6 +5722,7 @@ export default class OpPlugin extends Plugin {
         managedNoteGuard: this.settings.agentDiscipline.managedNoteGuard,
         newFileGuard: this.settings.agentDiscipline.newFileGuard,
         usePluginStatusline: this.settings.sessionDecoration.usePluginStatusline,
+        projectsRoot: this.settings.projectsRoot,
       });
       if (announce) {
         const summary = res.installed.length
@@ -5836,9 +5839,9 @@ export default class OpPlugin extends Plugin {
     try {
       const result = await scaffoldDemoProject(this.app);
       if (!result.created) {
-        notify("op: demo project already present at " + DEMO_PROJECT_FOLDER);
+        notify("op: demo project already present at " + result.statusPath.replace(/\/STATUS\.md$/, ""));
       } else {
-        notify("op: demo project scaffolded at " + DEMO_PROJECT_FOLDER);
+        notify("op: demo project scaffolded at " + result.statusPath.replace(/\/STATUS\.md$/, ""));
         const status = this.app.vault.getAbstractFileByPath(result.statusPath);
         if (status instanceof TFile) {
           await this.app.workspace.getLeaf(false).openFile(status);

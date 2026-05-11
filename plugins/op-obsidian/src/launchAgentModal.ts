@@ -488,7 +488,7 @@ class LaunchAgentModal extends Modal {
         cls: "op-launch-modal__preview-hint",
         text: this.workflowFile
           ? "(no composed prompt — WORKFLOW.md loaded but the kickoff step produced empty output; check module bodies and variable bindings)"
-          : "(no composed prompt — no WORKFLOW.md found for this project; create one under Projects/<project>/ to enable prompt composition)",
+          : "(no composed prompt — no WORKFLOW.md found for this project; create one for this project under the configured Projects root to enable prompt composition)",
       });
     }
 

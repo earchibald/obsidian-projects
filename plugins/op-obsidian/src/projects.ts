@@ -1,24 +1,30 @@
 import { App, TFile } from "obsidian";
+import {
+  currentProjectsRoot,
+  isWithinProjectsRoot,
+  projectFolderFromStatusPath,
+} from "./projectPaths";
 
 export interface ProjectInfo {
   slug: string;
   prefix?: string;
   statusPath: string;
+  folderPath: string;
 }
-
-const PROJECTS_ROOT = "Projects/";
 
 export function listProjects(app: App): ProjectInfo[] {
   const out: ProjectInfo[] = [];
+  const root = currentProjectsRoot(app);
   for (const file of app.vault.getMarkdownFiles()) {
-    if (!file.path.startsWith(PROJECTS_ROOT)) continue;
+    if (!isWithinProjectsRoot(file.path, root)) continue;
     if (!file.path.endsWith("/STATUS.md")) continue;
     const fm = app.metadataCache.getFileCache(file)?.frontmatter;
     if (fm?.type !== "project-status") continue;
-    const slug = slugFromStatusPath(file);
-    if (!slug) continue;
+    const folderPath = projectFolderFromStatusPath(file.path);
+    const slug = folderPath?.split("/").pop();
+    if (!folderPath || !slug) continue;
     const prefix = typeof fm.prefix === "string" ? fm.prefix : undefined;
-    out.push({ slug, prefix, statusPath: file.path });
+    out.push({ slug, prefix, statusPath: file.path, folderPath });
   }
   return out.sort((a, b) => a.slug.localeCompare(b.slug));
 }
@@ -53,10 +59,4 @@ export function findProjectByPrefix(app: App, prefix: string): ProjectInfo | und
 
 export function findProjectBySlug(app: App, slug: string): ProjectInfo | undefined {
   return listProjects(app).find((p) => p.slug === slug);
-}
-
-function slugFromStatusPath(file: TFile): string | undefined {
-  const parts = file.path.split("/");
-  if (parts.length < 3) return undefined;
-  return parts[parts.length - 2];
 }

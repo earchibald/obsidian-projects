@@ -1,5 +1,7 @@
 import type { App, TFolder, TAbstractFile } from "obsidian";
 import type { IssueStore } from "./issueStore";
+import { currentProjectsRoot, projectFolderPath } from "./projectPaths";
+import { findProjectBySlug } from "./projects";
 import type { IssueEntry } from "./types";
 import type { ProjectInfo } from "./projects";
 
@@ -100,9 +102,12 @@ export function nextIssueNumberFromVault(
   app: App,
   project: { slug: string; prefix: string },
 ): number {
+  const projectFolder =
+    findProjectBySlug(app, project.slug)?.folderPath ??
+    projectFolderPath(project.slug, currentProjectsRoot(app));
   const folders = [
-    `Projects/${project.slug}/ISSUES`,
-    `Projects/${project.slug}/RESOLVED ISSUES`,
+    `${projectFolder}/ISSUES`,
+    `${projectFolder}/RESOLVED ISSUES`,
   ];
   const re = new RegExp(`^${escapeRegex(project.prefix)}-(\\d+)(?:\\b|[ .-])`);
   let max = 0;

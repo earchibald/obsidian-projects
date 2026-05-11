@@ -64,7 +64,12 @@ import { validateOverlay } from "./overlayValidate";
 import { detectTmux } from "./tmuxDetect";
 import { userError } from "./userError";
 import { execFileSync } from "child_process";
-import { README_PATH } from "./firstRunReadme";
+import {
+  currentProjectsRoot,
+  globalModulesDirPath,
+  onboardingReadmePath,
+  validateProjectsRootInput,
+} from "./projectPaths";
 import {
   EXTRA_PREAMBLE_MAX,
   CLAUDE_SESSION_COLORS,
@@ -573,19 +578,20 @@ export class OpSettingsTab extends PluginSettingTab {
   }
 
   private renderDailyOnboarding(containerEl: HTMLElement): void {
+    const readmePath = onboardingReadmePath(this.plugin.settings.projectsRoot);
     new Setting(containerEl)
       .setName("Onboarding README")
       .setDesc(
-        `Open the op onboarding README — a short tour of the most-used commands and workflows. Located at \`${README_PATH}\`. Deletes don't come back automatically; use the Start tour command from the palette to re-scaffold a demo project.`,
+        `Open the op onboarding README — a short tour of the most-used commands and workflows. Located at \`${readmePath}\`. Deletes don't come back automatically; use the Start tour command from the palette to re-scaffold a demo project.`,
       )
       .addButton((b) =>
         b.setButtonText("Open README").setCta().onClick(async () => {
-          const file = this.app.vault.getAbstractFileByPath(README_PATH);
+          const file = this.app.vault.getAbstractFileByPath(readmePath);
           if (!file) {
-            notify(`op: README not found at ${README_PATH}. Run “op: start guided tour” to re-scaffold.`);
+            notify(`op: README not found at ${readmePath}. Run “op: start guided tour” to re-scaffold.`);
             return;
           }
-          await this.app.workspace.openLinkText(README_PATH, "");
+          await this.app.workspace.openLinkText(readmePath, "");
         }),
       );
   }
@@ -699,7 +705,7 @@ export class OpSettingsTab extends PluginSettingTab {
     new Setting(empty)
       .setName("Install example library")
       .setDesc(
-        `Writes ${EXAMPLE_MODULES.length} starter modules into Projects/_op-modules/. Existing files are never overwritten — safe to click again. Open the installed files to see complete, valid module shape.`,
+        `Writes ${EXAMPLE_MODULES.length} starter modules into ${globalModulesDirPath(this.plugin.settings.projectsRoot)}/. Existing files are never overwritten — safe to click again. Open the installed files to see complete, valid module shape.`,
       )
       .addButton((b) =>
         b
@@ -1050,6 +1056,30 @@ export class OpSettingsTab extends PluginSettingTab {
 
   private renderWorkingDirsAndProjectOrder(containerEl: HTMLElement): void {
     const s = this.plugin.settings;
+    const currentRoot = currentProjectsRoot(this.app, s);
+
+    let nextProjectsRoot = currentRoot;
+    new Setting(containerEl)
+      .setName("Projects path")
+      .setDesc(
+        "Vault-relative folder that contains project folders plus op-owned global files like _scratch/, _op-modules/, and the onboarding README. Changing it offers to move the existing tree so issues, modules, and scratch files keep working.",
+      )
+      .addText((t) => {
+        t.setPlaceholder("Projects");
+        t.setValue(currentRoot);
+        t.inputEl.style.width = "100%";
+        t.onChange((v) => (nextProjectsRoot = v));
+      })
+      .addButton((b) =>
+        b.setButtonText("Apply").setCta().onClick(async () => {
+          const validated = validateProjectsRootInput(nextProjectsRoot);
+          if (!validated.ok) {
+            notify(`projectsRoot: ${validated.error}`);
+            return;
+          }
+          await this.applyProjectsRootChange(currentRoot, validated.value);
+        }),
+      );
 
     containerEl.createEl("p", {
       text: "Per-project repository paths. Overridden by repo_path in STATUS.md frontmatter.",
@@ -2308,6 +2338,47 @@ export class OpSettingsTab extends PluginSettingTab {
     }, ms);
     this.debounceTimers.set(key, handle);
   }
+
+  private async applyProjectsRootChange(oldRoot: string, newRoot: string): Promise<void> {
+    if (oldRoot === newRoot) return;
+    const oldEntry = this.app.vault.getAbstractFileByPath(oldRoot);
+    const targetExists = !!this.app.vault.getAbstractFileByPath(newRoot);
+
+    let moved = false;
+    if (oldEntry) {
+      const canMove = !targetExists && !isNestedVaultPath(oldRoot, newRoot);
+      const action = await promptProjectsRootMigration(this.app, {
+        oldRoot,
+        newRoot,
+        canMove,
+        targetExists,
+      });
+      if (action === "cancel") return;
+      if (action === "move") {
+        await ensureVaultFolder(this.app, parentVaultPath(newRoot));
+        await this.app.fileManager.renameFile(oldEntry, newRoot);
+        moved = true;
+      }
+    }
+
+    this.plugin.settings.projectsRoot = newRoot;
+    await this.plugin.saveSettings();
+    this.plugin.store.rebuild();
+    await this.plugin.reinstallAgentHooks();
+    this.rerenderSection("onboarding");
+    this.rerenderSection("workingDirs");
+    this.rerenderSection("workflows");
+
+    if (moved) {
+      notify(`op: moved ${oldRoot} → ${newRoot}`);
+      return;
+    }
+    if (oldEntry) {
+      notify(`op: Projects path set to ${newRoot}. Existing notes remain under ${oldRoot} until you move them.`);
+      return;
+    }
+    notify(`op: Projects path set to ${newRoot}`);
+  }
 }
 
 // ─── Helpers (module-scoped) ──────────────────────────────────────────────
@@ -2339,6 +2410,39 @@ function detectionSummary(plugin: OpPlugin): string {
   const d = plugin.detector.get();
   if (!d) return "Not probed yet. Click Re-probe to run detection.";
   return AGENT_IDS.map((id) => `${id}: ${d[id].installed ? d[id].path ?? "found" : "not found"}`).join(" · ");
+}
+
+type ProjectsRootMigrationAction = "move" | "switch" | "cancel";
+
+function promptProjectsRootMigration(
+  app: App,
+  args: { oldRoot: string; newRoot: string; canMove: boolean; targetExists: boolean },
+): Promise<ProjectsRootMigrationAction> {
+  return new Promise((resolve) => {
+    new ProjectsRootMigrationModal(app, args, resolve).open();
+  });
+}
+
+function parentVaultPath(path: string): string {
+  const idx = path.lastIndexOf("/");
+  return idx === -1 ? "" : path.slice(0, idx);
+}
+
+async function ensureVaultFolder(app: App, path: string): Promise<void> {
+  if (!path) return;
+  const parts = path.split("/");
+  let cumulative = "";
+  for (const part of parts) {
+    if (!part) continue;
+    cumulative = cumulative ? `${cumulative}/${part}` : part;
+    if (!app.vault.getAbstractFileByPath(cumulative)) {
+      await app.vault.createFolder(cumulative);
+    }
+  }
+}
+
+function isNestedVaultPath(a: string, b: string): boolean {
+  return a.startsWith(`${b}/`) || b.startsWith(`${a}/`);
 }
 
 /**
@@ -2599,6 +2703,63 @@ export class HotkeyPresetResultsModal extends Modal {
           }),
       )
       .addButton((b) => b.setButtonText("Close").onClick(() => this.close()));
+  }
+
+  onClose(): void {
+    this.contentEl.empty();
+  }
+}
+
+class ProjectsRootMigrationModal extends Modal {
+  constructor(
+    app: App,
+    private args: { oldRoot: string; newRoot: string; canMove: boolean; targetExists: boolean },
+    private done: (action: ProjectsRootMigrationAction) => void,
+  ) {
+    super(app);
+  }
+
+  onOpen(): void {
+    const { contentEl, titleEl } = this;
+    titleEl.setText("Change Projects path");
+    contentEl.createEl("p", { text: `Current path: ${this.args.oldRoot}` });
+    contentEl.createEl("p", { text: `New path: ${this.args.newRoot}` });
+
+    if (this.args.canMove) {
+      contentEl.createEl("p", {
+        text: "Move the existing tree to keep issues, modules, scratch files, and onboarding notes working without any manual follow-up.",
+      });
+    } else if (this.args.targetExists) {
+      contentEl.createEl("p", {
+        text: "The target path already exists, so op-obsidian will not auto-move the current tree into it. You can switch the setting now and merge or move files manually afterward.",
+      });
+    } else {
+      contentEl.createEl("p", {
+        text: "The new path is nested under the current one (or vice versa), so auto-move is disabled to avoid moving a folder into itself. You can still switch the setting and move files manually afterward.",
+      });
+    }
+
+    const buttons = new Setting(contentEl);
+    buttons.addButton((b) =>
+      b.setButtonText("Cancel").onClick(() => {
+        this.done("cancel");
+        this.close();
+      }),
+    );
+    buttons.addButton((b) =>
+      b.setButtonText("Switch only").onClick(() => {
+        this.done("switch");
+        this.close();
+      }),
+    );
+    if (this.args.canMove) {
+      buttons.addButton((b) =>
+        b.setButtonText("Move existing tree").setCta().onClick(() => {
+          this.done("move");
+          this.close();
+        }),
+      );
+    }
   }
 
   onClose(): void {

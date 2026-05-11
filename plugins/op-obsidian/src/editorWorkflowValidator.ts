@@ -25,11 +25,13 @@ import {
   summarizeStatus,
   type ValidatorSummary,
 } from "./editorWorkflowValidatorPure";
+import {
+  globalModulesDirPath,
+  normalizeProjectsRoot,
+  projectsRootFromApp,
+} from "./projectPaths";
 
-const PROJECTS_ROOT = "Projects/";
-const GLOBAL_MODULES_DIR = "Projects/_op-modules/";
 const PER_PROJECT_MODULES_INFIX = "/MODULES/";
-const GLOBAL_WORKFLOW_PATH = "Projects/_op-workflow.md";
 
 export type ValidatedFileKind = "module" | "workflow";
 
@@ -52,12 +54,17 @@ export interface ValidatedFileInfo {
  * The global-scoped variants resolve to project: "" — the validator picks an
  * arbitrary project to compose under (or skips when none is available).
  */
-export function classifyFile(path: string): ValidatedFileInfo | null {
-  if (path === GLOBAL_WORKFLOW_PATH) {
+export function classifyFile(path: string, projectsRoot?: string): ValidatedFileInfo | null {
+  const root = normalizeProjectsRoot(projectsRoot);
+  const projectsRootPrefix = `${root}/`;
+  const globalModulesDir = `${globalModulesDirPath(root)}/`;
+  const globalWorkflowPath = `${root}/_op-workflow.md`;
+
+  if (path === globalWorkflowPath) {
     return { kind: "workflow", project: "" };
   }
-  if (path.startsWith(GLOBAL_MODULES_DIR)) {
-    const rel = path.slice(GLOBAL_MODULES_DIR.length);
+  if (path.startsWith(globalModulesDir)) {
+    const rel = path.slice(globalModulesDir.length);
     if (rel.includes("/")) return null;
     if (!rel.endsWith(".md")) return null;
     return { kind: "module", project: "" };
@@ -68,14 +75,14 @@ export function classifyFile(path: string): ValidatedFileInfo | null {
     const slugStart = beforeInfix.lastIndexOf("/");
     if (slugStart === -1) return null;
     const slug = beforeInfix.slice(slugStart + 1);
-    if (!slug || beforeInfix !== `${PROJECTS_ROOT.slice(0, -1)}/${slug}`) return null;
+    if (!slug || beforeInfix !== `${root}/${slug}`) return null;
     const after = path.slice(moduleIdx + PER_PROJECT_MODULES_INFIX.length);
     if (after.includes("/")) return null;
     return { kind: "module", project: slug };
   }
   // Per-project workflow file.
-  if (path.startsWith(PROJECTS_ROOT) && path.endsWith("/WORKFLOW.md")) {
-    const rel = path.slice(PROJECTS_ROOT.length, -"/WORKFLOW.md".length);
+  if (path.startsWith(projectsRootPrefix) && path.endsWith("/WORKFLOW.md")) {
+    const rel = path.slice(projectsRootPrefix.length, -"/WORKFLOW.md".length);
     if (!rel || rel.includes("/")) return null;
     return { kind: "workflow", project: rel };
   }
@@ -112,7 +119,7 @@ export async function validateFile(
   file: TFile,
   deps: ValidatorDeps,
 ): Promise<ValidationResult> {
-  const info = classifyFile(file.path);
+  const info = classifyFile(file.path, deps.settings.projectsRoot);
   if (!info) return EMPTY_RESULT("");
 
   const project = info.project || pickProjectForGlobalFile(app);
@@ -171,11 +178,12 @@ function installedAgentIds(detector: AgentDetector | undefined): string[] {
  * authored-once-shared-everywhere global module.
  */
 function pickProjectForGlobalFile(app: App): string {
+  const projectsRootPrefix = `${projectsRootFromApp(app)}/`;
   const files = app.vault.getMarkdownFiles();
   for (const f of files) {
     if (!f.path.endsWith("/WORKFLOW.md")) continue;
-    if (!f.path.startsWith(PROJECTS_ROOT)) continue;
-    const rel = f.path.slice(PROJECTS_ROOT.length, -"/WORKFLOW.md".length);
+    if (!f.path.startsWith(projectsRootPrefix)) continue;
+    const rel = f.path.slice(projectsRootPrefix.length, -"/WORKFLOW.md".length);
     if (rel && !rel.includes("/")) return rel;
   }
   return "";

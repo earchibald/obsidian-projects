@@ -21,6 +21,7 @@ import { buildRenderContext } from "./pluginVarRegistry";
 import { workIssue } from "./workIssue";
 import { dispatchPostLaunch } from "./postLaunchDispatch";
 import { renderTemplate } from "./renderTemplate";
+import { currentProjectsRoot, statusPathFor } from "./projectPaths";
 import { resolveWorkingDir } from "./workingDir";
 import { launchInTerminal } from "./terminalLaunch";
 import { buildRenderContext } from "./pluginVarRegistry";
@@ -215,7 +216,7 @@ export async function openAgent(
   if (!wd) {
     userError(
       `op: working directory required for ${args.entry.project} — launch cancelled`,
-      `Set \`repo_path:\` in Projects/${args.entry.project}/STATUS.md, or re-open the agent and fill in the working-dir prompt.`,
+      `Set \`repo_path:\` in ${statusPathFor(args.entry.project, currentProjectsRoot(app))}, or re-open the agent and fill in the working-dir prompt.`,
     );
     return undefined;
   }

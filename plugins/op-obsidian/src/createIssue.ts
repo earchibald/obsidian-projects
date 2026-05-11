@@ -2,6 +2,7 @@ import { App, TFile, normalizePath } from "obsidian";
 import type { IssueStore } from "./issueStore";
 import { findProjectBySlug, type ProjectInfo } from "./projects";
 import { nextIssueNumberFromVault } from "./findIssue";
+import { joinVaultPath } from "./projectPaths";
 import { issueFilename } from "./sanitize";
 import { renderIssueNote, type Priority } from "./issueTemplate";
 import type { IssueEntry } from "./types";
@@ -47,8 +48,8 @@ export async function createIssue(
     );
   }
 
-  const folder = `Projects/${project.slug}/ISSUES`;
-  const resolvedFolder = `Projects/${project.slug}/RESOLVED ISSUES`;
+  const folder = joinVaultPath(project.folderPath, "ISSUES");
+  const resolvedFolder = joinVaultPath(project.folderPath, "RESOLVED ISSUES");
   await ensureFolder(app, folder);
 
   let n = nextIssueNumberFromVault(app, { slug: project.slug, prefix: project.prefix });

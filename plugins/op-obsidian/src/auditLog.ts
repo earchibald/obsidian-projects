@@ -7,6 +7,7 @@ import {
   shouldRotate,
   type AuditEntry,
 } from "./auditLogPure";
+import { currentProjectsRoot, scratchFilePath } from "./projectPaths";
 
 export type AuditEntryInput = Omit<AuditEntry, "ts"> & { ts?: string };
 
@@ -27,7 +28,9 @@ export async function appendAuditLine(app: App, input: AuditEntryInput): Promise
     const line = encodeAuditLine(entry);
 
     const adapter = app.vault.adapter;
-    const path = normalizePath(AUDIT_LOG_PATH);
+    const path = normalizePath(
+      scratchFilePath("op-audit.jsonl", currentProjectsRoot(app)),
+    );
     const folder = path.split("/").slice(0, -1).join("/");
     if (folder && !(await adapter.exists(folder))) {
       await adapter.mkdir(folder);

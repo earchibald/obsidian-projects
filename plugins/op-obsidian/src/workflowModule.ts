@@ -5,6 +5,12 @@ import {
   type ModuleSource,
   type WorkflowModule,
 } from "./workflowModulePure";
+import {
+  currentProjectsRoot,
+  globalModulesDirPath,
+  isWithinProjectsRoot,
+  joinVaultPath,
+} from "./projectPaths";
 import type { WorkflowDiagnostic } from "./workflowDiagnostic";
 
 // Workflow-module IO loader. Walks the vault, parses each module file via the
@@ -36,8 +42,6 @@ export {
   validateIntraScopeCollisions,
 } from "./workflowModulePure";
 
-const PROJECTS_ROOT = "Projects/";
-const GLOBAL_MODULES_DIR = "Projects/_op-modules/";
 const PER_PROJECT_MODULES_INFIX = "/MODULES/";
 
 export interface LoadModulesOptions {
@@ -77,16 +81,18 @@ export function loadModules(app: App, opts: LoadModulesOptions = {}): LoadModule
 
   const globals: Bucket[] = [];
   const perProject: Bucket[] = [];
+  const projectsRoot = currentProjectsRoot(app);
+  const globalModulesDir = `${globalModulesDirPath(projectsRoot)}/`;
 
   for (const file of app.vault.getMarkdownFiles()) {
     const path = file.path;
-    if (!path.startsWith(PROJECTS_ROOT)) continue;
+    if (!isWithinProjectsRoot(path, projectsRoot)) continue;
 
     const id = file.basename;
 
-    if (path.startsWith(GLOBAL_MODULES_DIR)) {
+    if (path.startsWith(globalModulesDir)) {
       // Global modules live exactly one directory deep below GLOBAL_MODULES_DIR.
-      const rel = path.slice(GLOBAL_MODULES_DIR.length);
+      const rel = path.slice(globalModulesDir.length);
       if (rel.includes("/")) continue;
       globals.push({ file, id, source: { kind: "global", path } });
       continue;
@@ -98,7 +104,7 @@ export function loadModules(app: App, opts: LoadModulesOptions = {}): LoadModule
     const slugStart = beforeInfix.lastIndexOf("/");
     if (slugStart === -1) continue;
     const slug = beforeInfix.slice(slugStart + 1);
-    if (!slug || beforeInfix !== `${PROJECTS_ROOT.slice(0, -1)}/${slug}`) continue;
+    if (!slug || beforeInfix !== joinVaultPath(projectsRoot, slug)) continue;
     const afterInfix = path.slice(moduleIdx + PER_PROJECT_MODULES_INFIX.length);
     if (afterInfix.includes("/")) continue;
     perProject.push({

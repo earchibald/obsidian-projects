@@ -1,6 +1,5 @@
 import { App, TFile, normalizePath } from "obsidian";
-
-export const ERROR_LOG_PATH = "Projects/_scratch/op-last-error.md";
+import { currentProjectsRoot, scratchFilePath } from "./projectPaths";
 
 /**
  * Persist a single op error to a vault-side scratch note so the user (or a
@@ -14,7 +13,7 @@ export async function writeErrorLog(
   category: string,
   details: string,
 ): Promise<string> {
-  const path = normalizePath(ERROR_LOG_PATH);
+  const path = normalizePath(scratchFilePath("op-last-error.md", currentProjectsRoot(app)));
   const folder = path.split("/").slice(0, -1).join("/");
   if (folder && !(await app.vault.adapter.exists(folder))) {
     await app.vault.createFolder(folder).catch(() => {});
@@ -31,7 +30,7 @@ export async function writeErrorLog(
 }
 
 export async function openErrorLog(app: App): Promise<void> {
-  const path = normalizePath(ERROR_LOG_PATH);
+  const path = normalizePath(scratchFilePath("op-last-error.md", currentProjectsRoot(app)));
   const f = app.vault.getAbstractFileByPath(path);
   if (f instanceof TFile) {
     await app.workspace.getLeaf(false).openFile(f);

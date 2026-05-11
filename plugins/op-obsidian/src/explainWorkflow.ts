@@ -11,6 +11,7 @@ import {
   type ExplainWorkflowPayload,
 } from "./explainWorkflowPure";
 import { buildListVarsPayload, type ListVarsPayload } from "./listVarsPure";
+import { findProjectBySlug } from "./projects";
 import type { WorkflowDiagnostic } from "./workflowDiagnostic";
 import { getWorkflow, type GetWorkflowResult } from "./workflow";
 
@@ -182,7 +183,8 @@ function readParent(app: App, issuePath: string): string | null {
 }
 
 export function readProjectVars(app: App, project: string): Record<string, string> {
-  const statusPath = `Projects/${project}/STATUS.md`;
+  const statusPath = findProjectBySlug(app, project)?.statusPath;
+  if (!statusPath) return {};
   const file = app.vault.getAbstractFileByPath(statusPath);
   if (!(file instanceof TFile)) return {};
   const fm = app.metadataCache.getFileCache(file)?.frontmatter;

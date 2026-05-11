@@ -1,6 +1,11 @@
 import { App, normalizePath } from "obsidian";
 import type { IssueStore } from "./issueStore";
 import { createIssue, type CreateIssueResult, type Priority } from "./createIssue";
+import {
+  currentProjectsRoot,
+  isWithinProjectsRoot,
+  projectFolderPath,
+} from "./projectPaths";
 
 export interface ScaffoldProjectInput {
   slug: string;
@@ -53,14 +58,15 @@ export async function scaffoldProject(
     }
   }
 
-  const projectFolder = normalizePath(`Projects/${slug}`);
+  const root = currentProjectsRoot(app);
+  const projectFolder = projectFolderPath(slug, root);
   if (app.vault.getAbstractFileByPath(projectFolder)) {
     throw new Error(`Project folder already exists: ${projectFolder}`);
   }
 
   // Enforce unique prefix across projects.
   for (const file of app.vault.getMarkdownFiles()) {
-    if (!file.path.startsWith("Projects/") || !file.path.endsWith("/STATUS.md")) continue;
+    if (!isWithinProjectsRoot(file.path, root) || !file.path.endsWith("/STATUS.md")) continue;
     const fm = app.metadataCache.getFileCache(file)?.frontmatter;
     if (fm?.type === "project-status" && fm?.prefix === prefix) {
       throw new Error(`Prefix "${prefix}" already in use by ${file.path}`);
@@ -70,7 +76,7 @@ export async function scaffoldProject(
   await app.vault.createFolder(projectFolder);
 
   const basePath = normalizePath(`${projectFolder}/${slug}.base`);
-  await app.vault.create(basePath, renderBase(slug));
+  await app.vault.create(basePath, renderBase(slug, projectFolder));
 
   const statusPath = normalizePath(`${projectFolder}/STATUS.md`);
   // OP-265: record the resolved vault name so launched agents can derive the
@@ -156,8 +162,10 @@ function renderStatus(slug: string, prefix: string, vault: string, repoPath?: st
   return lines.join("\n");
 }
 
-function renderBase(slug: string): string {
-  return DEFAULT_BASE_TEMPLATE.replaceAll("<slug>", slug);
+function renderBase(slug: string, projectFolder: string): string {
+  return DEFAULT_BASE_TEMPLATE
+    .replaceAll("<slug>", slug)
+    .replaceAll("<project-folder>", projectFolder);
 }
 
 /**
@@ -205,7 +213,7 @@ function renderDefaultWorkflow(slug: string): string {
 
 const DEFAULT_BASE_TEMPLATE = `filters:
   and:
-    - file.inFolder("Projects/<slug>")
+    - file.inFolder("<project-folder>")
     - project == "<slug>"
 properties:
   id:

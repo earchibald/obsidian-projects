@@ -417,14 +417,14 @@ export function composeWorkflow(args: ComposeArgs): ComposedPrompt {
   for (const id of stepRecord.modules) {
     const lm = moduleById.get(id);
     if (!lm) {
-      diagnostics.push({
-        code: "unknown-module",
-        severity: "error",
-        message: `composeWorkflow: step "${step}" references module "${id}" but no loaded module has that id. Check the module file exists at Projects/_op-modules/${id}.md or Projects/<slug>/MODULES/${id}.md.`,
-        stepId: step,
-        moduleId: id,
-        extra: { step, moduleId: id },
-      });
+        diagnostics.push({
+          code: "unknown-module",
+          severity: "error",
+          message: `composeWorkflow: step "${step}" references module "${id}" but no loaded module has that id. Check the module file exists in the configured global modules folder or in <project>/MODULES/${id}.md.`,
+          stepId: step,
+          moduleId: id,
+          extra: { step, moduleId: id },
+        });
       continue;
     }
     orderedModules.push(lm);

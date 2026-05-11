@@ -12,6 +12,7 @@ import type { AgentDetector } from "./agentDetect";
 import { AgentPickerModal } from "./modals";
 import { launchInTerminal } from "./terminalLaunch";
 import { resolveWorkingDirForSlug } from "./workingDir";
+import { currentProjectsRoot, globalModulesDirPath, statusPathFor } from "./projectPaths";
 import { userError } from "./userError";
 import {
   buildEditModulePrompt,
@@ -94,7 +95,9 @@ export async function editModule(
   if (!wd) {
     userError(
       `op-edit-module: working directory required for ${slugForCwd} — launch cancelled`,
-      `Set \`repo_path:\` in Projects/${slugForCwd}/STATUS.md, or re-run the command and fill in the working-dir prompt.`,
+      args.projectSlug?.trim()
+        ? `Set \`repo_path:\` in ${statusPathFor(args.projectSlug.trim(), currentProjectsRoot(app))}, or re-run the command and fill in the working-dir prompt.`
+        : `Global modules live under ${globalModulesDirPath(currentProjectsRoot(app))}/ and do not have a STATUS.md; re-run the command and fill in the working-dir prompt.`,
     );
     return undefined;
   }
@@ -103,6 +106,7 @@ export async function editModule(
     scopeKind: args.scopeKind,
     projectSlug: args.projectSlug,
     moduleId,
+    projectsRoot: currentProjectsRoot(app),
   });
 
   const { existingContent, hasFrontmatter } = await readModuleBody(app, modulePath);

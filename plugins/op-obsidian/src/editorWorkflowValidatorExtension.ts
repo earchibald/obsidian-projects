@@ -128,7 +128,7 @@ function makeViewPlugin(deps: ValidatorExtensionDeps) {
         const path = file?.path ?? null;
         if (path === this.currentPath) return;
         this.currentPath = path;
-        if (!path || !classifyFile(path)) {
+        if (!path || !classifyFile(path, deps.getSettings().projectsRoot)) {
           this.clear();
           return;
         }

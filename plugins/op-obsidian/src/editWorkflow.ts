@@ -10,6 +10,7 @@ import {
 } from "./agentProfiles";
 import type { AgentDetector } from "./agentDetect";
 import { AgentPickerModal } from "./modals";
+import { currentProjectsRoot, statusPathFor } from "./projectPaths";
 import { launchInTerminal } from "./terminalLaunch";
 import { resolveWorkingDirForSlug } from "./workingDir";
 import { workflowPathFor } from "./workflow";
@@ -64,12 +65,12 @@ export async function editWorkflow(
   if (!wd) {
     userError(
       `op-edit-workflow: working directory required for ${trimmed} — launch cancelled`,
-      `Set \`repo_path:\` in Projects/${trimmed}/STATUS.md, or re-run the command and fill in the working-dir prompt.`,
+      `Set \`repo_path:\` in ${statusPathFor(trimmed, currentProjectsRoot(app))}, or re-run the command and fill in the working-dir prompt.`,
     );
     return undefined;
   }
 
-  const workflowPath = workflowPathFor(trimmed);
+  const workflowPath = workflowPathFor(trimmed, currentProjectsRoot(app));
   const existingContent = await readWorkflowBody(app, workflowPath);
 
   const vaultBasePath = getVaultBasePath(app);
