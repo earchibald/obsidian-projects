@@ -12,7 +12,11 @@ import { resolveProfile } from "./openAgent";
 import { loadAndComposeWorkflow } from "./composeWorkflow";
 import type { ComposedPrompt } from "./composeWorkflowPure";
 import { buildIssueRenderContext, readProjectVars } from "./explainWorkflow";
-import type { AgentDetector } from "./agentDetect";
+import {
+  refreshAgentDetection,
+  type AgentDetector,
+  type DetectionMap,
+} from "./agentDetect";
 import { IssuePickerModal } from "./modals";
 
 // OP-206 (3f): Settings → Workflows group → "Preview composed prompt" entry.
@@ -48,6 +52,7 @@ export interface PreviewWorkflowModalArgs {
 export class PreviewWorkflowModal extends Modal {
   private currentIssue: IssueEntry;
   private agentId: AgentId;
+  private detection: DetectionMap | undefined;
   private mode: AgentLaunchMode = "implement";
   private composed: ComposedPrompt | null = null;
   private composing = false;
@@ -69,19 +74,15 @@ export class PreviewWorkflowModal extends Modal {
     const initial =
       args.issues.find((e) => e.id === args.initialIssueId) ?? args.issues[0];
     this.currentIssue = initial;
-
-    const detection = args.detector.get();
-    const installed = AGENT_IDS.filter((id) => detection?.[id]?.installed);
-    const fallback = installed[0] ?? args.settings.defaultAgent;
-    this.agentId = installed.includes(args.settings.defaultAgent)
-      ? args.settings.defaultAgent
-      : fallback;
+    this.detection = args.detector.get();
+    this.agentId = pickAvailableAgent(undefined, installedAgents(this.detection), args.settings.defaultAgent);
   }
 
   async onOpen(): Promise<void> {
     const { contentEl, titleEl } = this;
     titleEl.setText("Preview composed prompt");
     contentEl.addClass("op-preview-modal");
+    await this.refreshDetection();
 
     // Issue picker — opens a sub-modal because the issue list can be long.
     const issueRow = new Setting(contentEl).setName("Issue");
@@ -110,8 +111,7 @@ export class PreviewWorkflowModal extends Modal {
       });
 
     // Agent picker — only installed agents.
-    const detection = this.args.detector.get();
-    const installed = AGENT_IDS.filter((id) => detection?.[id]?.installed);
+    const installed = installedAgents(this.detection);
     if (installed.length > 0) {
       new Setting(contentEl)
         .setName("Agent")
@@ -155,6 +155,20 @@ export class PreviewWorkflowModal extends Modal {
   private refreshIssueDesc(): void {
     if (!this.headerEl) return;
     this.headerEl.setText(`${this.currentIssue.id} — ${this.currentIssue.title} (${this.currentIssue.project})`);
+  }
+
+  private async refreshDetection(): Promise<void> {
+    try {
+      this.detection = await refreshAgentDetection(this.args.detector);
+    } catch (err) {
+      console.warn("[op-obsidian] preview modal agent refresh failed", err);
+      this.detection = this.args.detector.get();
+    }
+    this.agentId = pickAvailableAgent(
+      this.agentId,
+      installedAgents(this.detection),
+      this.args.settings.defaultAgent,
+    );
   }
 
   private async recompose(): Promise<void> {
@@ -253,6 +267,20 @@ function formatPreviewSummary(sizeChars: number, diagnosticCount: number): strin
       : `${sizeChars} chars`;
   const diagLabel = `${diagnosticCount} diagnostic${diagnosticCount === 1 ? "" : "s"}`;
   return `${charLabel} · ${diagLabel}`;
+}
+
+function installedAgents(detection: DetectionMap | undefined): AgentId[] {
+  return AGENT_IDS.filter((id) => detection?.[id]?.installed);
+}
+
+function pickAvailableAgent(
+  current: AgentId | undefined,
+  installed: AgentId[],
+  defaultAgent: AgentId,
+): AgentId {
+  if (current && installed.includes(current)) return current;
+  if (installed.includes(defaultAgent)) return defaultAgent;
+  return installed[0] ?? defaultAgent;
 }
 
 async function copyToClipboard(text: string): Promise<boolean> {

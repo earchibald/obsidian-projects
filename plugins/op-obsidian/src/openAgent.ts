@@ -28,7 +28,11 @@ import { buildRenderContext } from "./pluginVarRegistry";
 import { renderTemplate } from "./renderTemplate";
 import { colorRegistry } from "./colorRegistry";
 import { dispatchPostLaunch } from "./postLaunchDispatch";
-import type { AgentDetector, DetectionMap } from "./agentDetect";
+import {
+  refreshAgentDetection,
+  type AgentDetector,
+  type DetectionMap,
+} from "./agentDetect";
 import { AgentPickerModal } from "./modals";
 import { userError } from "./userError";
 import { iTermDefaultsDomainPresent, showITermTmuxPrefsNotice } from "./iTermPrefs";
@@ -121,7 +125,7 @@ interface AgentSelection {
  *
  * High-level flow:
  *  1. Resolve an agent id (arg override → default → picker modal).
- *  2. Verify the agent binary is on PATH via the cached {@link AgentDetector}.
+ *  2. Verify the agent binary is on PATH via a fresh {@link AgentDetector} probe.
  *  3. Resolve the working directory; abort with a `Notice` if none configured.
  *  4. Write `fm.agent` up front so the sidebar badge reflects intent even if
  *     the terminal launch later throws (OP-71).
@@ -144,7 +148,7 @@ export async function openAgent(
   saveSettings: () => Promise<void>,
   args: OpenAgentArgs,
 ): Promise<OpenAgentResult | undefined> {
-  const detection = detector.get() ?? (await detector.refresh());
+  const detection = await refreshAgentDetection(detector);
   const mode: AgentLaunchMode = args.mode ?? "work";
 
   // OP-200 (2c): per-step resolver. Skipped when the user has explicitly

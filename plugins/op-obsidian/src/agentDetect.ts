@@ -51,6 +51,11 @@ export class AgentDetector {
   }
 }
 
+export async function refreshAgentDetection(detector: AgentDetector): Promise<DetectionMap> {
+  detector.invalidate();
+  return detector.refresh();
+}
+
 async function probeBinary(id: AgentId, binary: string): Promise<AgentDetection> {
   // If the configured binary is an absolute path, stat via `command -v` equivalent; else use `which`.
   const env = augmentedPathEnv();

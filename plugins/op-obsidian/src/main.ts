@@ -149,7 +149,7 @@ import {
 import { summarizeListVarsPayload } from "./listVarsPure";
 import type { IssueEntry, LifecycleEvent } from "./types";
 import { DEFAULT_SETTINGS, mergeSettings, OpSettingsTab, type OpSettings } from "./settings";
-import { AgentDetector } from "./agentDetect";
+import { AgentDetector, refreshAgentDetection } from "./agentDetect";
 import {
   AGENT_IDS,
   asAgentId,
@@ -5211,7 +5211,7 @@ export default class OpPlugin extends Plugin {
 
   private async runDebugAgentLaunch(): Promise<void> {
     try {
-      const detection = this.detector.get() ?? (await this.detector.refresh());
+      const detection = await refreshAgentDetection(this.detector);
       const agentId: AgentId = AGENT_IDS.find((id) => detection[id]?.installed) ?? this.settings.defaultAgent;
       const profile = resolveProfile(this.settings, agentId);
       const det = detection[agentId];
@@ -5290,7 +5290,7 @@ export default class OpPlugin extends Plugin {
       });
       let effectiveLaunchVars = opts.launchVars;
       if (opts.forcePick) {
-        const detection = this.detector.get() ?? (await this.detector.refresh());
+        const detection = await refreshAgentDetection(this.detector);
         const installed = AGENT_IDS.filter((id) => detection?.[id]?.installed);
         if (installed.length === 0) {
           notify("op: no supported agent binaries found on PATH");
