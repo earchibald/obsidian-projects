@@ -8,7 +8,7 @@ import {
   launchFlagsFor,
   mergeProfile,
 } from "./agentProfiles";
-import type { AgentDetector } from "./agentDetect";
+import { refreshAgentDetection, type AgentDetector } from "./agentDetect";
 import { AgentPickerModal } from "./modals";
 import { currentProjectsRoot, statusPathFor } from "./projectPaths";
 import { launchInTerminal } from "./terminalLaunch";
@@ -43,7 +43,7 @@ export async function editWorkflow(
     return undefined;
   }
 
-  const detection = detector.get() ?? (await detector.refresh());
+  const detection = await refreshAgentDetection(detector);
   const installed = AGENT_IDS.filter((id) => detection?.[id]?.installed);
   if (installed.length === 0) {
     notify("op: no supported agent binaries found on PATH");

@@ -35,6 +35,7 @@ import { existsSync } from "fs";
 import * as os from "os";
 import * as path from "path";
 import type OpPlugin from "./main";
+import { refreshAgentDetection } from "./agentDetect";
 import {
   buildAutoLaunchPaths,
   buildDashboardUrl,
@@ -1590,8 +1591,7 @@ export class OpSettingsTab extends PluginSettingTab {
       .setDesc(detectionSummary(this.plugin))
       .addButton((b) =>
         b.setButtonText("Re-probe").onClick(async () => {
-          this.plugin.detector.invalidate();
-          await this.plugin.detector.refresh();
+          await refreshAgentDetection(this.plugin.detector);
           notify("op: agent detection refreshed");
           this.rerenderSection("profileOverlays");
         }),
