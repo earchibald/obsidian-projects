@@ -16,6 +16,12 @@ describe("slugifySkillName (OP-192)", () => {
     expect(/^[a-z0-9-]+$/.test(out)).toBe(true);
     expect(out.endsWith("-")).toBe(false);
   });
+  it("doesn't end in a dash when truncation cuts at a replaced char", () => {
+    const out = slugifySkillName("a".repeat(53) + "!!!more");
+    expect(out.length).toBeLessThanOrEqual(64);
+    expect(out.endsWith("-")).toBe(false);
+    expect(/^[a-z0-9-]+$/.test(out)).toBe(true);
+  });
 });
 
 describe("renderSkillMd (OP-192)", () => {

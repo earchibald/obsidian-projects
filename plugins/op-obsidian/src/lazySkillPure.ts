@@ -23,16 +23,14 @@ export interface RenderSkillMdArgs {
 }
 
 /**
- * Render a SKILL.md document. `description` is emitted as a YAML double-quoted
- * scalar with `\`, `"`, and newlines escaped so an arbitrary one-liner can
- * never corrupt the frontmatter. Body is appended verbatim with a single
- * trailing newline.
+ * Render a SKILL.md document. `description` is emitted as a JSON/YAML
+ * double-quoted scalar via `JSON.stringify` so any control character
+ * (newlines, CR, tabs, NUL, and others) is safely escaped and the frontmatter
+ * can never be corrupted. Body is appended verbatim with a single trailing
+ * newline.
  */
 export function renderSkillMd(args: RenderSkillMdArgs): string {
-  const desc = args.description
-    .replace(/\\/g, "\\\\")
-    .replace(/"/g, '\\"')
-    .replace(/\n/g, "\\n");
+  const desc = JSON.stringify(args.description).slice(1, -1);
   const body = args.body.replace(/\n+$/, "");
   return `---\nname: ${args.name}\ndescription: "${desc}"\n---\n\n${body}\n`;
 }
