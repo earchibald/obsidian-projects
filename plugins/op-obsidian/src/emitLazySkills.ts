@@ -87,6 +87,11 @@ export async function emitLazySkills(
       `op-emit-lazy-skills: no destination — issue ${args.issueId}'s project has no repo path; pass dir="$(pwd)" from inside your working directory.`,
     );
   }
+  if (!path.isAbsolute(destDir)) {
+    throw new Error(
+      `op-emit-lazy-skills: destination must be an absolute path (got ${JSON.stringify(destDir)}); pass dir="$(pwd)" from inside your working directory.`,
+    );
+  }
 
   const skillsRoot = path.join(destDir, ".claude", "skills");
   let existing: string[] = [];

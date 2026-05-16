@@ -285,4 +285,43 @@ describe("emitLazySkills IO (OP-192)", () => {
       ),
     ).rejects.toThrow(/no destination/);
   });
+
+  it("throws 'absolute path' when an explicit relative destDir is passed (URI route defense)", async () => {
+    const mockBuildIssueRenderContext = buildIssueRenderContext as ReturnType<typeof vi.fn>;
+    const mockReadProjectVars = readProjectVars as ReturnType<typeof vi.fn>;
+    // repo_path is undefined so the explicit destDir is the only source
+    mockBuildIssueRenderContext.mockReturnValue({
+      id: "OP-1",
+      title: "Test issue",
+      project: "testing",
+      status: "open",
+      parent: null,
+      vault_path: "/vault",
+      vault_name: "OP-Test",
+      today: "2026-05-15",
+      agent: "claude",
+      mode: "kickoff",
+      // repo_path intentionally absent
+    });
+    mockReadProjectVars.mockReturnValue({});
+    const mockLoadAndCompose = loadAndComposeWorkflow as ReturnType<typeof vi.fn>;
+    mockLoadAndCompose.mockResolvedValue({
+      composed: {
+        lazySkills: [],
+        text: "",
+        orderedChunks: [],
+        perVarSourceMap: {},
+        sizeChars: 0,
+        diagnostics: [],
+      },
+    });
+
+    await expect(
+      emitLazySkills(
+        fakeApp,
+        { settings: fakeSettings as OpSettings, resolveIssue: () => fakeEntry },
+        { issueId: "OP-1", destDir: "relative/path" },
+      ),
+    ).rejects.toThrow(/absolute path/);
+  });
 });

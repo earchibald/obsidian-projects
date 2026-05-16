@@ -1538,7 +1538,7 @@ export default class OpPlugin extends Plugin {
 
     this.registerCliHandler(
       "op-emit-lazy-skills",
-      "Materialize this issue's lazy: true workflow modules as on-demand Claude Code skills under <dir>/.claude/skills/. Run from inside your working directory.",
+      "Materialize this issue's lazy: true workflow modules as on-demand Claude Code skills under <dir>/.claude/skills/. <dir> defaults to the project's configured repo path; pass dir=\"$(pwd)\" to target your current worktree.",
       {
         issue: { value: "<id>", description: "Issue id (e.g. OP-34)" },
         dir: {
@@ -4115,9 +4115,10 @@ export default class OpPlugin extends Plugin {
       const warn = payload.emptyBodySkills.length > 0
         ? ` (warning: ${payload.emptyBodySkills.length} skill(s) had an empty rendered body: ${payload.emptyBodySkills.join(", ")})`
         : "";
+      const prunedClause = payload.pruned.length > 0 ? ` (pruned ${payload.pruned.length})` : "";
       return payload.empty
-        ? `${command}: ${payload.issueId} — no lazy modules; nothing to emit`
-        : `${command}: ${payload.issueId} → wrote ${payload.skillNames.length} skill(s) to ${payload.destDir}/.claude/skills/ (pruned ${payload.pruned.length})${warn}`;
+        ? `${command}: ${payload.issueId} — no lazy modules; nothing to emit${warn}`
+        : `${command}: ${payload.issueId} → wrote ${payload.skillNames.length} skill(s) to ${payload.destDir}/.claude/skills/${prunedClause}${warn}`;
     } catch (err: any) {
       const msg = err?.message ?? String(err);
       console.error("[op-obsidian]", command, err);
