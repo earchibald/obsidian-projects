@@ -18,6 +18,7 @@ const FAKE_GLOBAL_MOD: WorkflowModule = {
   title: "Orient",
   scope: "kickoff",
   order: 0,
+  lazy: false,
   vars: [
     { kind: "object", name: "tone", default: "concise", description: "Voice for the agent." },
     { kind: "default", name: "lang", value: "en" },
@@ -30,6 +31,7 @@ const FAKE_PROJECT_MOD: WorkflowModule = {
   title: "House style",
   scope: "kickoff",
   order: 0,
+  lazy: false,
   vars: [{ kind: "object", name: "tone", default: "warm", description: "Per-project tone override." }],
   source: { kind: "project", path: "Projects/demo/MODULES/house-style.md", projectSlug: "demo" },
 };
@@ -39,6 +41,7 @@ const FAKE_CURRENT_MOD: WorkflowModule = {
   title: "Review",
   scope: "review",
   order: 0,
+  lazy: false,
   vars: [
     { kind: "bare", name: "reviewer" },
     { kind: "object", name: "checklist", default: "default-checklist" },

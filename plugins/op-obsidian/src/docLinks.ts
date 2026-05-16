@@ -35,7 +35,8 @@ export type DocLinkDiagnosticCode =
   | "import-collision"
   | "intra-scope-collision"
   | "malformed-frontmatter"
-  | "size-budget";
+  | "size-budget"
+  | "lazy-skill";
 
 /**
  * Vault-relative paths to the docs we link to. Single point of update if
@@ -93,6 +94,7 @@ const DIAGNOSTIC_LINKS: Readonly<Record<DocLinkDiagnosticCode, DocAnchor>> =
       anchor: "malformed-frontmatter",
     },
     "size-budget": { file: DOC_PATHS.troubleshooting, anchor: "size-budget" },
+    "lazy-skill": { file: DOC_PATHS.troubleshooting, anchor: "lazy-skill" },
   });
 
 export function sectionDocAnchor(id: DocLinkSectionId): DocAnchor {

@@ -23,6 +23,7 @@ const ALL_CODES: WorkflowDiagnosticCode[] = [
   "intra-scope-collision",
   "malformed-frontmatter",
   "size-budget",
+  "lazy-skill",
 ];
 
 const ALL_SCOPES: PrecedenceScope[] = ["module", "global", "project", "launch"];
@@ -97,6 +98,7 @@ describe("codeLabel", () => {
     expect(codeLabel("intra-scope-collision")).toBe("Intra-scope collision");
     expect(codeLabel("malformed-frontmatter")).toBe("Malformed frontmatter");
     expect(codeLabel("size-budget")).toBe("Workflow size notice");
+    expect(codeLabel("lazy-skill")).toBe("Lazy skill");
   });
 
   it("never returns the raw kebab-case code (verifies humanization happened)", () => {
@@ -124,6 +126,37 @@ describe("formatDiagnostic — every code", () => {
       expect(f.hint!.length).toBeGreaterThan(0);
     });
   }
+});
+
+// ─── lazy-skill code (OP-192) ────────────────────────────────────────────
+
+describe("lazy-skill code (OP-192)", () => {
+  const d: WorkflowDiagnostic = {
+    code: "lazy-skill",
+    severity: "info",
+    message: "Module tmux-safety emitted as a skill.",
+    moduleId: "tmux-safety",
+  };
+
+  it("formats without throwing and carries the correct label", () => {
+    const f = formatDiagnostic(d);
+    expect(f.code).toBe("lazy-skill");
+    expect(f.codeLabel).toBe("Lazy skill");
+    expect(f.severity).toBe("info");
+    expect(f.severityBadge).toBe("I");
+    expect(f.message).toBe("Module tmux-safety emitted as a skill.");
+  });
+
+  it("populates a non-empty hint", () => {
+    const f = formatDiagnostic(d);
+    expect(typeof f.hint).toBe("string");
+    expect(f.hint!.length).toBeGreaterThan(0);
+  });
+
+  it("diagnosticToLine renders the canonical shape", () => {
+    const line = diagnosticToLine(d);
+    expect(line).toMatch(/^\[I\] Lazy skill — /);
+  });
 });
 
 describe("formatDiagnostic — passthrough fields", () => {

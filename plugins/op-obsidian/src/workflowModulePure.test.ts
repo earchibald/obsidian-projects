@@ -514,7 +514,7 @@ describe("parseModule lazy + description (OP-192)", () => {
     expect(r.module!.description).toBe("tmux gotchas catalog");
   });
 
-  it("rejects non-boolean lazy without coercion (still loadable)", () => {
+  it("rejects non-boolean lazy (hard fail — module: null)", () => {
     const r = parseModule({ id: "m", frontmatter: { ...baseFm, lazy: "true" }, source: src });
     expect(r.module).toBeNull();
     expect(r.diagnostics.some(d => d.code === "malformed-frontmatter" && /lazy/.test(d.message))).toBe(true);

@@ -38,6 +38,7 @@ function makeModule(args: {
   project?: string;
   agent?: string;
   order?: number;
+  lazy?: boolean;
   pathPrefix?: "global" | "project";
 }): WorkflowModule {
   const path =
@@ -55,6 +56,7 @@ function makeModule(args: {
     project: args.project,
     agent: args.agent,
     order: args.order ?? 0,
+    lazy: args.lazy ?? false,
     vars: args.vars ?? [],
     source,
   };
