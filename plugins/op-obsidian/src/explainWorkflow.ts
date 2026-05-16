@@ -141,7 +141,7 @@ export async function listVars(
   return buildListVarsPayload(renderContext);
 }
 
-function resolveProfileById(settings: OpSettings, raw: string): AgentProfile {
+export function resolveProfileById(settings: OpSettings, raw: string): AgentProfile {
   const id = (AGENT_IDS as readonly string[]).includes(raw)
     ? (raw as AgentId)
     : settings.defaultAgent;

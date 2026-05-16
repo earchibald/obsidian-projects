@@ -3,18 +3,14 @@ import path from "path";
 import { App } from "obsidian";
 import type { IssueEntry } from "./types";
 import type { OpSettings } from "./settings";
-import { resolveProfile } from "./openAgent";
-import { AGENT_IDS, type AgentId } from "./agentProfiles";
 import { loadAndComposeWorkflow } from "./composeWorkflow";
-import { buildIssueRenderContext, readProjectVars } from "./explainWorkflow";
+import { buildIssueRenderContext, readProjectVars, resolveProfileById } from "./explainWorkflow";
 import { renderSkillMd } from "./lazySkillPure";
 import type { LazySkill } from "./composeWorkflowPure";
 
-export interface SkillWrite {
-  path: string;
-  kind: "skill" | "gitignore";
-  skill?: LazySkill;
-}
+export type SkillWrite =
+  | { path: string; kind: "skill"; skill: LazySkill }
+  | { path: string; kind: "gitignore" };
 export interface EmissionPlan {
   writes: SkillWrite[];
   prunes: string[];
@@ -67,11 +63,7 @@ export async function emitLazySkills(
   if (!project) {
     throw new Error(`op-emit-lazy-skills: issue ${args.issueId} has no project`);
   }
-  const agentRaw = entry.agent ?? deps.settings.defaultAgent;
-  const agentId = (AGENT_IDS as readonly string[]).includes(agentRaw)
-    ? (agentRaw as AgentId)
-    : deps.settings.defaultAgent;
-  const profile = resolveProfile(deps.settings, agentId);
+  const profile = resolveProfileById(deps.settings, entry.agent ?? deps.settings.defaultAgent);
   const renderContext = buildIssueRenderContext(app, deps.settings, entry, profile, "kickoff");
   const projectVars = readProjectVars(app, project);
 
@@ -118,7 +110,7 @@ export async function emitLazySkills(
     } else {
       await fs.writeFile(
         w.path,
-        renderSkillMd({ name: w.skill!.name, description: w.skill!.description, body: w.skill!.body }),
+        renderSkillMd({ name: w.skill.name, description: w.skill.description, body: w.skill.body }),
         "utf8",
       );
     }
