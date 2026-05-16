@@ -179,6 +179,32 @@ build("seed/workflow-modules", () => {
     ].join("\n"),
   );
 
+  // Per-project lazy module — kickoff scope, lazy: true so it is emitted as a
+  // Claude Code skill rather than inlined. The smoke harness asserts the
+  // lazy-skill info diagnostic appears and the body text is absent from
+  // composed.text. OP-192.
+  writeVaultFile(
+    "Projects/testing/MODULES/tmux-gotchas.md",
+    [
+      "---",
+      "id: tmux-gotchas",
+      "title: Tmux gotchas",
+      "type: workflow-module",
+      "scope: kickoff",
+      "project: testing",
+      "lazy: true",
+      'description: "Tmux pane/window gotchas — activate when wrangling tmux"',
+      "order: 20",
+      "---",
+      "",
+      "Known tmux gotchas:",
+      "",
+      "- detached panes survive reload",
+      "- window indices are not stable",
+      "",
+    ].join("\n"),
+  );
+
   // Per-project workflow file — references both modules across kickoff + plan
   // steps. Uses the canonical schema=1 frontmatter shape (OP-196).
   writeVaultFile(
@@ -192,13 +218,14 @@ build("seed/workflow-modules", () => {
       "default_model: sonnet",
       "steps:",
       "  - step: kickoff",
-      "    modules: [branching]",
+      "    modules: [branching, tmux-gotchas]",
       "  - step: plan",
       "    modules: [plan-rules]",
       "---",
       "",
       "Workflow file for the testing project. Composes the global `branching` module at",
-      "kickoff and the per-project `plan-rules` module during plan mode.",
+      "kickoff, the per-project `tmux-gotchas` lazy module (op-emit-lazy-skills target),",
+      "and the per-project `plan-rules` module during plan mode.",
       "",
     ].join("\n"),
   );

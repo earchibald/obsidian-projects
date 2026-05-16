@@ -35,7 +35,9 @@
 // PR-check shell script.
 
 import { existsSync, readFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
+import { tmpdir } from "node:os";
 
 import { OP_TEST_VAULT, assertOpTestVaultOpen, fail, runObsidian } from "./lib/op-test.mjs";
 
@@ -114,6 +116,100 @@ expect(
   kickoff.diagnostics,
 );
 
+// OP-192: lazy-skill assertions for the tmux-gotchas module -------------------
+const LAZY_MODULE_ID = "tmux-gotchas";
+const LAZY_SKILL_NAME = "op-module-tmux-gotchas";
+const LAZY_BODY_SNIPPET = "Known tmux gotchas";
+
+// 1. diagnostics must include an info-severity lazy-skill entry for tmux-gotchas
+expect(
+  "kickoff: diagnostics include lazy-skill info for tmux-gotchas",
+  Array.isArray(kickoff.diagnostics) &&
+    kickoff.diagnostics.some(
+      (d) => d.code === "lazy-skill" && d.severity === "info" && d.moduleId === LAZY_MODULE_ID,
+    ),
+  kickoff.diagnostics,
+);
+
+// 2. tmux-gotchas body text must NOT be inlined in composed.text
+expect(
+  "kickoff: lazy tmux-gotchas body NOT inlined in composed.text",
+  !kickoff.composed?.text?.includes(LAZY_BODY_SNIPPET),
+  { textSnippet: kickoff.composed?.text?.slice(0, 400) },
+);
+
+// OP-192: op-emit-lazy-skills assertions --------------------------------------
+const EMIT_TMP = mkdtempSync(join(tmpdir(), "op-192-smoke-"));
+
+// 5. Prune: plant a stale op-module-* dir before first emit so pruning is exercised
+const STALE_DIR = join(EMIT_TMP, ".claude", "skills", "op-module-zzz-stale");
+mkdirSync(STALE_DIR, { recursive: true });
+writeFileSync(join(STALE_DIR, "SKILL.md"), "stale content\n", "utf8");
+
+// 3. First emit: write skills into EMIT_TMP
+const emit1 = emitLazySkills(ISSUE, EMIT_TMP);
+expect("emit: ok === true", emit1.ok === true, emit1);
+
+const SKILL_MD_PATH = join(EMIT_TMP, ".claude", "skills", LAZY_SKILL_NAME, "SKILL.md");
+const GITIGNORE_PATH = join(EMIT_TMP, ".claude", "skills", LAZY_SKILL_NAME, ".gitignore");
+
+expect(
+  `emit: SKILL.md exists at ${SKILL_MD_PATH}`,
+  existsSync(SKILL_MD_PATH),
+  { checked: SKILL_MD_PATH },
+);
+if (existsSync(SKILL_MD_PATH)) {
+  const skillMdContent = readFileSync(SKILL_MD_PATH, "utf8");
+  expect(
+    "emit: SKILL.md contains name: op-module-tmux-gotchas",
+    skillMdContent.includes(`name: ${LAZY_SKILL_NAME}`),
+    { skillMdContent },
+  );
+}
+expect(
+  `emit: .gitignore exists at ${GITIGNORE_PATH}`,
+  existsSync(GITIGNORE_PATH),
+  { checked: GITIGNORE_PATH },
+);
+if (existsSync(GITIGNORE_PATH)) {
+  const gitignoreContent = readFileSync(GITIGNORE_PATH, "utf8");
+  expect(
+    'emit: .gitignore content is exactly "*\\n"',
+    gitignoreContent === "*\n",
+    { gitignoreContent },
+  );
+}
+expect(
+  "emit: response payload lists the written SKILL.md path",
+  Array.isArray(emit1.written) && emit1.written.some((p) => p.endsWith("SKILL.md")),
+  { written: emit1.written },
+);
+
+// 5 (continued). stale dir must have been pruned
+expect(
+  "emit: stale op-module-zzz-stale dir was pruned",
+  !existsSync(STALE_DIR),
+  { checked: STALE_DIR },
+);
+expect(
+  "emit: response payload lists the pruned stale dir",
+  Array.isArray(emit1.pruned) && emit1.pruned.some((p) => p.includes("op-module-zzz-stale")),
+  { pruned: emit1.pruned },
+);
+
+// 4. Idempotency: second emit succeeds and SKILL.md still present
+const emit2 = emitLazySkills(ISSUE, EMIT_TMP);
+expect("emit idempotency: ok === true on second run", emit2.ok === true, emit2);
+expect(
+  "emit idempotency: SKILL.md still present after second emit",
+  existsSync(SKILL_MD_PATH),
+  { checked: SKILL_MD_PATH },
+);
+
+// 6. Clean up
+rmSync(EMIT_TMP, { recursive: true, force: true });
+console.log(`  (cleaned up temp dir ${EMIT_TMP})`);
+
 // ---- 2. op-explain-workflow id=<ISSUE> mode=plan --------------------------
 const plan = explainWorkflow(ISSUE, "plan", AGENT);
 expect("plan: payload.mode === plan", plan.mode === "plan", plan);
@@ -182,6 +278,11 @@ function explainWorkflow(issue, mode, agent) {
 
 function listVarsForIssue(project, issue) {
   runObsidian(["op-list-vars", `project=${project}`, `issue=${issue}`]);
+  return readScratchPayload();
+}
+
+function emitLazySkills(issue, dir) {
+  runObsidian(["op-emit-lazy-skills", `issue=${issue}`, `dir=${dir}`]);
   return readScratchPayload();
 }
 
