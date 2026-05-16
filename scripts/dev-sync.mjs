@@ -7,11 +7,13 @@
 //   node scripts/bump-version.mjs <bump>   # build first
 //   node scripts/dev-sync.mjs              # then sync into OP-Test
 //
-// Hardcoded target: ~/Documents/OP-Test/OP-Test/.obsidian/plugins/op-obsidian/
-// No env-var override — Agent-Vault is BRAT-only and must never receive a
-// dev sync. The OP-Test-open assertion + the Agent-Vault path-segment guard
-// + explicit `vault=OP-Test` routing on every CLI call (OP-175) jointly
-// enforce this; no Obsidian window needs to be focused on OP-Test.
+// Target: <OP-Test-vault>/.obsidian/plugins/op-obsidian/, where the vault
+// path is resolved by scripts/lib/op-test.mjs (OP_TEST_VAULT env override >
+// Obsidian-reported basePath > legacy ~/Documents/OP-Test default — OP-278).
+// Agent-Vault is BRAT-only and must never receive a dev sync. The
+// OP-Test-open assertion + the Agent-Vault path-segment guard + explicit
+// `vault=OP-Test` routing on every CLI call (OP-175) jointly enforce this;
+// no Obsidian window needs to be focused on OP-Test.
 
 import { copyFileSync, existsSync, mkdirSync, statSync } from "node:fs";
 import { dirname, join, relative } from "node:path";
