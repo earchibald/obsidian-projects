@@ -1,6 +1,6 @@
 import { App, TFile, normalizePath } from "obsidian";
 import type { IssueStore } from "./issueStore";
-import { findProjectBySlug, type ProjectInfo } from "./projects";
+import { resolveProjectBySlug, type ProjectInfo } from "./projects";
 import { nextIssueNumberFromVault } from "./findIssue";
 import { joinVaultPath } from "./projectPaths";
 import { issueFilename } from "./sanitize";
@@ -40,7 +40,7 @@ export async function createIssue(
   store: IssueStore,
   input: CreateIssueInput,
 ): Promise<CreateIssueResult> {
-  const project = findProjectBySlug(app, input.slug);
+  const project = await resolveProjectBySlug(app, input.slug);
   if (!project) throw new Error(`Unknown project slug: ${input.slug}`);
   if (!project.prefix) {
     throw new Error(
