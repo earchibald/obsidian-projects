@@ -331,6 +331,7 @@ describe("parseModule", () => {
       project: undefined,
       agent: undefined,
       order: 0,
+      lazy: false,
       vars: [],
       source: GLOBAL_SOURCE,
     });
@@ -492,6 +493,40 @@ describe("parseModule", () => {
   });
 });
 
+describe("parseModule lazy + description (OP-192)", () => {
+  const baseFm = { id: "m", title: "M", type: "workflow-module", scope: "kickoff" };
+  const src = { kind: "global" as const, path: "Projects/_op-modules/m.md" };
+
+  it("defaults lazy to false and description to undefined", () => {
+    const r = parseModule({ id: "m", frontmatter: { ...baseFm }, source: src });
+    expect(r.module).not.toBeNull();
+    expect(r.module!.lazy).toBe(false);
+    expect(r.module!.description).toBeUndefined();
+  });
+
+  it("accepts lazy: true and a string description", () => {
+    const r = parseModule({
+      id: "m",
+      frontmatter: { ...baseFm, lazy: true, description: "tmux gotchas catalog" },
+      source: src,
+    });
+    expect(r.module!.lazy).toBe(true);
+    expect(r.module!.description).toBe("tmux gotchas catalog");
+  });
+
+  it("rejects non-boolean lazy without coercion (still loadable)", () => {
+    const r = parseModule({ id: "m", frontmatter: { ...baseFm, lazy: "true" }, source: src });
+    expect(r.module).toBeNull();
+    expect(r.diagnostics.some(d => d.code === "malformed-frontmatter" && /lazy/.test(d.message))).toBe(true);
+  });
+
+  it("rejects non-string description", () => {
+    const r = parseModule({ id: "m", frontmatter: { ...baseFm, description: 42 }, source: src });
+    expect(r.module).toBeNull();
+    expect(r.diagnostics.some(d => d.code === "malformed-frontmatter" && /description/.test(d.message))).toBe(true);
+  });
+});
+
 describe("validateIntraScopeCollisions", () => {
   function module(
     id: string,
@@ -506,6 +541,7 @@ describe("validateIntraScopeCollisions", () => {
       project: undefined,
       agent: undefined,
       order: 0,
+      lazy: false,
       vars: varNames.map((n) => ({ kind: "bare", name: n })),
       source,
     };
