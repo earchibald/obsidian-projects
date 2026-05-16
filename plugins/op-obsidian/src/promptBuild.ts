@@ -231,11 +231,46 @@ export async function composeWorkflowSection(
   }
 
   const text = composed.text.trim();
+  const lazy = composed.lazySkills ?? [];
+
+  // OP-192: build the lazy-skills section.
+  let lazySection = "";
+  if (lazy.length > 0) {
+    if (args.repoPath) {
+      // Issue has a working directory — emit a pointer block so the agent can
+      // materialise the skills on demand without bloating the launch prompt.
+      const names = lazy.map((s) => s.name).join(", ");
+      lazySection =
+        `## Optional reference skills\n\n` +
+        `This issue has ${lazy.length} optional reference module(s) (${names}) available as on-demand skills. ` +
+        `From inside your working directory (after creating your worktree) run:\n\n` +
+        "```bash\n" +
+        `obsidian op-emit-lazy-skills issue="${entry.id}" dir="$(pwd)"\n` +
+        "```\n\n" +
+        `Then activate the relevant one via the Skill tool when needed. These are typically reference-only modules; skim each skill's description and skip emission only if none are relevant.`;
+    } else {
+      // Meta-only project (no repo path) — inline the lazy bodies so the
+      // content is never lost (there is no working directory to run the CLI in).
+      // Skip skills whose body is empty (I2) and trim trailing whitespace (I1).
+      const inlined = lazy
+        .filter((s) => s.body.trim().length > 0)
+        .map((s) => `### ${s.name}\n\n${s.body.trimEnd()}`)
+        .join("\n\n");
+      lazySection = inlined
+        ? `## Optional reference skills (inlined — no working directory)\n\n${inlined}`
+        : "";
+    }
+  }
+
   // Non-null but empty: WORKFLOW.md exists, requested step exists, but the
-  // step produced nothing (e.g. `modules: []`). Return "" so the caller
-  // suppresses the section without injecting legacy content.
-  if (!text) return "";
-  return `## Project workflow\n\n${text}`;
+  // step produced nothing (e.g. `modules: []`). Return "" (or lazySection if
+  // there is one) so the caller suppresses the main section without injecting
+  // legacy content.
+  if (!text) {
+    return lazySection ? lazySection : "";
+  }
+  const section = `## Project workflow\n\n${text}`;
+  return lazySection ? `${section}\n\n${lazySection}` : section;
 }
 
 function buildLaunchRenderContext(

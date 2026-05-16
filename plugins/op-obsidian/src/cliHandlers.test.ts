@@ -17,6 +17,7 @@ import {
   parseListVarsParams,
   parseExportModuleParams,
   parseImportModuleParams,
+  parseEmitLazySkillsParams,
 } from "./cliHandlers";
 
 describe("parseWorkParams", () => {
@@ -438,5 +439,43 @@ describe("parseImportModuleParams", () => {
       vars: "tone=quiet",
     });
     expect(r.ok && r.value.varAnswers.tone).toBe("quiet");
+  });
+});
+
+describe("parseEmitLazySkillsParams (OP-192)", () => {
+  it("requires issue", () => {
+    const r = parseEmitLazySkillsParams({});
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.error).toMatch(/--issue/);
+  });
+  it("accepts issue and optional dir, trimming dir", () => {
+    const r = parseEmitLazySkillsParams({ issue: "OP-1", dir: "  /wt  " });
+    expect(r).toEqual({ ok: true, value: { issueId: "OP-1", destDir: "/wt" } });
+  });
+  it("accepts id as an alias and omits destDir when dir absent", () => {
+    const r = parseEmitLazySkillsParams({ id: "OP-2" });
+    expect(r).toEqual({ ok: true, value: { issueId: "OP-2" } });
+  });
+  it("rejects a relative dir (must be absolute)", () => {
+    const r = parseEmitLazySkillsParams({ issue: "OP-1", dir: "relative/path" });
+    expect(r.ok).toBe(false);
+  });
+  it("rejects a '.' dir", () => {
+    const r = parseEmitLazySkillsParams({ issue: "OP-1", dir: "." });
+    expect(r.ok).toBe(false);
+  });
+  it("accepts an absolute dir", () => {
+    const r = parseEmitLazySkillsParams({ issue: "OP-1", dir: "/Users/x/wt" });
+    expect(r).toEqual({ ok: true, value: { issueId: "OP-1", destDir: "/Users/x/wt" } });
+  });
+  it("rejects a tilde dir with a tilde-specific message", () => {
+    const r = parseEmitLazySkillsParams({ issue: "OP-1", dir: "~/wt" });
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.error).toMatch(/tilde/);
+  });
+  it("still rejects a plain relative dir", () => {
+    const r = parseEmitLazySkillsParams({ issue: "OP-1", dir: "rel/path" });
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.error).toMatch(/absolute path/);
   });
 });

@@ -936,6 +936,254 @@ describe("composeWorkflowSection — OP-199 (2b)", () => {
   });
 });
 
+describe("composeWorkflowSection lazy skills (OP-192)", () => {
+  // Shared workflow + module fixture: one inline module ("Inline") and one lazy
+  // module ("tmux"). The lazy module has `lazy: true` and a `description`.
+  function lazyFiles(): FakeFile[] {
+    return [
+      {
+        path: "Projects/demo/WORKFLOW.md",
+        frontmatter: {
+          type: "workflow",
+          schema: 1,
+          project: "demo",
+          default_agent: "claude",
+          default_model: "opus",
+          steps: [{ step: "kickoff", modules: ["inline-mod", "tmux"] }],
+        },
+        raw: "---\n# yaml omitted\n---\n",
+      },
+      {
+        path: "Projects/_op-modules/inline-mod.md",
+        frontmatter: {
+          id: "inline-mod",
+          title: "Inline",
+          type: "workflow-module",
+          scope: "kickoff",
+          vars: [],
+        },
+        raw: "---\n# yaml omitted\n---\nInline\n",
+      },
+      {
+        path: "Projects/_op-modules/tmux.md",
+        frontmatter: {
+          id: "tmux",
+          title: "op-module-tmux",
+          type: "workflow-module",
+          scope: "kickoff",
+          lazy: true,
+          description: "d",
+          vars: [],
+        },
+        raw: "---\n# yaml omitted\n---\nLAZY BODY\n",
+      },
+    ];
+  }
+
+  it("Case A: repoPath set → pointer block emitted; lazy body NOT inlined", async () => {
+    const app = fakeApp(lazyFiles());
+    const section = await composeWorkflowSection(app, {
+      entry: entry(),
+      profile: profile(),
+      injection: injection(),
+      vaultBasePath: "/Users/me/vault",
+      workflowMode: "modules",
+      workflowStep: "kickoff",
+      repoPath: "/wt",
+    });
+    // Inline module content must be present.
+    expect(section).toContain("Inline");
+    // Lazy body must NOT be inlined.
+    expect(section).not.toContain("LAZY BODY");
+    // Pointer block must reference the CLI command.
+    expect(section).toContain("op-emit-lazy-skills");
+    // Pointer block must include the dir=$(pwd) snippet.
+    expect(section).toContain('dir="$(pwd)"');
+    // Pointer block must include the quoted issue id (M4).
+    expect(section).toContain('issue="OP-1"');
+    // Pointer block must use the canonical heading (M2 consistency).
+    expect(section).toContain("## Optional reference skills");
+    // Pointer block must use the softened wording (M1).
+    expect(section).toContain("typically reference-only");
+  });
+
+  it("Case B: repoPath undefined → lazy body inlined with no-working-directory note", async () => {
+    const app = fakeApp(lazyFiles());
+    const section = await composeWorkflowSection(app, {
+      entry: entry(),
+      profile: profile(),
+      injection: injection(),
+      vaultBasePath: "/Users/me/vault",
+      workflowMode: "modules",
+      workflowStep: "kickoff",
+      // repoPath deliberately omitted (meta-only)
+    });
+    // Lazy body must be present (inlined fallback).
+    expect(section).toContain("LAZY BODY");
+    // Heading for the inlined-because-no-working-dir block (M2 exact heading).
+    expect(section).toContain("## Optional reference skills (inlined — no working directory)");
+    // Inline module content must still be present.
+    expect(section).toContain("Inline");
+  });
+
+  it("Case C — multiple lazy skills, meta-only, joined with blank line between bodies", async () => {
+    // Two lazy skills — verify both bodies appear and are separated by \n\n.
+    const files: FakeFile[] = [
+      {
+        path: "Projects/demo/WORKFLOW.md",
+        frontmatter: {
+          type: "workflow",
+          schema: 1,
+          project: "demo",
+          default_agent: "claude",
+          default_model: "opus",
+          steps: [{ step: "kickoff", modules: ["mod-a", "mod-b"] }],
+        },
+        raw: "---\n# yaml omitted\n---\n",
+      },
+      {
+        path: "Projects/_op-modules/mod-a.md",
+        frontmatter: {
+          id: "mod-a",
+          title: "op-module-a",
+          type: "workflow-module",
+          scope: "kickoff",
+          lazy: true,
+          description: "d",
+          vars: [],
+        },
+        raw: "---\n# yaml omitted\n---\nBODY A\n",
+      },
+      {
+        path: "Projects/_op-modules/mod-b.md",
+        frontmatter: {
+          id: "mod-b",
+          title: "op-module-b",
+          type: "workflow-module",
+          scope: "kickoff",
+          lazy: true,
+          description: "d",
+          vars: [],
+        },
+        raw: "---\n# yaml omitted\n---\nBODY B\n",
+      },
+    ];
+    const app = fakeApp(files);
+    const section = await composeWorkflowSection(app, {
+      entry: entry(),
+      profile: profile(),
+      injection: injection(),
+      vaultBasePath: "/Users/me/vault",
+      workflowMode: "modules",
+      workflowStep: "kickoff",
+      // repoPath omitted — meta-only, so inline fallback is used
+    });
+    // Both headings and bodies present.
+    // name = slugifySkillName(id) = op-module-<id>, so "mod-a" → "op-module-mod-a".
+    expect(section).toContain("### op-module-mod-a");
+    expect(section).toContain("BODY A");
+    expect(section).toContain("### op-module-mod-b");
+    expect(section).toContain("BODY B");
+    // Blank-line join between the two skill sections (guards against .join("\n") regression).
+    expect(section).toContain("BODY A\n\n### op-module-mod-b");
+  });
+
+  it("Case D — empty-body lazy skill omitted from inline (I2)", async () => {
+    // Lazy skill with whitespace-only body must be filtered out.
+    const files: FakeFile[] = [
+      {
+        path: "Projects/demo/WORKFLOW.md",
+        frontmatter: {
+          type: "workflow",
+          schema: 1,
+          project: "demo",
+          default_agent: "claude",
+          default_model: "opus",
+          steps: [{ step: "kickoff", modules: ["mod-e"] }],
+        },
+        raw: "---\n# yaml omitted\n---\n",
+      },
+      {
+        path: "Projects/_op-modules/mod-e.md",
+        frontmatter: {
+          id: "mod-e",
+          title: "op-module-e",
+          type: "workflow-module",
+          scope: "kickoff",
+          lazy: true,
+          description: "d",
+          vars: [],
+        },
+        // Body is whitespace-only — after trimEnd/filter it is dropped.
+        raw: "---\n# yaml omitted\n---\n   \n",
+      },
+    ];
+    const app = fakeApp(files);
+    const section = await composeWorkflowSection(app, {
+      entry: entry(),
+      profile: profile(),
+      injection: injection(),
+      vaultBasePath: "/Users/me/vault",
+      workflowMode: "modules",
+      workflowStep: "kickoff",
+      // repoPath omitted — meta-only
+    });
+    // Empty-body skill must not produce a heading.
+    // name = slugifySkillName("mod-e") = "op-module-mod-e".
+    expect(section).not.toContain("### op-module-mod-e");
+    // With no usable lazy body and no workflow text, the section is empty.
+    expect(section).toBe("");
+  });
+
+  it("Case E — text empty + one usable lazy skill returns lazy section alone (no Project workflow heading)", async () => {
+    // Workflow step produces no text (empty step), but there is a lazy skill
+    // with repoPath set → pointer block should be returned without the
+    // "## Project workflow" heading.
+    const files: FakeFile[] = [
+      {
+        path: "Projects/demo/WORKFLOW.md",
+        frontmatter: {
+          type: "workflow",
+          schema: 1,
+          project: "demo",
+          default_agent: "claude",
+          default_model: "opus",
+          steps: [{ step: "kickoff", modules: ["mod-lazy-only"] }],
+        },
+        raw: "---\n# yaml omitted\n---\n",
+      },
+      {
+        path: "Projects/_op-modules/mod-lazy-only.md",
+        frontmatter: {
+          id: "mod-lazy-only",
+          title: "op-module-lazy-only",
+          type: "workflow-module",
+          scope: "kickoff",
+          lazy: true,
+          description: "d",
+          vars: [],
+        },
+        raw: "---\n# yaml omitted\n---\nLAZY ONLY BODY\n",
+      },
+    ];
+    const app = fakeApp(files);
+    const section = await composeWorkflowSection(app, {
+      entry: entry(),
+      profile: profile(),
+      injection: injection(),
+      vaultBasePath: "/Users/me/vault",
+      workflowMode: "modules",
+      workflowStep: "kickoff",
+      repoPath: "/wt",
+    });
+    // Must NOT contain the main workflow heading (text was empty).
+    expect(section).not.toContain("## Project workflow");
+    // Must contain the pointer block heading and CLI command.
+    expect(section).toContain("## Optional reference skills");
+    expect(section).toContain("op-emit-lazy-skills");
+  });
+});
+
 describe("composeWorkflowSection — OP-199 (2b) repoPath undefined (#10)", () => {
   it.each([
     ["evaluate"],

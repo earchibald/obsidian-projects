@@ -20,6 +20,7 @@ import type { GetProjectWorkflowResult } from "./explainWorkflow";
 import { getSkill } from "./skill";
 import type { ExplainWorkflowPayload } from "./explainWorkflowPure";
 import type { ListVarsPayload } from "./listVarsPure";
+import type { EmitLazySkillsResult } from "./emitLazySkills";
 
 export interface UriHandlerDeps {
   store: { issues(): IssueEntry[] };
@@ -62,6 +63,7 @@ export interface UriHandlerDeps {
     agent?: string;
   }) => Promise<ExplainWorkflowPayload>;
   listVars?: (args: { project?: string; issue?: string }) => Promise<ListVarsPayload>;
+  emitLazySkills?: (args: { issueId: string; destDir?: string }) => Promise<EmitLazySkillsResult>;
 }
 
 export function findIssueById(store: { issues(): IssueEntry[] }, id: string): IssueEntry {
@@ -422,6 +424,24 @@ export async function handleOpListVarsUri(
   return {
     ok: true,
     command: "op-list-vars",
+    ...payload,
+  };
+}
+
+export async function handleOpEmitLazySkillsUri(
+  deps: UriHandlerDeps,
+  params: Record<string, string>,
+): Promise<UriResponsePayload> {
+  if (!deps.emitLazySkills) throw new Error("op-emit-lazy-skills not wired");
+  const id = trimOrUndef(params.issue ?? params.id);
+  if (!id) throw new Error("op-emit-lazy-skills URI: issue is required");
+  const dir = trimOrUndef(params.dir);
+  const args: { issueId: string; destDir?: string } = { issueId: id };
+  if (dir !== undefined) args.destDir = dir;
+  const payload = await deps.emitLazySkills(args);
+  return {
+    ok: true,
+    command: "op-emit-lazy-skills",
     ...payload,
   };
 }

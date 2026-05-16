@@ -163,6 +163,7 @@ const CODE_LABELS: Readonly<Record<WorkflowDiagnosticCode, string>> = Object.fre
   "intra-scope-collision": "Intra-scope collision",
   "malformed-frontmatter": "Malformed frontmatter",
   "size-budget": "Workflow size notice",
+  "lazy-skill": "Lazy skill",
 });
 
 export function codeLabel(code: WorkflowDiagnosticCode): string {
@@ -186,6 +187,8 @@ const HINTS: Readonly<Record<WorkflowDiagnosticCode, string>> = Object.freeze({
     "Open the module file and fix the highlighted field — the existing value is the wrong type.",
   "size-budget":
     "The composed workflow exceeds the recommended character budget. Modern models handle this well — consider splitting the workflow into smaller modules if latency increases.",
+  "lazy-skill":
+    "This module is lazy: emitted as an on-demand Claude Code skill when a working directory is available, otherwise inlined as optional reference. Not part of the always-inlined prompt body.",
 });
 
 /**
@@ -207,6 +210,7 @@ export function formatDiagnostic(d: WorkflowDiagnostic): FormattedDiagnostic {
     case "intra-scope-collision":
     case "malformed-frontmatter":
     case "size-budget":
+    case "lazy-skill":
       return buildFormatted(d);
     default:
       return assertNeverCode(code);

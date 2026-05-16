@@ -6,6 +6,7 @@ import { renderTemplate } from "./renderTemplate";
 import type { WorkflowDiagnostic } from "./workflowDiagnostic";
 import type { VarDecl, WorkflowModule } from "./workflowModulePure";
 import type { WorkflowFile, WorkflowStep } from "./workflowFilePure";
+import { slugifySkillName } from "./lazySkillPure";
 
 // Pure composition: turn the (loaded modules, parsed workflow file, mode,
 // render context) tuple into a single composed prompt with per-var source
@@ -83,17 +84,38 @@ export interface ComposedChunk {
 }
 
 /**
+ * One `lazy: true` module, fully rendered, ready to be written as a Claude
+ * Code skill by the IO layer (`emitLazySkills.ts`). Not part of the inlined
+ * prompt `text`.
+ */
+export interface LazySkill {
+  /** Module id (post-shadowing). */
+  id: string;
+  /** Derived, Claude-Code-valid skill name (`op-module-<id>` slugified). */
+  name: string;
+  /** SKILL.md `description:` — module.description, else module.title. */
+  description: string;
+  /** Fully var-resolved module body. */
+  body: string;
+}
+
+/**
  * Result of `composeWorkflow`. Pure data — no methods, no live references.
  */
 export interface ComposedPrompt {
   /** Joined text of every ordered chunk, separated by `\n\n`. */
   text: string;
   orderedChunks: ComposedChunk[];
+  /** OP-192: `lazy: true` modules, partitioned out of `text`. Empty when no
+   *  composed module is lazy. */
+  lazySkills: LazySkill[];
   /**
-   * For every user var that was *referenced* anywhere in any composed chunk,
-   * the resolved value + the precedence layer that supplied it. Vars never
-   * referenced are absent from the map (callers asking for a complete dump
-   * should iterate the module declarations instead).
+   * For every user var referenced during this composition pass — including vars
+   * referenced only in `lazy: true` module bodies, which are partitioned out of
+   * `orderedChunks`/`text` but still rendered — the resolved value + the
+   * precedence layer that supplied it. Vars never referenced are absent from
+   * the map. To see only vars feeding the inlined prompt, cross-reference
+   * `orderedChunks` module ids against the module declarations.
    */
   perVarSourceMap: Record<string, UserVarSource>;
   /**
@@ -403,6 +425,7 @@ export function composeWorkflow(args: ComposeArgs): ComposedPrompt {
     };
     return finaliseComposed({
       orderedChunks: [chunk],
+      lazySkills: [],
       perVarSourceMap: {},
       diagnostics,
       maxChars: ctx.maxWorkflowChars ?? DEFAULT_MAX_WORKFLOW_CHARS,
@@ -433,6 +456,7 @@ export function composeWorkflow(args: ComposeArgs): ComposedPrompt {
   if (orderedModules.length === 0) {
     return finaliseComposed({
       orderedChunks: [],
+      lazySkills: [],
       perVarSourceMap: {},
       diagnostics,
       maxChars: ctx.maxWorkflowChars ?? DEFAULT_MAX_WORKFLOW_CHARS,
@@ -473,6 +497,7 @@ export function composeWorkflow(args: ComposeArgs): ComposedPrompt {
   }
 
   const orderedChunks: ComposedChunk[] = [];
+  const lazySkills: LazySkill[] = [];
   for (const lm of orderedModules) {
     const r = renderModule({
       module: lm.module,
@@ -482,6 +507,32 @@ export function composeWorkflow(args: ComposeArgs): ComposedPrompt {
       ctx,
     });
     diagnostics.push(...r.diagnostics);
+    if (lm.module.lazy) {
+      const skillName = slugifySkillName(lm.module.id);
+      let description = lm.module.description;
+      if (description === undefined) {
+        description = lm.module.title;
+        diagnostics.push({
+          code: "lazy-skill",
+          severity: "warning",
+          message: `Module ${lm.module.id} is lazy but has no \`description:\` — using its title as the skill activation hint, which may reduce activation accuracy.`,
+          moduleId: lm.module.id,
+        });
+      }
+      diagnostics.push({
+        code: "lazy-skill",
+        severity: "info",
+        message: `Module ${lm.module.id} is lazy: emitted as the on-demand skill ${skillName} when a working directory is available, otherwise inlined as optional reference. Not part of the always-inlined prompt body.`,
+        moduleId: lm.module.id,
+      });
+      lazySkills.push({
+        id: lm.module.id,
+        name: skillName,
+        description,
+        body: r.text,
+      });
+      continue;
+    }
     orderedChunks.push({
       moduleId: lm.module.id,
       scope: lm.module.scope,
@@ -492,6 +543,7 @@ export function composeWorkflow(args: ComposeArgs): ComposedPrompt {
 
   return finaliseComposed({
     orderedChunks,
+    lazySkills,
     perVarSourceMap,
     diagnostics,
     maxChars: ctx.maxWorkflowChars ?? DEFAULT_MAX_WORKFLOW_CHARS,
@@ -504,6 +556,7 @@ export function composeWorkflow(args: ComposeArgs): ComposedPrompt {
 
 interface FinaliseArgs {
   orderedChunks: ComposedChunk[];
+  lazySkills: LazySkill[];
   perVarSourceMap: Record<string, UserVarSource>;
   diagnostics: WorkflowDiagnostic[];
   maxChars: number;
@@ -527,6 +580,7 @@ function finaliseComposed(args: FinaliseArgs): ComposedPrompt {
   return {
     text,
     orderedChunks: args.orderedChunks,
+    lazySkills: args.lazySkills,
     perVarSourceMap: args.perVarSourceMap,
     sizeChars,
     diagnostics,
@@ -537,6 +591,7 @@ function emptyComposed(diagnostics: WorkflowDiagnostic[]): ComposedPrompt {
   return {
     text: "",
     orderedChunks: [],
+    lazySkills: [],
     perVarSourceMap: {},
     sizeChars: 0,
     diagnostics,

@@ -19,7 +19,11 @@ export type WorkflowDiagnosticCode =
   // `maxWorkflowChars`. Modern models tolerate the size comfortably; the cap
   // is a guardrail that surfaces "this got bigger than you might have
   // expected" rather than a constraint that blocks the launch.
-  | "size-budget";
+  | "size-budget"
+  // OP-192: emitted when a `lazy: true` module is partitioned out of the
+  // inlined prompt into a skill (`info`), or when such a module lacks a
+  // `description:` and falls back to its title (`warning`).
+  | "lazy-skill";
 
 export type WorkflowDiagnosticSeverity = "error" | "warning" | "info";
 

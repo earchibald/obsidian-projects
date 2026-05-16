@@ -246,6 +246,23 @@ If latency hasn't visibly increased, you can also raise
 `maxWorkflowChars` in Settings → Advanced → Injection. The cap is
 informational, not enforced.
 
+### `lazy-skill`
+
+**What it means.** A module with `lazy: true` was partitioned out of the
+inlined prompt and will be emitted as an on-demand Claude Code skill
+instead. This is **info-only** when the module has a `description:`
+field; it is **warning** when the description is absent and the skill
+falls back to the module's title.
+
+**When to act.**
+
+- **Run `op-emit-lazy-skills`** to materialize the skill files for every
+  `lazy: true` module in the workflow. Without this step the skill files
+  on disk are stale (or absent) and the agent cannot invoke them.
+- **Add a `description:` field** to the module frontmatter to suppress
+  the warning variant. A one-sentence description of what the skill does
+  is enough.
+
 ## Diagnostic surfaces vs. the recovery dialog
 
 A few diagnostics open dedicated recovery UI rather than just rendering

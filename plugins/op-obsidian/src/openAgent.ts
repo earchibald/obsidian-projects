@@ -24,10 +24,7 @@ import { renderTemplate } from "./renderTemplate";
 import { currentProjectsRoot, statusPathFor } from "./projectPaths";
 import { resolveWorkingDir } from "./workingDir";
 import { launchInTerminal } from "./terminalLaunch";
-import { buildRenderContext } from "./pluginVarRegistry";
-import { renderTemplate } from "./renderTemplate";
 import { colorRegistry } from "./colorRegistry";
-import { dispatchPostLaunch } from "./postLaunchDispatch";
 import {
   refreshAgentDetection,
   type AgentDetector,

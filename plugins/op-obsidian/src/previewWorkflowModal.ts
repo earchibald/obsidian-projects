@@ -225,6 +225,7 @@ export class PreviewWorkflowModal extends Modal {
         : {
             text: "",
             orderedChunks: [],
+            lazySkills: [],
             perVarSourceMap: {},
             sizeChars: 0,
             diagnostics: bundle.diagnostics,

@@ -64,6 +64,12 @@ export interface WorkflowModule {
   agent?: string;
   /** Integer sort key within a scope. Default 0 when frontmatter omits it. */
   order: number;
+  /** OP-192: when true, this module is emitted as an on-demand skill instead
+   *  of being inlined into the composed prompt. Default false. */
+  lazy: boolean;
+  /** OP-192: one-line activation hint used as the emitted skill's
+   *  `description:`. Optional; lazy modules without it fall back to `title`. */
+  description?: string;
   vars: VarDecl[];
   source: ModuleSource;
 }
@@ -387,6 +393,30 @@ export function parseModule(args: ParseModuleArgs): ParseModuleResult {
     }
   }
 
+  let lazy = false;
+  if (Object.prototype.hasOwnProperty.call(frontmatter, "lazy")) {
+    const v = frontmatter.lazy;
+    if (v !== undefined && v !== null) {
+      if (typeof v !== "boolean") {
+        diagnostics.push(invalidFieldDiag(path, id, "lazy", v, "boolean"));
+      } else {
+        lazy = v;
+      }
+    }
+  }
+
+  let description: string | undefined;
+  if (Object.prototype.hasOwnProperty.call(frontmatter, "description")) {
+    const v = frontmatter.description;
+    if (v !== undefined && v !== null) {
+      if (typeof v !== "string") {
+        diagnostics.push(invalidFieldDiag(path, id, "description", v, "string"));
+      } else if (v.trim().length > 0) {
+        description = v;
+      }
+    }
+  }
+
   const varsResult = parseVarDecls(frontmatter.vars);
   for (const d of varsResult.diagnostics) {
     diagnostics.push({ ...d, moduleId: id, extra: { ...(d.extra ?? {}), path } });
@@ -410,6 +440,8 @@ export function parseModule(args: ParseModuleArgs): ParseModuleResult {
     project,
     agent,
     order,
+    lazy,
+    ...(description !== undefined ? { description } : {}),
     vars: varsResult.decls,
     source,
   };

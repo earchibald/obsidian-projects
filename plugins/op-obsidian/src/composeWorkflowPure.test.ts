@@ -38,6 +38,9 @@ function makeModule(args: {
   project?: string;
   agent?: string;
   order?: number;
+  lazy?: boolean;
+  title?: string;
+  description?: string;
   pathPrefix?: "global" | "project";
 }): WorkflowModule {
   const path =
@@ -50,14 +53,32 @@ function makeModule(args: {
       : { kind: "global" as const, path };
   return {
     id: args.id,
-    title: args.id,
+    title: args.title ?? args.id,
     scope: args.scope,
     project: args.project,
     agent: args.agent,
     order: args.order ?? 0,
+    lazy: args.lazy ?? false,
+    description: args.description,
     vars: args.vars ?? [],
     source,
   };
+}
+
+/** Build a LoadedModule (module + body) for use in composeWorkflow tests. */
+function loaded(args: Parameters<typeof makeModule>[0] & { body?: string }): LoadedModule {
+  const { body, ...moduleArgs } = args;
+  return { module: makeModule(moduleArgs), body: body ?? "" };
+}
+
+/** Build a single-step WorkflowFile from a step id and module id list. */
+function workflowWith(step: string, modules: string[]) {
+  return makeWorkflow([{ step, modules }]);
+}
+
+/** Build a RenderContext by merging overrides into RENDER_CTX. */
+function renderCtx(overrides: Partial<RenderContext>): RenderContext {
+  return { ...RENDER_CTX, ...overrides };
 }
 
 function makeWorkflow(steps: WorkflowStep[]): WorkflowFile {
@@ -509,5 +530,69 @@ describe("token whitespace", () => {
     ];
     const r = composeWorkflow({ loadedModules: loaded, workflow, step: "kickoff", ctx: baseCtx });
     expect(r.text).toBe("a FOO b FOO c");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Lazy skill partition (OP-192)
+// ---------------------------------------------------------------------------
+
+describe("lazy skill partition (OP-192)", () => {
+  it("excludes lazy modules from text/orderedChunks and emits them as lazySkills with an info diagnostic", () => {
+    const normal = loaded({ id: "intro", scope: "kickoff", body: "Normal body" });
+    const lazyMod = loaded({
+      id: "tmux", scope: "kickoff", lazy: true,
+      description: "tmux gotchas catalog", body: "Lazy body {{id}}",
+    });
+    const wf = workflowWith("kickoff", ["intro", "tmux"]);
+    const r = composeWorkflow({
+      loadedModules: [normal, lazyMod], workflow: wf, step: "kickoff",
+      ctx: { render: renderCtx({ id: "OP-1" }) },
+    });
+    expect(r.text).toBe("Normal body");
+    expect(r.orderedChunks.map(c => c.moduleId)).toEqual(["intro"]);
+    expect(r.lazySkills).toEqual([
+      { id: "tmux", name: "op-module-tmux", description: "tmux gotchas catalog", body: "Lazy body OP-1" },
+    ]);
+    expect(r.diagnostics.some(d => d.code === "lazy-skill" && d.severity === "info" && d.moduleId === "tmux")).toBe(true);
+  });
+
+  it("falls back to title with a lazy-skill warning when a lazy module has no description", () => {
+    const lazyMod = loaded({ id: "tmux", scope: "kickoff", lazy: true, title: "Tmux Notes", body: "Body" });
+    const wf = workflowWith("kickoff", ["tmux"]);
+    const r = composeWorkflow({ loadedModules: [lazyMod], workflow: wf, step: "kickoff", ctx: { render: renderCtx({}) } });
+    expect(r.lazySkills[0].description).toBe("Tmux Notes");
+    expect(r.diagnostics.some(d => d.code === "lazy-skill" && d.severity === "warning" && /no .description/.test(d.message))).toBe(true);
+  });
+
+  it("resolves {{vars.x}} user-var tokens in lazy module bodies through the precedence chain", () => {
+    // Module declares greeting with a default; the body references it.
+    // Proves user-var substitution runs on lazy bodies (not just inlined chunks).
+    const lazyMod = loaded({
+      id: "greeter",
+      scope: "kickoff",
+      lazy: true,
+      description: "A greeting module",
+      vars: [{ kind: "default", name: "greeting", value: "hi" }],
+      body: "Lazy {{vars.greeting}}",
+    });
+    const wf = workflowWith("kickoff", ["greeter"]);
+    const r = composeWorkflow({
+      loadedModules: [lazyMod],
+      workflow: wf,
+      step: "kickoff",
+      ctx: { render: renderCtx({}) },
+    });
+    // The lazy skill's body should have the var substituted, not left as a token.
+    expect(r.lazySkills[0].body).toBe("Lazy hi");
+    // The var must appear in perVarSourceMap, resolved from the module default.
+    expect(r.perVarSourceMap.greeting).toMatchObject({
+      value: "hi",
+      scope: "module",
+      source: "greeter",
+    });
+    // The lazy module is NOT inlined.
+    expect(r.text).toBe("");
+    expect(r.orderedChunks).toEqual([]);
   });
 });

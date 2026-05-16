@@ -329,6 +329,35 @@ export function parseExplainWorkflowParams(
   return { ok: true, value: out };
 }
 
+// POSIX absolute-path check. This plugin targets macOS/Linux only, so a
+// leading "/" is the sole absolute form (no Windows-drive / UNC handling).
+function isAbsolutePath(p: string): boolean {
+  return p.startsWith("/");
+}
+
+export function parseEmitLazySkillsParams(
+  params: Record<string, string>,
+): ParamsResult<{ issueId: string; destDir?: string }> {
+  const id = params.issue ?? params.id;
+  if (!id) return { ok: false, error: "op-emit-lazy-skills failed: --issue is required" };
+  const dir = nonEmptyTrim(params.dir);
+  if (dir !== undefined && dir.startsWith("~")) {
+    return {
+      ok: false,
+      error: `op-emit-lazy-skills failed: --dir must be an absolute path; tilde paths are not expanded (got ${JSON.stringify(dir)}); use dir="$HOME/..." or dir="$(pwd)"`,
+    };
+  }
+  if (dir !== undefined && !isAbsolutePath(dir)) {
+    return {
+      ok: false,
+      error: `op-emit-lazy-skills failed: --dir must be an absolute path (got ${JSON.stringify(dir)}); pass dir="$(pwd)" from inside your working directory`,
+    };
+  }
+  const out: { issueId: string; destDir?: string } = { issueId: id };
+  if (dir !== undefined) out.destDir = dir;
+  return { ok: true, value: out };
+}
+
 export function parseExportModuleParams(
   params: Record<string, string>,
 ): ParamsResult<

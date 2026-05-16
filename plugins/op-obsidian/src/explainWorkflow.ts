@@ -91,6 +91,7 @@ export async function explainWorkflow(
       composed: {
         text: "",
         orderedChunks: [],
+        lazySkills: [],
         perVarSourceMap: {},
         sizeChars: 0,
         diagnostics: [...agentDiags, ...bundle.diagnostics],
@@ -141,7 +142,7 @@ export async function listVars(
   return buildListVarsPayload(renderContext);
 }
 
-function resolveProfileById(settings: OpSettings, raw: string): AgentProfile {
+export function resolveProfileById(settings: OpSettings, raw: string): AgentProfile {
   const id = (AGENT_IDS as readonly string[]).includes(raw)
     ? (raw as AgentId)
     : settings.defaultAgent;
