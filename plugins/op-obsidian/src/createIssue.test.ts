@@ -228,3 +228,79 @@ describe("createIssue", () => {
     expect(result.entry.title).toBe(fullTitle);
   });
 });
+
+// OP-279: build-seeds' `setProjectVars` rewrites a project's STATUS.md via
+// processFrontMatter, then immediately dispatches `op-new` in a separate CLI
+// process. The metadataCache entry for STATUS.md is transiently stale during
+// that window, so the cache-only resolver (`findProjectBySlug`) misses the
+// project and createIssue threw "Unknown project slug" — even though STATUS.md
+// is well-formed on disk. createIssue must fall back to a deterministic disk
+// read before declaring the slug unknown.
+function fakeAppStaleCache(slug: string, prefix: string) {
+  const statusPath = `Projects/${slug}/STATUS.md`;
+  const statusFile = Object.assign(new TFile(), {
+    path: statusPath,
+    basename: "STATUS",
+    name: "STATUS.md",
+  });
+  // What's actually on disk — correct, just not yet reflected in metadataCache.
+  const onDisk =
+    `---\nproject: ${slug}\nprefix: ${prefix}\ntype: project-status\n` +
+    `vars:\n  reviewer_handle: "@x"\n---\n\n![[${slug}.base#Open Issues]]\n`;
+  const folders = new Set<string>();
+  const created: Array<{ path: string; content: string; file: TFile }> = [];
+
+  const app = {
+    vault: {
+      getMarkdownFiles: () => [statusFile],
+      getAbstractFileByPath: (p: string) => {
+        if (p === statusPath) return statusFile;
+        if (folders.has(p)) return { children: [] };
+        const hit = created.find((c) => c.path === p);
+        return hit ? hit.file : null;
+      },
+      read: async (f: TFile) => (f === statusFile ? onDisk : ""),
+      createFolder: async (p: string) => {
+        folders.add(p);
+      },
+      create: async (path: string, content: string) => {
+        const basename = path.split("/").pop()!.replace(/\.md$/, "");
+        const file = Object.assign(new TFile(), {
+          path,
+          basename,
+          name: `${basename}.md`,
+        });
+        created.push({ path, content, file });
+        return file;
+      },
+    },
+    // Stale: STATUS.md is in the vault but its cached frontmatter is missing.
+    metadataCache: {
+      getFileCache: (_f: TFile) => ({ frontmatter: undefined }),
+    },
+  };
+
+  return { app: app as any, store: { issues: () => [] } as any, created };
+}
+
+describe("createIssue — stale metadataCache disk fallback (OP-279)", () => {
+  it("resolves the project from disk when the STATUS.md cache entry is stale", async () => {
+    const { app, store } = fakeAppStaleCache("testing", "TST");
+    const result = await createIssue(app, store, {
+      slug: "testing",
+      title: "Workflow modules smoke target",
+      priority: "med",
+    });
+    expect(result.id).toMatch(/^TST-\d+$/);
+    expect(result.project.slug).toBe("testing");
+    expect(result.project.prefix).toBe("TST");
+    expect(result.path).toContain("Projects/testing/ISSUES/");
+  });
+
+  it("still throws Unknown project slug when no STATUS.md exists on disk either", async () => {
+    const { app, store } = fakeAppStaleCache("testing", "TST");
+    await expect(
+      createIssue(app, store, { slug: "ghost", title: "x" }),
+    ).rejects.toThrow(/Unknown project slug: ghost/);
+  });
+});
