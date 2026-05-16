@@ -1,7 +1,9 @@
-// Shared helpers for OP-Test test-vault scripts (OP-147, OP-175).
+// Shared helpers for OP-Test test-vault scripts (OP-147, OP-175, OP-278).
 //
 // Single source of truth for:
-//   - the OP-Test vault path (no env-var override)
+//   - the OP-Test vault path (resolved once at module load — see
+//     `resolveOpTestVault`: OP_TEST_VAULT env override > Obsidian-reported
+//     basePath > legacy ~/Documents/OP-Test/OP-Test default)
 //   - the OP-Test-open assertion (vault registered + reachable, not necessarily focused)
 //   - thin wrappers around `obsidian` CLI and `git` so error reporting stays
 //     consistent across dev-sync / build-seeds / reset-test-vault.
@@ -17,8 +19,66 @@ import { spawnSync } from "node:child_process";
 import { homedir } from "node:os";
 import { join, sep } from "node:path";
 
-export const OP_TEST_VAULT = join(homedir(), "Documents/OP-Test/OP-Test");
 export const OP_TEST_VAULT_NAME = "OP-Test";
+
+// Historical hardcoded location, kept as the final fallback so behavior is
+// unchanged when Obsidian is unreachable (the assertion below then surfaces
+// the proper "open OP-Test" error rather than crashing at import).
+const LEGACY_OP_TEST_VAULT = join(homedir(), "Documents/OP-Test/OP-Test");
+
+// Strip the obsidian-cli `=> ` reply prefix and any wrapping quotes.
+function parseEvalString(stdout) {
+  let s = (stdout || "").trim();
+  if (s.startsWith("=>")) s = s.slice(2).trim();
+  if (
+    (s.startsWith('"') && s.endsWith('"')) ||
+    (s.startsWith("'") && s.endsWith("'"))
+  ) {
+    s = s.slice(1, -1);
+  }
+  return s;
+}
+
+// Resolve the OP-Test vault path once at module load. Consumers import
+// OP_TEST_VAULT as a const and read it at import time (e.g.
+// `const SCRATCH = join(OP_TEST_VAULT, …)`), so resolution must be eager and
+// synchronous. Precedence (OP-278):
+//   1. OP_TEST_VAULT env var          — explicit override, highest precedence
+//   2. Obsidian-reported basePath     — auto-tracks vault moves; the scripts
+//                                        require OP-Test open anyway, so the
+//                                        probe is free
+//   3. legacy ~/Documents/OP-Test/…   — final fallback (Obsidian unreachable)
+function resolveOpTestVault() {
+  const env = process.env.OP_TEST_VAULT?.trim();
+  if (env) return env;
+
+  try {
+    const r = spawnSync(
+      "obsidian",
+      [
+        `vault=${OP_TEST_VAULT_NAME}`,
+        "eval",
+        "code=app.vault.adapter.basePath",
+      ],
+      { encoding: "utf8" },
+    );
+    const stdout = (r.stdout || "").trim();
+    if (
+      !r.error &&
+      r.status === 0 &&
+      !/vault not found/i.test(stdout)
+    ) {
+      const p = parseEvalString(stdout);
+      if (p && p.startsWith("/")) return p;
+    }
+  } catch {
+    /* fall through to the legacy default */
+  }
+
+  return LEGACY_OP_TEST_VAULT;
+}
+
+export const OP_TEST_VAULT = resolveOpTestVault();
 export const OP_TEST_PLUGIN_DEST = join(
   OP_TEST_VAULT,
   ".obsidian/plugins/op-obsidian",
@@ -42,7 +102,8 @@ export function assertOpTestVaultOpen() {
   if (!existsSync(OP_TEST_VAULT)) {
     fail(
       `OP-Test vault is missing at ${OP_TEST_VAULT}.\n` +
-        `Create the directory and run \`git init\` inside it before re-running.`,
+        `Create the directory and run \`git init\` inside it, or point at the\n` +
+        `real location with \`OP_TEST_VAULT=/abs/path …\` before re-running.`,
     );
   }
   const r = spawnSync(

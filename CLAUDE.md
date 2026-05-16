@@ -23,7 +23,7 @@ Always, in order:
    ```bash
    node scripts/dev-sync.mjs
    ```
-   The script hardcodes `~/Documents/OP-Test/OP-Test/.obsidian/plugins/op-obsidian/` as the target. It asserts OP-Test is **open** in Obsidian (any window — focus is not required since OP-175 routes every internal CLI call via `vault=OP-Test`) and rejects any path containing `Agent-Vault` (belt-and-suspenders against muscle-memory mistakes — Agent-Vault is BRAT-only, see below). Never `rm -rf` the dest — `data.json` (user settings) lives there; `dev-sync.mjs` only overwrites `main.js` and `manifest.json`.
+   The script targets `<OP-Test-vault>/.obsidian/plugins/op-obsidian/`, where the vault path is resolved by `scripts/lib/op-test.mjs` (see the override precedence in "OP-Test vault: the sole dev sync target" below — canonical location is `~/Vault/OP-Test`). It asserts OP-Test is **open** in Obsidian (any window — focus is not required since OP-175 routes every internal CLI call via `vault=OP-Test`) and rejects any path containing `Agent-Vault` (belt-and-suspenders against muscle-memory mistakes — Agent-Vault is BRAT-only, see below). Never `rm -rf` the dest — `data.json` (user settings) lives there; `dev-sync.mjs` only overwrites `main.js` and `manifest.json`.
 
 3. **Reload the plugin.** `dev-sync.mjs` handles this: it tries `obsidian plugin:reload id=op-obsidian` first and falls back to the `loadManifests + enablePluginAndSave` recipe on first-install (when Obsidian hasn't scanned the new folder yet). No separate manual step needed.
 
@@ -68,7 +68,15 @@ Never skip these steps, even for "trivial" changes — untested plugin builds sh
 
 ## OP-Test vault: the sole dev sync target
 
-The **OP-Test** vault at `~/Documents/OP-Test/OP-Test/` is a clean-room test vault — separate from your day-to-day Agent-Vault — used to verify the plugin's behavior in a vault that has no project state, no settings carry-over, and no other plugins. **OP-Test is the only vault that receives dev syncs from this repo.** `node scripts/dev-sync.mjs` enforces this: it asserts the OP-Test vault is open in Obsidian before mutating, routes every internal CLI call via `vault=OP-Test` (OP-175 — focus is not required), and refuses any target path containing `Agent-Vault`.
+The **OP-Test** vault — canonically at `~/Vault/OP-Test/` (matches the `~/Vault/` domain in the global AGENTS.md) — is a clean-room test vault, separate from your day-to-day Agent-Vault, used to verify the plugin's behavior in a vault that has no project state, no settings carry-over, and no other plugins. **OP-Test is the only vault that receives dev syncs from this repo.** `node scripts/dev-sync.mjs` enforces this: it asserts the OP-Test vault is open in Obsidian before mutating, routes every internal CLI call via `vault=OP-Test` (OP-175 — focus is not required), and refuses any target path containing `Agent-Vault`.
+
+**Vault-path resolution (OP-278).** `scripts/lib/op-test.mjs` resolves the OP-Test vault path once at module load, with this precedence:
+
+1. **`OP_TEST_VAULT` env var** — explicit override, highest precedence. Use it when the vault lives somewhere non-standard: `OP_TEST_VAULT=/abs/path node scripts/dev-sync.mjs`.
+2. **Obsidian-reported `app.vault.adapter.basePath`** — auto-derived from the running app (probed via `obsidian vault=OP-Test eval`). Since these scripts already require OP-Test to be open, this tracks vault moves (e.g. the `~/Documents/OP-Test` → `~/Vault/OP-Test` relocation) with zero config.
+3. **Legacy `~/Documents/OP-Test/OP-Test`** — final fallback, used only when Obsidian is unreachable so the open-vault assertion still surfaces a clear error rather than crashing at import.
+
+Everything downstream (`OP_TEST_PLUGIN_DEST`, the smoke/seed scratch paths) derives from the resolved value, so no script hardcodes a vault location.
 
 **Do not install op-obsidian into OP-Test via BRAT.** We're the plugin's authors and the dev build is on disk; BRAT adds GitHub-release latency and doesn't carry uncommitted work. Use `dev-sync.mjs` instead — it handles the file copy, the first-install enable recipe, and subsequent reloads.
 
