@@ -329,10 +329,10 @@ export function parseExplainWorkflowParams(
   return { ok: true, value: out };
 }
 
-// POSIX/absolute check without a Node `path` dependency — keeps this module
-// pure. Treats a leading "/" (POSIX) or a Windows drive / UNC root as absolute.
+// POSIX absolute-path check. This plugin targets macOS/Linux only, so a
+// leading "/" is the sole absolute form (no Windows-drive / UNC handling).
 function isAbsolutePath(p: string): boolean {
-  return p.startsWith("/") || /^[A-Za-z]:[\\/]/.test(p) || p.startsWith("\\\\");
+  return p.startsWith("/");
 }
 
 export function parseEmitLazySkillsParams(
@@ -341,6 +341,12 @@ export function parseEmitLazySkillsParams(
   const id = params.issue ?? params.id;
   if (!id) return { ok: false, error: "op-emit-lazy-skills failed: --issue is required" };
   const dir = nonEmptyTrim(params.dir);
+  if (dir !== undefined && dir.startsWith("~")) {
+    return {
+      ok: false,
+      error: `op-emit-lazy-skills failed: --dir must be an absolute path; tilde paths are not expanded (got ${JSON.stringify(dir)}); use dir="$HOME/..." or dir="$(pwd)"`,
+    };
+  }
   if (dir !== undefined && !isAbsolutePath(dir)) {
     return {
       ok: false,
