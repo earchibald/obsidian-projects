@@ -329,6 +329,29 @@ export function parseExplainWorkflowParams(
   return { ok: true, value: out };
 }
 
+// POSIX/absolute check without a Node `path` dependency — keeps this module
+// pure. Treats a leading "/" (POSIX) or a Windows drive / UNC root as absolute.
+function isAbsolutePath(p: string): boolean {
+  return p.startsWith("/") || /^[A-Za-z]:[\\/]/.test(p) || p.startsWith("\\\\");
+}
+
+export function parseEmitLazySkillsParams(
+  params: Record<string, string>,
+): ParamsResult<{ issueId: string; destDir?: string }> {
+  const id = params.issue ?? params.id;
+  if (!id) return { ok: false, error: "op-emit-lazy-skills failed: --issue is required" };
+  const dir = nonEmptyTrim(params.dir);
+  if (dir !== undefined && !isAbsolutePath(dir)) {
+    return {
+      ok: false,
+      error: `op-emit-lazy-skills failed: --dir must be an absolute path (got ${JSON.stringify(dir)}); pass dir="$(pwd)" from inside your working directory`,
+    };
+  }
+  const out: { issueId: string; destDir?: string } = { issueId: id };
+  if (dir !== undefined) out.destDir = dir;
+  return { ok: true, value: out };
+}
+
 export function parseExportModuleParams(
   params: Record<string, string>,
 ): ParamsResult<
