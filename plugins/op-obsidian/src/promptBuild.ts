@@ -231,11 +231,41 @@ export async function composeWorkflowSection(
   }
 
   const text = composed.text.trim();
+  const lazy = composed.lazySkills ?? [];
+
+  // OP-192: build the lazy-skills section.
+  let lazySection = "";
+  if (lazy.length > 0) {
+    if (args.repoPath) {
+      // Issue has a working directory — emit a pointer block so the agent can
+      // materialise the skills on demand without bloating the launch prompt.
+      const names = lazy.map((s) => s.name).join(", ");
+      lazySection =
+        `## Optional reference skills\n\n` +
+        `This issue has ${lazy.length} optional reference module(s) (${names}) available as on-demand skills. ` +
+        `From inside your working directory (after creating your worktree) run:\n\n` +
+        "```bash\n" +
+        `obsidian op-emit-lazy-skills issue=${entry.id} dir="$(pwd)"\n` +
+        "```\n\n" +
+        `Then activate the relevant one via the Skill tool when needed. Skipping this is safe — they are reference-only.`;
+    } else {
+      // Meta-only project (no repo path) — inline the lazy bodies so the
+      // content is never lost (there is no working directory to run the CLI in).
+      lazySection =
+        `## Optional reference (no working directory — inlined)\n\n` +
+        lazy.map((s) => `### ${s.name}\n\n${s.body}`).join("\n\n");
+    }
+  }
+
   // Non-null but empty: WORKFLOW.md exists, requested step exists, but the
-  // step produced nothing (e.g. `modules: []`). Return "" so the caller
-  // suppresses the section without injecting legacy content.
-  if (!text) return "";
-  return `## Project workflow\n\n${text}`;
+  // step produced nothing (e.g. `modules: []`). Return "" (or lazySection if
+  // there is one) so the caller suppresses the main section without injecting
+  // legacy content.
+  if (!text) {
+    return lazySection ? lazySection : "";
+  }
+  const section = `## Project workflow\n\n${text}`;
+  return lazySection ? `${section}\n\n${lazySection}` : section;
 }
 
 function buildLaunchRenderContext(
