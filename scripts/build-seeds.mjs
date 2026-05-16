@@ -41,6 +41,7 @@ import {
   fail,
   runGit,
   runObsidian,
+  syncBuiltPlugin,
 } from "./lib/op-test.mjs";
 
 const FIXTURE_REPO_NAME = "op-test-fixture";
@@ -51,6 +52,15 @@ const FIXTURE_DESCRIPTION =
 assertOpTestVaultOpen();
 assertCleanTree();
 ensureBaselineTag();
+
+// ensureBaselineTag() just did `git reset --hard seed/empty`, which reverted
+// the git-tracked plugin to whatever the baseline pinned. Overlay the
+// freshly-built artifact so the rebuilt ladder bakes the *current* plugin into
+// every seed commit below — keeps the committed seeds in sync with the plugin
+// code (the docstring promise) and matches what reset-test-vault.mjs restores.
+for (const c of syncBuiltPlugin()) {
+  console.log(`overlaid current ${c.file} (${c.bytes} bytes) into baseline`);
+}
 
 build("seed/empty", () => {
   // Baseline; nothing to mutate. Tagging is unconditional below.
