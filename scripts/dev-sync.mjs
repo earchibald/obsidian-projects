@@ -15,44 +15,20 @@
 // `vault=OP-Test` routing on every CLI call (OP-175) jointly enforce this;
 // no Obsidian window needs to be focused on OP-Test.
 
-import { copyFileSync, existsSync, mkdirSync, statSync } from "node:fs";
-import { dirname, join, relative } from "node:path";
-import { fileURLToPath } from "node:url";
-
 import {
-  OP_TEST_PLUGIN_DEST,
-  assertNotAgentVault,
   assertOpTestVaultOpen,
   fail,
   runObsidian,
+  syncBuiltPlugin,
 } from "./lib/op-test.mjs";
 
-const here = dirname(fileURLToPath(import.meta.url));
-const root = join(here, "..");
-const pluginSrc = join(root, "plugins/op-obsidian");
-const filesToCopy = ["main.js", "manifest.json"];
-
 assertOpTestVaultOpen();
-assertNotAgentVault(OP_TEST_PLUGIN_DEST);
 
-for (const f of filesToCopy) {
-  const src = join(pluginSrc, f);
-  if (!existsSync(src)) {
-    fail(
-      `Source artifact missing: ${relative(root, src)}\n` +
-        `Run \`node scripts/bump-version.mjs <patch|minor|major>\` first to build.`,
-    );
-  }
-}
-
-mkdirSync(OP_TEST_PLUGIN_DEST, { recursive: true });
-
-for (const f of filesToCopy) {
-  const src = join(pluginSrc, f);
-  const dest = join(OP_TEST_PLUGIN_DEST, f);
-  copyFileSync(src, dest);
-  const { size } = statSync(dest);
-  console.log(`copied ${f} (${size} bytes) → ${dest}`);
+// syncBuiltPlugin() owns the Agent-Vault guard, the unbuilt-artifact check,
+// and the copy itself (single source of truth, shared with reset-test-vault.mjs
+// and build-seeds.mjs).
+for (const c of syncBuiltPlugin()) {
+  console.log(`copied ${c.file} (${c.bytes} bytes) → ${c.dest}`);
 }
 
 // Try the fast path first; fall back to load-manifests + enable for the

@@ -15,6 +15,7 @@ import {
   fail,
   runGit,
   runObsidian,
+  syncBuiltPlugin,
 } from "./lib/op-test.mjs";
 
 const VALID_SEEDS = new Set([
@@ -59,6 +60,16 @@ if (tagCheck.status !== 0) {
 console.log(`resetting ${OP_TEST_VAULT} to ${tag} …`);
 runGit(["reset", "--hard", tag]);
 runGit(["clean", "-fd"]);
+
+// The seed tags git-track the plugin's main.js/manifest.json at whatever
+// version was current when the ladder was last built. The reset above just
+// reverted the plugin to that pinned (possibly-stale) version, so re-overlay
+// the freshly-built artifact — otherwise `reset && smoke` would exercise an
+// out-of-date plugin and fail on any feature added since the seeds were built.
+const synced = syncBuiltPlugin();
+for (const c of synced) {
+  console.log(`overlaid current ${c.file} (${c.bytes} bytes) → ${c.dest}`);
+}
 
 console.log("reloading op-obsidian so Obsidian picks up vault state …");
 const reload = runObsidian(["plugin:reload", "id=op-obsidian"], { allowFail: true });

@@ -14,10 +14,11 @@
 // focused — it will always hit OP-Test. Callers that need a different vault
 // should use spawnSync directly.
 
-import { existsSync, realpathSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, realpathSync, statSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { homedir } from "node:os";
-import { join, sep } from "node:path";
+import { dirname, join, relative, sep } from "node:path";
+import { fileURLToPath } from "node:url";
 
 export const OP_TEST_VAULT_NAME = "OP-Test";
 
@@ -166,6 +167,49 @@ export function assertNotAgentVault(targetPath) {
         `Agent-Vault is a BRAT customer of op-obsidian. Dev syncs target OP-Test only.`,
     );
   }
+}
+
+// Repo root, derived from this file's location (scripts/lib/op-test.mjs →
+// ../../). The locally-built plugin artifact lives at
+// plugins/op-obsidian/{main.js,manifest.json}.
+const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
+const PLUGIN_SRC_DIR = join(REPO_ROOT, "plugins/op-obsidian");
+const PLUGIN_ARTIFACTS = ["main.js", "manifest.json"];
+
+// Copy the locally-built op-obsidian artifact into OP_TEST_PLUGIN_DEST.
+//
+// Why this exists: the OP-Test git repo *tracks* the plugin's main.js and
+// manifest.json, and the seed/* tags pin them at whatever version was current
+// when the ladder was last built. `git reset --hard seed/<name>` (run by
+// reset-test-vault.mjs and build-seeds.mjs) therefore reverts the plugin to a
+// possibly-stale version. Calling this *after* the reset re-overlays the
+// freshly-built plugin so smoke tests always exercise the current code,
+// regardless of what the seed tag pinned. Single source of truth for the copy
+// — dev-sync.mjs delegates here too.
+//
+// Does NOT reload the plugin; callers own the reload (they each do it
+// differently — reset-test-vault via plugin:reload, dev-sync with a
+// first-install fallback).
+export function syncBuiltPlugin() {
+  assertNotAgentVault(OP_TEST_PLUGIN_DEST);
+  for (const f of PLUGIN_ARTIFACTS) {
+    const src = join(PLUGIN_SRC_DIR, f);
+    if (!existsSync(src)) {
+      fail(
+        `Source artifact missing: ${relative(REPO_ROOT, src)}\n` +
+          `Run \`node scripts/bump-version.mjs <patch|minor|major>\` (or ` +
+          `\`npm --prefix plugins/op-obsidian run build\`) first to build the plugin.`,
+      );
+    }
+  }
+  mkdirSync(OP_TEST_PLUGIN_DEST, { recursive: true });
+  const copied = [];
+  for (const f of PLUGIN_ARTIFACTS) {
+    const dest = join(OP_TEST_PLUGIN_DEST, f);
+    copyFileSync(join(PLUGIN_SRC_DIR, f), dest);
+    copied.push({ file: f, bytes: statSync(dest).size, dest });
+  }
+  return copied;
 }
 
 // Run the `obsidian` CLI with `vault=OP-Test` prepended so the call is
