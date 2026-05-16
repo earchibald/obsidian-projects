@@ -564,4 +564,35 @@ describe("lazy skill partition (OP-192)", () => {
     expect(r.lazySkills[0].description).toBe("Tmux Notes");
     expect(r.diagnostics.some(d => d.code === "lazy-skill" && d.severity === "warning" && /no .description/.test(d.message))).toBe(true);
   });
+
+  it("resolves {{vars.x}} user-var tokens in lazy module bodies through the precedence chain", () => {
+    // Module declares greeting with a default; the body references it.
+    // Proves user-var substitution runs on lazy bodies (not just inlined chunks).
+    const lazyMod = loaded({
+      id: "greeter",
+      scope: "kickoff",
+      lazy: true,
+      description: "A greeting module",
+      vars: [{ kind: "default", name: "greeting", value: "hi" }],
+      body: "Lazy {{vars.greeting}}",
+    });
+    const wf = workflowWith("kickoff", ["greeter"]);
+    const r = composeWorkflow({
+      loadedModules: [lazyMod],
+      workflow: wf,
+      step: "kickoff",
+      ctx: { render: renderCtx({}) },
+    });
+    // The lazy skill's body should have the var substituted, not left as a token.
+    expect(r.lazySkills[0].body).toBe("Lazy hi");
+    // The var must appear in perVarSourceMap, resolved from the module default.
+    expect(r.perVarSourceMap.greeting).toMatchObject({
+      value: "hi",
+      scope: "module",
+      source: "greeter",
+    });
+    // The lazy module is NOT inlined.
+    expect(r.text).toBe("");
+    expect(r.orderedChunks).toEqual([]);
+  });
 });

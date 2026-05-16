@@ -110,10 +110,12 @@ export interface ComposedPrompt {
    *  composed module is lazy. */
   lazySkills: LazySkill[];
   /**
-   * For every user var that was *referenced* anywhere in any composed chunk,
-   * the resolved value + the precedence layer that supplied it. Vars never
-   * referenced are absent from the map (callers asking for a complete dump
-   * should iterate the module declarations instead).
+   * For every user var referenced during this composition pass — including vars
+   * referenced only in `lazy: true` module bodies, which are partitioned out of
+   * `orderedChunks`/`text` but still rendered — the resolved value + the
+   * precedence layer that supplied it. Vars never referenced are absent from
+   * the map. To see only vars feeding the inlined prompt, cross-reference
+   * `orderedChunks` module ids against the module declarations.
    */
   perVarSourceMap: Record<string, UserVarSource>;
   /**
@@ -506,6 +508,7 @@ export function composeWorkflow(args: ComposeArgs): ComposedPrompt {
     });
     diagnostics.push(...r.diagnostics);
     if (lm.module.lazy) {
+      const skillName = slugifySkillName(lm.module.id);
       let description = lm.module.description;
       if (description === undefined) {
         description = lm.module.title;
@@ -519,12 +522,12 @@ export function composeWorkflow(args: ComposeArgs): ComposedPrompt {
       diagnostics.push({
         code: "lazy-skill",
         severity: "info",
-        message: `Module ${lm.module.id} emitted as on-demand skill op-module-${lm.module.id}, not inlined. Run op-emit-lazy-skills to materialize it.`,
+        message: `Module ${lm.module.id} emitted as on-demand skill ${skillName}, not inlined. Run op-emit-lazy-skills to materialize it.`,
         moduleId: lm.module.id,
       });
       lazySkills.push({
         id: lm.module.id,
-        name: slugifySkillName(lm.module.id),
+        name: skillName,
         description,
         body: r.text,
       });
