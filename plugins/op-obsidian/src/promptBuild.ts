@@ -245,15 +245,20 @@ export async function composeWorkflowSection(
         `This issue has ${lazy.length} optional reference module(s) (${names}) available as on-demand skills. ` +
         `From inside your working directory (after creating your worktree) run:\n\n` +
         "```bash\n" +
-        `obsidian op-emit-lazy-skills issue=${entry.id} dir="$(pwd)"\n` +
+        `obsidian op-emit-lazy-skills issue="${entry.id}" dir="$(pwd)"\n` +
         "```\n\n" +
-        `Then activate the relevant one via the Skill tool when needed. Skipping this is safe — they are reference-only.`;
+        `Then activate the relevant one via the Skill tool when needed. These are typically reference-only modules; skim each skill's description and skip emission only if none are relevant.`;
     } else {
       // Meta-only project (no repo path) — inline the lazy bodies so the
       // content is never lost (there is no working directory to run the CLI in).
-      lazySection =
-        `## Optional reference (no working directory — inlined)\n\n` +
-        lazy.map((s) => `### ${s.name}\n\n${s.body}`).join("\n\n");
+      // Skip skills whose body is empty (I2) and trim trailing whitespace (I1).
+      const inlined = lazy
+        .filter((s) => s.body.trim().length > 0)
+        .map((s) => `### ${s.name}\n\n${s.body.trimEnd()}`)
+        .join("\n\n");
+      lazySection = inlined
+        ? `## Optional reference skills (inlined — no working directory)\n\n${inlined}`
+        : "";
     }
   }
 
