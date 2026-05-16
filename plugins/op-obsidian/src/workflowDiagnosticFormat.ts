@@ -188,7 +188,7 @@ const HINTS: Readonly<Record<WorkflowDiagnosticCode, string>> = Object.freeze({
   "size-budget":
     "The composed workflow exceeds the recommended character budget. Modern models handle this well — consider splitting the workflow into smaller modules if latency increases.",
   "lazy-skill":
-    "This module is emitted as an on-demand Claude Code skill instead of being inlined. Run op-emit-lazy-skills to materialize it.",
+    "This module is lazy: emitted as an on-demand Claude Code skill when a working directory is available, otherwise inlined as optional reference. Not part of the always-inlined prompt body.",
 });
 
 /**

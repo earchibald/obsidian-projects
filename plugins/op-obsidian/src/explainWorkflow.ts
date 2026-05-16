@@ -91,6 +91,7 @@ export async function explainWorkflow(
       composed: {
         text: "",
         orderedChunks: [],
+        lazySkills: [],
         perVarSourceMap: {},
         sizeChars: 0,
         diagnostics: [...agentDiags, ...bundle.diagnostics],

@@ -522,7 +522,7 @@ export function composeWorkflow(args: ComposeArgs): ComposedPrompt {
       diagnostics.push({
         code: "lazy-skill",
         severity: "info",
-        message: `Module ${lm.module.id} emitted as on-demand skill ${skillName}, not inlined. Run op-emit-lazy-skills to materialize it.`,
+        message: `Module ${lm.module.id} is lazy: emitted as the on-demand skill ${skillName} when a working directory is available, otherwise inlined as optional reference. Not part of the always-inlined prompt body.`,
         moduleId: lm.module.id,
       });
       lazySkills.push({
