@@ -109,6 +109,7 @@ import {
   handleOpGetSkillUri as handleOpGetSkillUriPure,
   handleOpExplainWorkflowUri as handleOpExplainWorkflowUriPure,
   handleOpListVarsUri as handleOpListVarsUriPure,
+  handleOpEmitLazySkillsUri as handleOpEmitLazySkillsUriPure,
   handleOpWorkflowUri as handleOpWorkflowUriPure,
   type UriHandlerDeps,
 } from "./uriHandlers";
@@ -141,8 +142,10 @@ import {
   parseDocEditParams,
   parseFlushVaultHistoryParams,
   parseWorkflowParams,
+  parseEmitLazySkillsParams,
 } from "./cliHandlers";
 import { explainWorkflow, getProjectWorkflow, listVars } from "./explainWorkflow";
+import { emitLazySkills } from "./emitLazySkills";
 import {
   summarizeExplainPayload,
 } from "./explainWorkflowPure";
@@ -1184,6 +1187,12 @@ export default class OpPlugin extends Plugin {
       );
     });
 
+    this.registerObsidianProtocolHandler("op-emit-lazy-skills", (params) => {
+      this.runUri("op-emit-lazy-skills", normalizeUriParams(params), (p) =>
+        handleOpEmitLazySkillsUriPure(this.uriDeps(), p),
+      );
+    });
+
     this.registerObsidianProtocolHandler("op-edit-module", (params) => {
       this.runUri("op-edit-module", normalizeUriParams(params), (p) =>
         this.handleOpEditModuleUri(p),
@@ -1525,6 +1534,19 @@ export default class OpPlugin extends Plugin {
         },
       },
       (params) => this.handleOpListVarsCli(params),
+    );
+
+    this.registerCliHandler(
+      "op-emit-lazy-skills",
+      "Materialize this issue's lazy: true workflow modules as on-demand Claude Code skills under <dir>/.claude/skills/. Run from inside your working directory.",
+      {
+        issue: { value: "<id>", description: "Issue id (e.g. OP-34)" },
+        dir: {
+          value: "<abs-path>",
+          description: 'Absolute path of your working directory. Pass dir="$(pwd)" from inside your worktree. Defaults to the project repo path.',
+        },
+      },
+      (params) => this.handleOpEmitLazySkillsCli(params),
     );
 
     this.registerCliHandler(
@@ -2626,6 +2648,12 @@ export default class OpPlugin extends Plugin {
         ),
       listVars: (args) =>
         listVars(
+          this.app,
+          { settings: this.settings, resolveIssue: (id) => this.resolveByIdOrThrow(id) },
+          args,
+        ),
+      emitLazySkills: (args) =>
+        emitLazySkills(
           this.app,
           { settings: this.settings, resolveIssue: (id) => this.resolveByIdOrThrow(id) },
           args,
@@ -4063,6 +4091,33 @@ export default class OpPlugin extends Plugin {
       );
       await writeUriResponse(this.app, { ok: true, command, ...payload });
       return summarizeListVarsPayload(payload);
+    } catch (err: any) {
+      const msg = err?.message ?? String(err);
+      console.error("[op-obsidian]", command, err);
+      await writeUriResponse(this.app, { ok: false, command, error: msg });
+      return `${command} failed: ${msg}`;
+    }
+  }
+
+  private async handleOpEmitLazySkillsCli(params: Record<string, string>): Promise<string> {
+    const command = "op-emit-lazy-skills";
+    try {
+      const parsed = parseEmitLazySkillsParams(params);
+      if (!parsed.ok) return parsed.error;
+      const args: { issueId: string; destDir?: string } = { issueId: parsed.value.issueId };
+      if (parsed.value.destDir !== undefined) args.destDir = parsed.value.destDir;
+      const payload = await emitLazySkills(
+        this.app,
+        { settings: this.settings, resolveIssue: (i) => this.resolveByIdOrThrow(i) },
+        args,
+      );
+      await writeUriResponse(this.app, { ok: true, command, ...payload });
+      const warn = payload.emptyBodySkills.length > 0
+        ? ` (warning: ${payload.emptyBodySkills.length} skill(s) had an empty rendered body: ${payload.emptyBodySkills.join(", ")})`
+        : "";
+      return payload.empty
+        ? `${command}: ${payload.issueId} — no lazy modules; nothing to emit`
+        : `${command}: ${payload.issueId} → wrote ${payload.skillNames.length} skill(s) to ${payload.destDir}/.claude/skills/ (pruned ${payload.pruned.length})${warn}`;
     } catch (err: any) {
       const msg = err?.message ?? String(err);
       console.error("[op-obsidian]", command, err);
