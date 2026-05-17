@@ -38,7 +38,7 @@ docs/examples/workflow-library/   ← vault root
 | `branching.md` | `kickoff` | `default_branch=main`, `branch_strategy=worktree` | Always isolate from the default branch — worktree or feature branch. |
 | `tmux-safety.md` | `kickoff` | `protected_session_prefixes=op-agents-,view-`, `experiment_session_pattern=op-experiment-$$` | Don't kill shared tmux sessions; experiment in a disposable one. |
 | `commit-mapping.md` | `implement` | `commit_command=op-append-commit`, `commit_field=commits` | Append every commit to the issue note's commits list, per-commit not batched. |
-| `pr-required.md` | `review` | `default_branch=main`, `pr_title_pattern="<ID>: <subject>"`, `merge_command=gh pr merge --squash --delete-branch` | PRs gate merges; PR title carries the issue id. |
+| `pr-required.md` | `review` | `pr_title_pattern="<ID>: <subject>"`, `merge_command=gh pr merge --squash --delete-branch` | PRs gate merges; PR title carries the issue id. Uses `{{vars.default_branch}}` but does not declare it — `branching.md` owns that var. |
 | `adversarial-review.md` | `review` | `copilot_cmd=copilot --autopilot --allow-all -p`, `bypass_criteria=all` | Invoke the local `copilot` CLI synchronously with concrete pressure-test prompts; expect pushed fix commits plus a `## Adversarial review (local copilot)` summary comment on the PR; bypass only when *all* criteria apply. |
 | `version-cadence.md` | `finalize` | `package_name=op-obsidian`, `bump_command=node scripts/bump-version.mjs` | Bump version files in lockstep at resolve time. |
 | `gh-issue-close.md` | `finalize` | `auto_close_setting_path=closeGithubIssueOnResolve` | Don't close the linked GH issue manually — let `op-resolve` handle it; read the JSON response. |
