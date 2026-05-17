@@ -310,6 +310,38 @@ async def list_op_agent_windows() -> List[Tuple[str, str]]:
     return filter_op_agent_windows(parse_list_windows(out))
 
 
+def parse_list_windows_ids(stdout: str) -> List[Tuple[str, str, str]]:
+    """Parse tab-separated `#{window_id}\\t#S\\t#W` → [(window_id, session,
+    window)]. Used by the OP-237 reattach self-heal to map a tmux window-id
+    (which iTerm exposes via `tab.tmux_window_id` regardless of `user.op_issue`)
+    back to its issue id."""
+    out: List[Tuple[str, str, str]] = []
+    for line in stdout.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        parts = line.split("\t")
+        if len(parts) != 3 or not all(parts):
+            continue
+        out.append((parts[0], parts[1], parts[2]))
+    return out
+
+
+def filter_op_agent_window_ids(
+    rows: List[Tuple[str, str, str]]
+) -> List[Tuple[str, str, str]]:
+    return [(wid, s, w) for wid, s, w in rows if TMUX_SESSION_RE.match(s)]
+
+
+async def list_op_agent_window_ids() -> List[Tuple[str, str, str]]:
+    rc, out, _ = await tmux_run(
+        "list-windows", "-a", "-F", "#{window_id}\t#S\t#W", check=False
+    )
+    if rc != 0:
+        return []
+    return filter_op_agent_window_ids(parse_list_windows_ids(out))
+
+
 async def capture_pane(target: str, lines: int = CAPTURE_TAIL_LINES) -> str:
     """Capture the last `lines` rows of the named tmux window's active pane."""
     rc, out, _ = await tmux_run(
@@ -383,6 +415,61 @@ class ITermBridge:
             log.warning("iterm scan failed: %s", e)
         self._uuid_by_issue = dict(result)
         return result
+
+    async def heal_untagged(
+        self, windowid_to_issue: Dict[str, str]
+    ) -> Dict[str, str]:
+        """OP-237: re-tag iTerm sessions that lost `user.op_issue` on an
+        iTerm-restart-while-tmux-survives reattach.
+
+        `tab.tmux_window_id` ties an iTerm tab to its tmux window-id even when
+        the session is untagged (the OSC 1337 from OP-233 only fires on the
+        *initial* inner-script run, not on tmux `select-window` reattach). We
+        cross-reference that against the tmux window-id→issue map and set the
+        plain issue id back via the iTerm Python API — the raw form that
+        `decode_user_op_issue` and `scan()` already honor (OP-230). Idempotent:
+        a session already carrying the right id is skipped.
+
+        Returns {issue_id: session_id} for sessions it (re)tagged, and folds
+        them into `_uuid_by_issue` so the same poll cycle's reveal/close-pane
+        recover without waiting for the next `scan()`.
+        """
+        if not self.available or self.app is None or not windowid_to_issue:
+            return {}
+        healed: Dict[str, str] = {}
+        try:
+            for window in self.app.terminal_windows:
+                for tab in window.tabs:
+                    wid = getattr(tab, "tmux_window_id", None)
+                    if not wid:
+                        continue
+                    issue_id = windowid_to_issue.get(wid)
+                    if not issue_id:
+                        continue
+                    for sess in tab.sessions:
+                        try:
+                            raw = await sess.async_get_variable("user.op_issue")
+                        except Exception:
+                            raw = None
+                        current = decode_user_op_issue(str(raw)) if raw else None
+                        if current == issue_id:
+                            continue
+                        try:
+                            await sess.async_set_variable(
+                                "user.op_issue", issue_id
+                            )
+                        except Exception as e:
+                            log.warning(
+                                "heal_untagged(%s) set failed: %s", issue_id, e
+                            )
+                            continue
+                        healed[issue_id] = sess.session_id
+                        self._uuid_by_issue[issue_id] = sess.session_id
+        except Exception as e:
+            log.warning("heal_untagged scan failed: %s", e)
+        if healed:
+            log.info("reattach self-heal re-tagged: %s", sorted(healed))
+        return healed
 
     async def close_pane(self, issue_id: str) -> bool:
         if not self.available or self.app is None:
@@ -831,6 +918,14 @@ async def reconcile(state: AppState) -> Tuple[List[AgentSession], List[AgentSess
     """Build the in-memory session map from tmux + iTerm + data.json."""
     tmux_rows = await list_op_agent_windows()
     iterm_map = await state.iterm.scan()
+    # OP-237: re-tag iTerm sessions that lost `user.op_issue` on an
+    # iTerm-restart-while-tmux-survives reattach. The window-id→issue map comes
+    # from tmux (authoritative even when the iTerm tag is gone); folding the
+    # healed sessions into iterm_map recovers reveal/close-pane this same cycle.
+    windowid_to_issue = {
+        wid: window for wid, _sess, window in await list_op_agent_window_ids()
+    }
+    iterm_map.update(await state.iterm.heal_untagged(windowid_to_issue))
     data_json_map: Dict[str, dict] = {}
     for path in find_data_json_paths():
         for issue_id, ref in read_orchestrator_state(path).items():

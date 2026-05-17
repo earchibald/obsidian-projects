@@ -430,6 +430,123 @@ class TmuxSessionRegexTests(unittest.TestCase):
             self.assertIsNone(opd.TMUX_SESSION_RE.match(s))
 
 
+class WindowIdParseTests(unittest.TestCase):
+    """OP-237: reattach self-heal needs tmux window-id → issue, parsed from
+    `tmux list-windows -a -F '#{window_id}\\t#S\\t#W'`."""
+
+    def test_parse_list_windows_ids(self):
+        out = "@1\top-agents\tOP-217\n@4\top-agents-1\tOP-218\n@9\tmain\tscratch\n"
+        rows = opd.parse_list_windows_ids(out)
+        self.assertEqual(rows, [
+            ("@1", "op-agents", "OP-217"),
+            ("@4", "op-agents-1", "OP-218"),
+            ("@9", "main", "scratch"),
+        ])
+
+    def test_parse_skips_blank_and_malformed(self):
+        out = "\n  \nfoo\t bar\n@2\top-agents\tOP-3\n@x\tonly-two\n"
+        rows = opd.parse_list_windows_ids(out)
+        self.assertEqual(rows, [("@2", "op-agents", "OP-3")])
+
+    def test_filter_op_agent_window_ids(self):
+        rows = [
+            ("@1", "op-agents", "OP-1"),
+            ("@2", "op-agents-2", "OP-2"),
+            ("@3", "main", "x"),
+            ("@4", "op-agents-x", "y"),
+        ]
+        self.assertEqual(opd.filter_op_agent_window_ids(rows), [
+            ("@1", "op-agents", "OP-1"),
+            ("@2", "op-agents-2", "OP-2"),
+        ])
+
+
+class _FakeSession:
+    def __init__(self, session_id, op_issue=None):
+        self.session_id = session_id
+        self._vars = {}
+        if op_issue is not None:
+            self._vars["user.op_issue"] = op_issue
+        self.set_calls = []
+
+    async def async_get_variable(self, name):
+        return self._vars.get(name)
+
+    async def async_set_variable(self, name, value):
+        self._vars[name] = value
+        self.set_calls.append((name, value))
+
+
+class _FakeTab:
+    def __init__(self, tmux_window_id, sessions):
+        self.tmux_window_id = tmux_window_id
+        self.sessions = sessions
+
+
+class _FakeWindow:
+    def __init__(self, tabs):
+        self.tabs = tabs
+
+
+class _FakeApp:
+    def __init__(self, windows):
+        self.terminal_windows = windows
+
+
+class ReattachSelfHealTests(unittest.TestCase):
+    """OP-237: when iTerm restarts while tmux survives, the reattached iTerm
+    session loses `user.op_issue`. The daemon re-tags it via the iTerm Python
+    API on reconcile so Reveal/Close-pane recover."""
+
+    def _bridge(self, app):
+        b = opd.ITermBridge()
+        b.available = True
+        b.app = app
+        return b
+
+    def test_heals_untagged_session(self):
+        sess = _FakeSession("UUID-A", op_issue=None)
+        app = _FakeApp([_FakeWindow([_FakeTab("@1", [sess])])])
+        bridge = self._bridge(app)
+        healed = asyncio.run(bridge.heal_untagged({"@1": "OP-237"}))
+        self.assertEqual(healed, {"OP-237": "UUID-A"})
+        self.assertEqual(sess.set_calls, [("user.op_issue", "OP-237")])
+        # _uuid_by_issue is updated so close_pane works the same cycle.
+        self.assertEqual(bridge._uuid_by_issue.get("OP-237"), "UUID-A")
+
+    def test_idempotent_when_already_tagged(self):
+        # iTerm stores the OSC-set value already decoded to the plain id.
+        sess = _FakeSession("UUID-B", op_issue="OP-237")
+        app = _FakeApp([_FakeWindow([_FakeTab("@1", [sess])])])
+        healed = asyncio.run(self._bridge(app).heal_untagged({"@1": "OP-237"}))
+        self.assertEqual(healed, {})
+        self.assertEqual(sess.set_calls, [])
+
+    def test_corrects_stale_wrong_tag(self):
+        sess = _FakeSession("UUID-C", op_issue="OP-999")
+        app = _FakeApp([_FakeWindow([_FakeTab("@7", [sess])])])
+        healed = asyncio.run(self._bridge(app).heal_untagged({"@7": "OP-237"}))
+        self.assertEqual(healed, {"OP-237": "UUID-C"})
+        self.assertEqual(sess.set_calls, [("user.op_issue", "OP-237")])
+
+    def test_ignores_non_tmux_and_unmapped_tabs(self):
+        s1 = _FakeSession("U1")  # non-tmux tab
+        s2 = _FakeSession("U2")  # tmux tab but not an op-agents window
+        app = _FakeApp([_FakeWindow([
+            _FakeTab(None, [s1]),
+            _FakeTab("@99", [s2]),
+        ])])
+        healed = asyncio.run(self._bridge(app).heal_untagged({"@1": "OP-237"}))
+        self.assertEqual(healed, {})
+        self.assertEqual(s1.set_calls, [])
+        self.assertEqual(s2.set_calls, [])
+
+    def test_noop_when_iterm_unavailable(self):
+        bridge = opd.ITermBridge()  # available=False, app=None
+        healed = asyncio.run(bridge.heal_untagged({"@1": "OP-237"}))
+        self.assertEqual(healed, {})
+
+
 try:
     from aiohttp import web as _aiohttp_web  # noqa: F401
     from aiohttp.test_utils import TestClient, TestServer
