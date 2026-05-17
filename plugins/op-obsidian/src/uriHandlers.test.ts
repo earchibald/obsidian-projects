@@ -7,6 +7,7 @@ import {
   handleOpSetPrUri,
   handleOpSetScopeUri,
   handleOpSetSectionUri,
+  handleOpAppendNoteUri,
   handleOpSetEvaluationUri,
   handleOpSetFlowUri,
   type UriHandlerDeps,
@@ -66,6 +67,14 @@ function makeDeps(overrides: Partial<UriHandlerDeps> = {}): UriHandlerDeps {
       content,
       replaced: true,
       appended: options?.append === true,
+    }),
+    appendNote: async (e, body) => ({
+      issueId: e.id,
+      path: e.path,
+      section: "Notes" as const,
+      content: body,
+      replaced: false,
+      appended: true,
     }),
     setFlow: async (e, input) => ({
       issueId: e.id,
@@ -270,6 +279,34 @@ describe("handleOpSetSectionUri", () => {
       append: "true",
     });
     expect(r).toMatchObject({ section: "Notes", appended: true });
+  });
+});
+
+describe("handleOpAppendNoteUri", () => {
+  it("requires id and body", async () => {
+    await expect(handleOpAppendNoteUri(makeDeps(), {})).rejects.toThrow(
+      "op-append-note URI requires id and body",
+    );
+    await expect(
+      handleOpAppendNoteUri(makeDeps(), { id: "OP-1" }),
+    ).rejects.toThrow("op-append-note URI requires id and body");
+  });
+  it("accepts issue= alias and content= alias", async () => {
+    const r = await handleOpAppendNoteUri(makeDeps(), {
+      issue: "OP-1",
+      content: "### OP-1.1 — done",
+    });
+    expect(r).toMatchObject({
+      ok: true,
+      command: "op-append-note",
+      issueId: "OP-1",
+      section: "Notes",
+      appended: true,
+    });
+  });
+  it("accepts empty body string (still appends)", async () => {
+    const r = await handleOpAppendNoteUri(makeDeps(), { id: "OP-1", body: "" });
+    expect(r).toMatchObject({ ok: true, command: "op-append-note", appended: true });
   });
 });
 

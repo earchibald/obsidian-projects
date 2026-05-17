@@ -532,6 +532,17 @@ export function parseTaskAppendNoteParams(
   return { ok: true, value: { taskId, body } };
 }
 
+export function parseAppendNoteParams(
+  params: Record<string, string>,
+): ParamsResult<{ id: string; body: string }> {
+  const id = params.issue ?? params.id;
+  const body = params.body ?? params.content;
+  if (!id || typeof body !== "string") {
+    return { ok: false, error: "op-append-note failed: --issue and --body required" };
+  }
+  return { ok: true, value: { id, body } };
+}
+
 export function parseDocCreateParams(
   params: Record<string, string>,
 ): ParamsResult<{ slug: string; docType: string; title: string; body?: string }> {

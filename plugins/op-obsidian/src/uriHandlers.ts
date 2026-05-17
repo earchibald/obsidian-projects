@@ -39,6 +39,7 @@ export interface UriHandlerDeps {
     content: string,
     options?: { append?: boolean },
   ) => Promise<SetSectionResult>;
+  appendNote: (entry: IssueEntry, body: string) => Promise<SetSectionResult>;
   setFlow: (
     entry: IssueEntry,
     input: { flow?: Flow | null; complexity?: Complexity | null },
@@ -351,6 +352,27 @@ export async function handleOpSetSectionUri(
     path: res.path,
     section: res.section,
     replaced: res.replaced,
+    appended: res.appended,
+  };
+}
+
+export async function handleOpAppendNoteUri(
+  deps: UriHandlerDeps,
+  params: Record<string, string>,
+): Promise<UriResponsePayload> {
+  const id = params.id ?? params.issue;
+  const body = params.body ?? params.content;
+  if (!id || typeof body !== "string") {
+    throw new Error("op-append-note URI requires id and body");
+  }
+  const entry = findIssueById(deps.store, id);
+  const res = await deps.appendNote(entry, body);
+  return {
+    ok: true,
+    command: "op-append-note",
+    issueId: res.issueId,
+    path: res.path,
+    section: res.section,
     appended: res.appended,
   };
 }

@@ -5,6 +5,7 @@ import {
   parseSetPrParams,
   parseSetScopeParams,
   parseSetSectionParams,
+  parseAppendNoteParams,
   parseSetEvaluationParams,
   parseSetFlowParams,
   parseNewParams,
@@ -138,6 +139,26 @@ describe("parseSetSectionParams", () => {
     const r = parseSetSectionParams({ id: "OP-1", name: "Scope", content: "x" });
     expect(r.ok).toBe(false);
     if (!r.ok) expect(r.error).toMatch(/Plan\|Notes\|Summary/);
+  });
+});
+
+describe("parseAppendNoteParams", () => {
+  it("requires issue/id and body", () => {
+    expect(parseAppendNoteParams({}).ok).toBe(false);
+    expect(parseAppendNoteParams({ issue: "OP-1" }).ok).toBe(false);
+    expect(parseAppendNoteParams({ body: "x" }).ok).toBe(false);
+  });
+  it("happy path with issue= and body=", () => {
+    const r = parseAppendNoteParams({ issue: "OP-1", body: "### OP-1.1 — done" });
+    expect(r.ok && r.value).toEqual({ id: "OP-1", body: "### OP-1.1 — done" });
+  });
+  it("accepts id= and content= aliases", () => {
+    const r = parseAppendNoteParams({ id: "OP-2", content: "note" });
+    expect(r.ok && r.value).toEqual({ id: "OP-2", body: "note" });
+  });
+  it("accepts empty body (caller handles empty-payload semantics)", () => {
+    const r = parseAppendNoteParams({ issue: "OP-1", body: "" });
+    expect(r.ok).toBe(true);
   });
 });
 
