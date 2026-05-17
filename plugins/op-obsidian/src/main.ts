@@ -100,6 +100,7 @@ import {
   handleOpSetScopeUri as handleOpSetScopeUriPure,
   handleOpSetEvaluationUri as handleOpSetEvaluationUriPure,
   handleOpSetSectionUri as handleOpSetSectionUriPure,
+  handleOpAppendNoteUri as handleOpAppendNoteUriPure,
   handleOpSetFlowUri as handleOpSetFlowUriPure,
   handleOpSetLinkUri as handleOpSetLinkUriPure,
   handleOpRemoveLinkUri as handleOpRemoveLinkUriPure,
@@ -138,6 +139,7 @@ import {
   parseTaskCreateParams,
   parseTaskSetStatusParams,
   parseTaskAppendNoteParams,
+  parseAppendNoteParams,
   parseDocCreateParams,
   parseDocEditParams,
   parseFlushVaultHistoryParams,
@@ -1259,6 +1261,11 @@ export default class OpPlugin extends Plugin {
         this.handleOpTaskAppendNoteUri(p),
       );
     });
+    this.registerObsidianProtocolHandler("op-append-note", (params) => {
+      this.runUri("op-append-note", normalizeUriParams(params), (p) =>
+        this.handleOpAppendNoteUri(p),
+      );
+    });
     this.registerObsidianProtocolHandler("op-doc-create", (params) => {
       this.runUri("op-doc-create", normalizeUriParams(params), (p) =>
         this.handleOpDocCreateUri(p),
@@ -1725,6 +1732,16 @@ export default class OpPlugin extends Plugin {
         body: { value: "<markdown>", description: "Body content to append." },
       },
       (params) => this.handleOpTaskAppendNoteCli(params),
+    );
+
+    this.registerCliHandler(
+      "op-append-note",
+      "Append a note to an issue's ## Notes section (creates section if missing).",
+      {
+        issue: { value: "<id>", description: "Issue id (e.g. OP-271)" },
+        body: { value: "<markdown>", description: "Body content to append." },
+      },
+      (params) => this.handleOpAppendNoteCli(params),
     );
 
     this.registerCliHandler(
@@ -2633,6 +2650,8 @@ export default class OpPlugin extends Plugin {
       setEvaluation: (entry, evaluation) => setEvaluation(this.app, entry, evaluation),
       setSection: (entry, name, content, options) =>
         setSection(this.app, entry, name, content, options),
+      appendNote: (entry, body) =>
+        setSection(this.app, entry, "Notes", body, { append: true }),
       setFlow: (entry, input) => setFlow(this.app, entry, input),
       applyLink: (args) => applyLink(this.app, this.store, args),
       removeLink: (args) => removeLink(this.app, this.store, args),
@@ -2731,6 +2750,12 @@ export default class OpPlugin extends Plugin {
     params: Record<string, string>,
   ): Promise<UriResponsePayload> {
     return handleOpSetSectionUriPure(this.uriDeps(), params);
+  }
+
+  private handleOpAppendNoteUri(
+    params: Record<string, string>,
+  ): Promise<UriResponsePayload> {
+    return handleOpAppendNoteUriPure(this.uriDeps(), params);
   }
 
   // OP-255: Phase 1 managed-note discipline handlers. All emit one audit-log
@@ -4282,6 +4307,40 @@ export default class OpPlugin extends Plugin {
           ? "replaced"
           : "created";
       return `${command}: ${res.issueId} ${res.section} ${verb}`;
+    } catch (err: any) {
+      const msg = err?.message ?? String(err);
+      console.error("[op-obsidian]", command, err);
+      await writeUriResponse(this.app, { ok: false, command, error: msg });
+      return `${command} failed: ${msg}`;
+    }
+  }
+
+  private async handleOpAppendNoteCli(params: Record<string, string>): Promise<string> {
+    const command = "op-append-note";
+    try {
+      const parsed = parseAppendNoteParams(params);
+      if (!parsed.ok) return parsed.error;
+      const entry = this.resolveByIdOrThrow(parsed.value.id);
+      const res = await setSection(this.app, entry, "Notes", parsed.value.body, {
+        append: true,
+      });
+      this.markInFlightOpWrite(res.path);
+      this.recordOpMutation({
+        cmd: command,
+        issue: res.issueId,
+        paths: [res.path],
+        section: res.section,
+      });
+      await writeUriResponse(this.app, {
+        ok: true,
+        command,
+        issueId: res.issueId,
+        path: res.path,
+        section: res.section,
+        appended: res.appended,
+      });
+      const verb = res.appended ? "appended" : "created ## Notes";
+      return `${command}: ${res.issueId} ${verb}`;
     } catch (err: any) {
       const msg = err?.message ?? String(err);
       console.error("[op-obsidian]", command, err);
