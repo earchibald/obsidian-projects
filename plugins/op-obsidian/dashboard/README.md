@@ -107,14 +107,19 @@ notification.
   `user.op_issue` user-var — the OP-233 OSC 1337 emit lives inside the
   inner agent script, and tmux's `select-window` reattach does not
   re-run that script. The tmux side of the correlation union still
-  matches the window by name, so the live row continues to appear in
-  the dashboard. iTerm-targeted ops (`close_pane`, future "focus this
-  session" commands) degrade for that row until a *fresh* launch creates
-  a new tmux window and reruns the inner script to retag the iTerm
-  session; plain reattach flows that hit `select-window` do not retag.
-  Workaround is to let the surviving tmux-backed agent exit (or quit it)
-  and then relaunch the issue from op-obsidian. Tracked as a deferred
-  follow-up under OP-217; not fixed in v1.
+  matches the window by name, so the live row keeps appearing.
+  **Self-heal:** every `reconcile()` pass calls
+  `ITermBridge.heal_untagged()`, which maps each iTerm tab's
+  `tmux_window_id` (exposed by the iTerm API regardless of the lost
+  user-var) back to its issue via `tmux list-windows -F
+  '#{window_id}\t#S\t#W'`, then re-sets `user.op_issue` (plain id, the
+  raw form `scan()` already honors) through `async_set_variable`. The
+  healed session-id folds into the same cycle's `iterm_map`, so
+  `close_pane` / reveal recover within one ~1 s poll — no fresh launch
+  needed. Idempotent (already-tagged sessions are skipped) and a no-op
+  in tmux-only mode. If the iTerm API is unavailable the row still
+  works via the tmux-only path, with iTerm-targeted ops degraded as
+  before.
 
 ## Testing
 
